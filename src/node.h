@@ -26,7 +26,7 @@ typedef struct Node
     struct Node *levels[];
 } Node;
 
-Node *create_node(const Arena *arena, const NodeType type, const LVSeq64_t seq, const LVWalOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVMetaField *field_list);
+Node *create_node(const Arena *arena, const NodeType type, const LVSeq64_t seq, const LVWalOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count,const LVSize32_t field_size, const LVMetaField *field_list);
 
 uint32_t node_key_offset(const LVLevel8_t level)
 {

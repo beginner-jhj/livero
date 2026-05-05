@@ -1,36 +1,13 @@
 #include "node.h"
 
-Node *create_node(const Arena *arena, const NodeType type, const LVSeq64_t seq, const LVWalOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVMetaField *field_list)
+Node *create_node(const Arena *arena, const NodeType type, const LVSeq64_t seq, const LVWalOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count,const LVSize32_t field_size, const LVMetaField *field_list)
 {
     int flag = 0;
     Node *node = NULL;
 
-    // Node + level*(Node ptr) + key + value + LVField*field_count
-    uint32_t total_node_size = sizeof(Node) + level * sizeof(Node *) + key_len + value_len;
+    // Node + level*(Node ptr) + key + value + field
+    uint32_t total_node_size = sizeof(Node) + level * sizeof(Node *) + key_len + value_len + field_size;
 
-    for (int i = 0; i < field_count; ++i)
-    {
-        LVMetaField *current_field = field_list + i;
-
-        total_node_size += sizeof(LVMetaType);
-        switch (current_field->type)
-        {
-        case LV_META_STRING:
-            total_node_size += sizeof(uint32_t);
-            total_node_size += current_field->value.str.len;
-            break;
-
-        case LV_META_FLOAT:
-            total_node_size += sizeof(double);
-            break;
-
-        case LV_META_INT:
-            total_node_size += sizeof(int64_t);
-            break;
-        default:
-            break;
-        }
-    }
 
     if ((node = (Node *)arena_allocate(arena, total_node_size)) == NULL)
     {
