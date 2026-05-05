@@ -223,7 +223,7 @@ _return:
     return result;
 }
 
-LVStatus wal_recover(const int fd, const Arena *arena)
+LVStatus wal_recover(const int fd, const MemTable* table)
 {
     LVStatus result = LV_OK;
     off_t wal_size = lseek(fd, 0, SEEK_END);
@@ -253,7 +253,7 @@ LVStatus wal_recover(const int fd, const Arena *arena)
 
         node_size_to_reserve = sizeof(Node) + saved_level * sizeof(Node *) + saved_key_len + saved_value_len + saved_field_size;
 
-        Node *reserved_node = node_reserve(arena, node_size_to_reserve);
+        Node *reserved_node = node_reserve(table->arena, node_size_to_reserve);
 
         reserved_node->type = DATA;
         reserved_node->op = (LVWalOp)saved_op;
