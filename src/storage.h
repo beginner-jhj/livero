@@ -23,7 +23,9 @@ typedef struct
 
 MemTable *create_table(const LVSeq64_t seq);
 
-LVStatus table_insert(MemTable* table,const LVWalOp op, const LVSeq64_t seq,const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value,const uint64_t vector_id ,const uint32_t field_mask, const uint32_t field_count,const LVMetaField* field_list);
+LVStatus table_insert(MemTable* table,const LVWalOp op, const LVSeq64_t seq,const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value,const uint64_t vector_id ,const uint32_t field_mask, const uint32_t field_count,const LVSize32_t field_size,const LVMetaField* field_list);
 
+
+void table_direct_insert(MemTable* table, Node* node);
 
 #endif
