@@ -2,12 +2,6 @@
 #define SCHEMA
 
 #include "lv_internal.h"
-#include "util.h"
-#include "helper.h"
-#include <unistd.h>
-#include "crc.h"
-#include "hash.h"
-#include <stdlib.h>
 
 /* ── Schema ─────────────────────────────────────────────────────────────────
  * Defined once at lv_open. Stored in schema.lv. All records share one schema.
@@ -19,20 +13,20 @@
  * Determines how each metadata field is encoded on disk and compared
  * during filter evaluation.
  */
-typedef enum
+typedef enum LVMetaType
 {
     LV_META_STRING = 0,
     LV_META_INT = 1,
     LV_META_FLOAT = 2,
 } LVMetaType; // 1byte
 
-typedef struct
+typedef struct LVMetaFieldDef
 {
     char name[LV_META_NAME_MAX];
     LVMetaType type;
 } LVMetaFieldDef;
 
-typedef struct
+typedef struct LVMetaField
 {
     char name[LV_META_NAME_MAX];
     LVMetaType type;
@@ -56,7 +50,7 @@ typedef struct LVMetaFieldHash
     struct LVMetaFieldHash *next;
 } LVMetaFieldHash;
 
-typedef struct
+typedef struct LVSchema
 {
     LVDim32_t vector_dim;
     LVVectorType vector_type; // 1byte

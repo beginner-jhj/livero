@@ -1,4 +1,10 @@
 #include "schema.h"
+#include <stdlib.h>
+#include <string.h>
+#include "util.h"
+#include "helper.h"
+#include "hash.h"
+#include "crc.h"
 
 LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVCount32_t field_count, const LVMetaFieldDef *field_defs)
 {
@@ -80,7 +86,7 @@ void destroy_schema(LVSchema *schema)
     if (schema)
     {
         schema_destroy_field_hashes(schema->field_hashes);
-        safe_free(schema);
+        safe_free(&schema);
     }
 }
 
