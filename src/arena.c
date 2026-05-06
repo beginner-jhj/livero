@@ -8,7 +8,7 @@ Arena *create_arena(void)
     int flag = 0;
     Arena *arena = NULL;
     Block *block = NULL;
-    void* block_data = NULL;
+    void *block_data = NULL;
 
     Block *block_temp = malloc(sizeof(Block));
     if (!block_temp)
@@ -55,11 +55,14 @@ cleanup:
     return arena;
 }
 
-void destroy_arena(Arena* arena){
-    if(arena){
-        Block* current = arena->current_block;
-        while(current){
-            Block* prev = current->prev;
+void destroy_arena(Arena *arena)
+{
+    if (arena)
+    {
+        Block *current = arena->current_block;
+        while (current)
+        {
+            Block *prev = current->prev;
             safe_free(&current->data);
             safe_free(&current);
             current = prev;
@@ -68,9 +71,12 @@ void destroy_arena(Arena* arena){
     }
 }
 
-void *arena_allocate(Arena *arena, LVSize32_t total)
+void *arena_allocate(Arena *arena, const LVSize32_t total, LVSize32_t align)
 {
-    LVSize32_t align = alignof(max_align_t);
+    if (align == -1)
+    {
+        align = alignof(max_align_t);
+    }
     LVSize32_t aligned_offset = (arena->current_offset + align - 1) & ~(align - 1);
 
     void *result = NULL;
@@ -174,7 +180,7 @@ void *arena_allocate(Arena *arena, LVSize32_t total)
         goto _return;
     }
 
-    result = (char*)arena->current_block->data + aligned_offset;
+    result = (char *)arena->current_block->data + aligned_offset;
     arena->current_offset = aligned_offset + total;
 _return:
     return result;
