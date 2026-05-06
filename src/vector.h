@@ -1,3 +1,5 @@
+#include "lv_internal.h"
+
 /* ── HNSW parameters ────────────────────────────────────────────────────────
  * Fixed constants. Changing these requires rebuilding the index.
  *

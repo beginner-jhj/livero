@@ -9,17 +9,6 @@
 #define LV_MAX_META_FIELDS 32
 #define LV_META_NAME_MAX 64 /* includes null terminator */
 
-/* ── Metadata field type ────────────────────────────────────────────────────
- * Determines how each metadata field is encoded on disk and compared
- * during filter evaluation.
- */
-typedef enum LVMetaType
-{
-    LV_META_STRING = 0,
-    LV_META_INT = 1,
-    LV_META_FLOAT = 2,
-} LVMetaType; // 1byte
-
 typedef struct LVMetaFieldDef
 {
     char name[LV_META_NAME_MAX];

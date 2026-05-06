@@ -4,13 +4,6 @@
 #include "lv_internal.h"
 
 
-typedef enum NodeType
-{
-    HEAD = 0,
-    TAIL = 1,
-    DATA = 2
-} NodeType;
-
 typedef struct Node
 {
     NodeType type;

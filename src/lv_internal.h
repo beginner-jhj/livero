@@ -24,6 +24,37 @@ typedef uint64_t LVBigCount64_t;   /* large counts (e.g. total record count)   *
 typedef uint64_t LVVectorId64_t;   /* internal vector identifier               */
 typedef uint32_t LVHash32_t; /*hash*/
 
+/* ── Vector type ────────────────────────────────────────────────────────────
+ * Fixed at lv_open via the schema. Cannot be changed after creation.
+ */
+typedef enum {
+    LV_VEC_FLOAT32 = 0,
+    LV_VEC_INT8    = 1,
+} LVVectorType;
+
+/* ── WAL operation ──────────────────────────────────────────────────────────*/
+typedef enum {
+    LV_WAL_PUT = 0,
+    LV_WAL_DELETE = 1,
+} LVWalOp;
+
+/* ── Metadata field type ────────────────────────────────────────────────────
+ * Determines how each metadata field is encoded on disk and compared
+ * during filter evaluation.
+ */
+typedef enum {
+    LV_META_STRING = 0,
+    LV_META_INT = 1,
+    LV_META_FLOAT = 2,
+} LVMetaType;
+
+/* ── Node type ──────────────────────────────────────────────────────────────*/
+typedef enum {
+    HEAD = 0,
+    TAIL = 1,
+    DATA = 2,
+} NodeType;
+
 /* ── Forward declarations ────────────────────────────────────────────────────
  * Centralized opaque type declarations for internal structs.
  */
@@ -54,20 +85,6 @@ typedef enum {
     LV_ERR_DUPLICATE = -7,   /* key already exists (if uniqueness required)*/
 } LVStatus;
 
-/* ── Vector type ────────────────────────────────────────────────────────────
- * Fixed at lv_open via the schema. Cannot be changed after creation.
- */
-typedef enum {
-    LV_VEC_FLOAT32 = 0,
-    LV_VEC_INT8    = 1,
-} LVVectorType;
-
-/* ── WAL operation ──────────────────────────────────────────────────────────*/
-typedef enum
-{
-    LV_WAL_PUT = 0,
-    LV_WAL_DELETE = 1,
-} LVWalOp;
 
 /* ── File magic numbers ─────────────────────────────────────────────────────
  * 4-byte ASCII identifiers written at the start of each file.
