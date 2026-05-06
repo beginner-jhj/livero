@@ -1,4 +1,9 @@
+#include <stdlib.h>
+#include <string.h>
 #include "storage.h"
+#include "arena.h"
+#include "node.h"
+#include "helper.h"
 
 LVMemTable *create_table(const LVSeq64_t seq)
 {
@@ -63,8 +68,8 @@ LVMemTable *create_table(const LVSeq64_t seq)
 cleanup:
     if (flag)
     {
-        safe_free(arena);
-        safe_free(table);
+        safe_free(&arena);
+        safe_free(&table);
     }
 
     return table;

@@ -1,8 +1,7 @@
 #ifndef STORAGE
 #define STORAGE
 
-#include "node.h"
-#include "helper.h"
+#include "lv_internal.h"
 
 /* ── LVMemTable skip list parameters ───────────────────────────────────────────*/
 #define LV_SKIPLIST_MAX_LEVEL 20
@@ -13,7 +12,7 @@
  */
 #define LV_FLUSH_THRESHOLD (1 * 1024 * 1024) /* 1 MB */
 
-typedef struct
+typedef struct LVMemTable
 {
     Node *head;
     Node* tail;
