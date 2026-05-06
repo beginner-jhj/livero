@@ -2,6 +2,7 @@
 #define LV
 
 #include "lv_internal.h"
+#include "wal.h"
 #include "schema.h"
 #include "util.h"
 #include "storage.h"
