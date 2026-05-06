@@ -1,14 +1,14 @@
 #include "storage.h"
 
-MemTable *create_table(const LVSeq64_t seq)
+LVMemTable *create_table(const LVSeq64_t seq)
 {
     int flag = 0;
     Node *head = NULL;
     Node *tail = NULL;
     Arena *arena = NULL;
-    MemTable *table = NULL;
+    LVMemTable *table = NULL;
 
-    MemTable *table_temp = malloc(sizeof(MemTable));
+    LVMemTable *table_temp = malloc(sizeof(LVMemTable));
 
     if (!table_temp)
     {
@@ -70,7 +70,7 @@ cleanup:
     return table;
 }
 
-LVStatus table_insert(MemTable *table, const LVWalOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
+LVStatus table_insert(LVMemTable *table, const LVWalOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
 {
     LVStatus result = LV_OK;
     Node *update[LV_SKIPLIST_MAX_LEVEL];
@@ -119,7 +119,7 @@ _return:
     return result;
 }
 
-void table_direct_insert(MemTable *table, Node *node)
+void table_direct_insert(LVMemTable *table, Node *node)
 {
     Node *update[LV_SKIPLIST_MAX_LEVEL];
     memset(update, 0, sizeof(Node *) * LV_SKIPLIST_MAX_LEVEL);

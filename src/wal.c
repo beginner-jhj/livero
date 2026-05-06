@@ -223,7 +223,7 @@ _return:
     return result;
 }
 
-LVStatus wal_recover(const int fd, const MemTable* table)
+LVStatus wal_recover(const int fd, const LVMemTable* table)
 {
     LVStatus result = LV_OK;
     off_t wal_size = lseek(fd, 0, SEEK_END);
