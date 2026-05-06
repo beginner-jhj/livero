@@ -25,3 +25,18 @@ LVStatus read_helper(const int fd, const void* buf, const uint32_t len){
 
     return LV_OK;
 }
+
+uint32_t xorshift(void){
+    uint32_t x = time(NULL);
+    x ^= x<<13;
+    x ^= x>>17;
+    x ^= x<<5;
+    return x;
+}
+
+void safe_free(void** ptr){
+    if(ptr && *ptr){
+        free(*ptr);
+        *ptr = NULL;
+    }
+}
