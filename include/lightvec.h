@@ -2,13 +2,6 @@
 #define LV
 
 #include "lv_internal.h"
-#include "wal.h"
-#include "schema.h"
-#include "util.h"
-#include "storage.h"
-#include <fcntl.h>
-
-typedef struct LightVec LightVec;
 
 LVStatus lv_open(LightVec **db, const LVSchema* schema,const char *path);
 
