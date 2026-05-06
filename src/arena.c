@@ -1,4 +1,7 @@
 #include "arena.h"
+#include <stdlib.h>
+#include <stdalign.h>
+#include "helper.h"
 
 Arena *create_arena(void)
 {

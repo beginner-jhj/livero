@@ -2,9 +2,6 @@
 #define ARENA
 
 #include "lv_internal.h"
-#include <stdlib.h>
-#include <stdalign.h>
-#include "helper.h"
 
 
 #define BLOCK_DEFAULT_SIZE 4096 //4kb
@@ -15,7 +12,7 @@ typedef struct Block{
     struct Block* prev;
 } Block;
 
-typedef struct {
+typedef struct Arena {
     Block* current_block;
     LVSize32_t current_offset;
 } Arena;
