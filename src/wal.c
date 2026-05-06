@@ -1,4 +1,11 @@
 #include "wal.h"
+#include "storage.h"
+#include "node.h"
+#include "schema.h"
+#include "util.h"
+#include "crc.h"
+#include <unistd.h>
+#include "helper.h"
 
 LVStatus wal_append(const int fd, const LVWalOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
 {
