@@ -299,6 +299,8 @@ LVStatus wal_recover(const int fd, const MemTable* table)
         }
 
         current_offset = lseek(fd, 0, SEEK_CUR);
+
+        table_direct_insert(table, reserved_node);
     }
 
 _return:
