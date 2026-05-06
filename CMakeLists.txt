@@ -30,7 +30,6 @@ set(LV_SOURCES
     src/schema.c
     src/storage.c
     src/vector.c
-    src/hnsw.c
     src/lightvec.c
     src/util.c
     src/helper.c
