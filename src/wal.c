@@ -15,14 +15,6 @@ LVStatus wal_append(const int fd, const LVWalOp op, const LVSeq64_t seq, const L
 
     uint32_t checksum = 0;
 
-    // write magic
-    if ((result = write_helper(fd, LV_MAGIC_WAL, LV_MAGIC_SIZE)) != LV_OK)
-    {
-        goto _return;
-    }
-
-    checksum = crc_calc(LV_MAGIC_WAL, LV_MAGIC_SIZE, CRC32_SEED);
-
     // write op
     uint8_t op_to_save = (uint8_t)op;
 
@@ -324,21 +316,6 @@ LVStatus wal_read_head(const int fd, uint32_t *checksum, uint8_t *op, LVSeq64_t 
 
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
-
-    char wal_magic[LV_MAGIC_SIZE];
-
-    if ((result = read_helper(fd, wal_magic, LV_MAGIC_SIZE)) != LV_OK)
-    {
-        goto _return;
-    }
-
-    if (memcmp(wal_magic, LV_MAGIC_WAL, LV_MAGIC_SIZE) != 0)
-    {
-        result = LV_ERR_CORRUPT;
-        goto _return;
-    }
-
-    *checksum = crc_calc(wal_magic, LV_MAGIC_SIZE, *checksum);
 
     // read op
     uint8_t op_tmp;
