@@ -8,6 +8,6 @@
 #define FNV_PRIME        0x01000193u
 #define FNV_SEED         0xDEADBEEFu
 
-const LVHash32_t fnv1a_hash(const void* value, const uint32_t size);
+LVHash32_t fnv1a_hash(const void* value, const uint32_t size);
 
 #endif
