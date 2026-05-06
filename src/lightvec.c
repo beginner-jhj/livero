@@ -8,7 +8,7 @@ struct LightVec
 
     // LSM-Tree memtable
     int wal_fd;
-    MemTable *memtable;
+    LVMemTable *memtable;
     LVSeq64_t next_seq;
 
     // Vector
@@ -26,6 +26,7 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
     LVStatus result = LV_OK;
     LightVec *LV_DB = NULL;
     LVSchema *LV_SCHEMA = NULL;
+    LVMemTable *LV_MTABLE = NULL;
 
     LV_DB = malloc(sizeof(LightVec));
 
@@ -36,7 +37,10 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
         goto cleanup;
     }
 
-    // set DB default path here
+    LV_DB->next_seq = 0;
+    LV_DB->next_vector_id = 0;
+
+    // set DB default save path here
     if ((result = path_join(LV_DB->path, LV_PATH_MAX, path, "LV")) != LV_OK)
     {
         flag = 1;
@@ -57,6 +61,8 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
 
     int schema_exists = access(schema_path, F_OK) == 0;
 
+    int schema_fd;
+
     if (schema_exists)
     {
         LV_SCHEMA = malloc(sizeof(LVSchema));
@@ -67,18 +73,17 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
             goto cleanup;
         }
         // read saved schema
-        int schema_fd = open(schema_path, O_RDONLY);
+        schema_fd = open(schema_path, O_RDONLY);
         if ((result = schema_read(schema_fd, LV_SCHEMA)) != LV_OK)
         {
             flag = 1;
             goto cleanup;
         }
-        LV_DB->schema_fd = schema_fd;
     }
 
     else
     {
-        int schema_fd = open(schema_path, O_RDONLY | O_CREAT, 0644); // 0644 (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH):  owner can read/write, else only can read
+        schema_fd = open(schema_path, O_RDONLY | O_CREAT, 0644); // 0644 (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH):  owner can read/write, else only can read
 
         if ((result = schema_write(schema_fd, schema)) != LV_OK)
         {
@@ -96,16 +101,56 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
             flag = 1;
             goto cleanup;
         }
-        LV_DB->schema_fd = schema_fd;
     }
 
+    LV_DB->schema_fd = schema_fd;
     LV_DB->schema = LV_SCHEMA;
 
-    // todo recover WAL create memtable
+    // create a Memory Table
+    LV_MTABLE = create_table(LV_DB->next_seq);
+    if (!LV_MTABLE)
+    {
+        flag = 1;
+        goto cleanup;
+    }
+
+    LV_DB->memtable = LV_MTABLE;
+
+    // WAL
+    // when it exists, then recover it.
+    // else just create a new wal file
+
+    char wal_path[LV_PATH_MAX];
+    if ((result = path_join(wal_path, LV_PATH_MAX, LV_DB->path, "wal.lv")) != LV_OK)
+    {
+        flag = 1;
+        goto cleanup;
+    }
+
+    int wal_exists = access(wal_path, F_OK) == 0;
+    int wal_fd;
+
+    if (wal_exists)
+    {
+        wal_fd = open(wal_path, O_RDONLY);
+
+        if ((result = wal_recover(wal_fd, LV_MTABLE)) != LV_OK)
+        {
+            flag = 1;
+            goto cleanup;
+        }
+    }
+    else
+    {
+        wal_fd = open(wal_path, O_RDONLY | O_CREAT, 0644);
+    }
+
+    LV_DB->wal_fd = wal_fd;
 
 cleanup:
     if (flag)
     {
+        safe_free(LV_MTABLE);
         safe_free(LV_SCHEMA);
         safe_free(LV_DB);
     }
@@ -194,7 +239,7 @@ LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len,
         goto _return;
     }
 
-    // append to MemTable
+    // append to LVMemTable
 
     if ((result = table_insert(db->memtable, LV_WAL_PUT, db->next_seq, new_level, key_len, key, value_len, value, db->next_vector_id, field_mask, field_count, field_size, fields)) != LV_OK)
     {
