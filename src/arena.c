@@ -44,9 +44,9 @@ Arena *create_arena(void)
 cleanup:
     if (flag)
     {
-        safe_free(block_data);
-        safe_free(block);
-        safe_free(arena);
+        safe_free(&block_data);
+        safe_free(&block);
+        safe_free(&arena);
     }
 
     return arena;
@@ -57,11 +57,11 @@ void destroy_arena(Arena* arena){
         Block* current = arena->current_block;
         while(current){
             Block* prev = current->prev;
-            safe_free(current->data);
-            safe_free(current);
+            safe_free(&current->data);
+            safe_free(&current);
             current = prev;
         }
-        safe_free(arena);
+        safe_free(&arena);
     }
 }
 
@@ -133,10 +133,10 @@ void *arena_allocate(Arena *arena, LVSize32_t total)
     cleanup:
         if (flag)
         {
-            safe_free(dedicated_block_data);
-            safe_free(dedicated_block);
-            safe_free(normal_block_data);
-            safe_free(normal_block);
+            safe_free(&dedicated_block_data);
+            safe_free(&dedicated_block);
+            safe_free(&normal_block_data);
+            safe_free(&normal_block);
         }
 
         goto _return;
@@ -155,7 +155,7 @@ void *arena_allocate(Arena *arena, LVSize32_t total)
 
         if (!temp_data)
         {
-            safe_free(new_block);
+            safe_free(&new_block);
             goto _return;
         }
 
@@ -171,7 +171,7 @@ void *arena_allocate(Arena *arena, LVSize32_t total)
         goto _return;
     }
 
-    result = arena->current_block->data + aligned_offset;
+    result = (char*)arena->current_block->data + aligned_offset;
     arena->current_offset = aligned_offset + total;
 _return:
     return result;
