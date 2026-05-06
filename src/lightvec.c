@@ -150,9 +150,9 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
 cleanup:
     if (flag)
     {
-        safe_free(LV_MTABLE);
-        safe_free(LV_SCHEMA);
-        safe_free(LV_DB);
+        safe_free(&LV_MTABLE);
+        safe_free(&LV_SCHEMA);
+        safe_free(&LV_DB);
     }
 
     return result;
