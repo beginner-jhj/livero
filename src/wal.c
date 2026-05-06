@@ -224,13 +224,17 @@ LVStatus wal_append(const int fd, const LVWalOp op, const LVSeq64_t seq, const L
 
     put_fixed_32(BUF_32, checksum);
 
-    result = write_helper(fd, BUF_32, sizeof(uint32_t));
+    if((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK){
+        goto _return;
+    }
+
+    result = write_helper_flush(fd, 1);
 
 _return:
     return result;
 }
 
-LVStatus wal_recover(const int fd, const LVMemTable* table)
+LVStatus wal_recover(const int fd, const LVMemTable *table)
 {
     LVStatus result = LV_OK;
     off_t wal_size = lseek(fd, 0, SEEK_END);
