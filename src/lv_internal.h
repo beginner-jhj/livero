@@ -24,6 +24,21 @@ typedef uint64_t LVBigCount64_t;   /* large counts (e.g. total record count)   *
 typedef uint64_t LVVectorId64_t;   /* internal vector identifier               */
 typedef uint32_t LVHash32_t; /*hash*/
 
+/* ── Forward declarations ────────────────────────────────────────────────────
+ * Centralized opaque type declarations for internal structs.
+ */
+typedef struct Block Block;
+typedef struct Arena Arena;
+
+typedef struct LVMetaField LVMetaField;
+typedef struct LVMetaFieldDef LVMetaFieldDef;
+typedef struct LVMetaFieldHash LVMetaFieldHash;
+typedef struct LVSchema LVSchema;
+
+typedef struct Node Node;
+typedef struct LVMemTable LVMemTable;
+typedef struct LightVec LightVec;
+
 /* ── Status codes ───────────────────────────────────────────────────────────
  * Returned by all functions except lifecycle constructors.
  * Constructors return a pointer + write status to an output parameter.
@@ -46,6 +61,13 @@ typedef enum {
     LV_VEC_FLOAT32 = 0,
     LV_VEC_INT8    = 1,
 } LVVectorType;
+
+/* ── WAL operation ──────────────────────────────────────────────────────────*/
+typedef enum
+{
+    LV_WAL_PUT = 0,
+    LV_WAL_DELETE = 1,
+} LVWalOp;
 
 /* ── File magic numbers ─────────────────────────────────────────────────────
  * 4-byte ASCII identifiers written at the start of each file.
