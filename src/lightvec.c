@@ -1,4 +1,12 @@
 #include "lightvec.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include "util.h"
+#include "schema.h"
+#include "wal.h"
+#include "storage.h"
+#include "helper.h"
 
 struct LightVec
 {
