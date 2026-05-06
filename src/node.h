@@ -2,8 +2,7 @@
 #define NODE
 
 #include "lv_internal.h"
-#include "wal.h"
-#include "arena.h"
+
 
 typedef enum NodeType
 {
