@@ -12,7 +12,7 @@ Node *create_node(const Arena *arena, const NodeType type, const LVSeq64_t seq, 
     uint32_t total_node_size = sizeof(Node) + level * sizeof(Node *) + key_len + value_len + field_size;
 
 
-    if ((node = (Node *)arena_allocate(arena, total_node_size)) == NULL)
+    if ((node = (Node *)arena_allocate(arena, total_node_size,-1)) == NULL)
     {
         goto _return;
     }
@@ -92,7 +92,7 @@ _return:
 
 void *node_reserve(const Arena *arena, const LVSize32_t node_size)
 {
-    return (Node*)arena_allocate(arena, node_size);
+    return (Node*)arena_allocate(arena, node_size,-1);
 }
 
 //-1: a is smaller than b
