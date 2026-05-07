@@ -98,10 +98,6 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
             flag = 1;
             goto cleanup;
         }
-        // LV_SCHEMA->field_count = schema->field_count;
-        // memcpy(LV_SCHEMA->field_defs, schema->field_defs, sizeof(LVMetaFieldDef) * schema->field_count);
-        // LV_SCHEMA->vector_dim = schema->vector_dim;
-        // LV_SCHEMA->vector_type = schema->vector_type;
 
         LV_SCHEMA = create_schema(schema->vector_dim, schema->vector_type, schema->field_count, schema->field_defs);
         if (!LV_SCHEMA)
@@ -166,7 +162,7 @@ cleanup:
     return result;
 }
 
-LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len, const void *value, const LVValueLen32_t value_len, const LVSize32_t vector_dim, const float *vector, const LVCount32_t field_count, const LVMetaField *fields)
+LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len, const void *value, const LVValueLen32_t value_len, const LVSize32_t vector_dim, const void *vector, const LVCount32_t field_count, const LVMetaField *fields)
 {
     LVStatus result = LV_OK;
 
