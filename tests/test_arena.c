@@ -98,7 +98,7 @@ static void test_basic_allocation(void)
 
     /* 2-1. A normal small allocation must succeed (non-NULL). */
     TEST_START(n++, "small alloc returns non-null");
-    void *p = arena_allocate(arena, 16);
+    void *p = arena_allocate(arena, 16,-1);
     expect_ptr_not_null(p, "small alloc returns non-null");
 
     /* 2-2. The returned pointer must satisfy the alignment requirement.
@@ -147,7 +147,7 @@ static void test_no_overlap(void)
     void *ptrs[8];
 
     for (int i = 0; i < COUNT; i++) {
-        ptrs[i] = arena_allocate(arena, (LVSize32_t)EACH);
+        ptrs[i] = arena_allocate(arena, (LVSize32_t)EACH,-1);
         if (ptrs[i]) {
             /* Write a distinct pattern so we can detect overwrites */
             memset(ptrs[i], (uint8_t)(0x10 + i), EACH);
@@ -211,13 +211,13 @@ static void test_alignment(void)
 
     /* 4-1. Allocation of size 1 — the next alloc must still be aligned. */
     TEST_START(n++, "alloc(1) result is aligned");
-    void *p1 = arena_allocate(arena, 1);
+    void *p1 = arena_allocate(arena, 1,-1);
     expect_aligned(p1, align, "alloc(1) result is aligned");
 
     /* 4-2. After a 1-byte alloc, offset is not a multiple of align.
      *      The arena must pad before the next alloc. */
     TEST_START(n++, "alloc after alloc(1) is aligned");
-    void *p2 = arena_allocate(arena, 16);
+    void *p2 = arena_allocate(arena, 16,-1);
     expect_aligned(p2, align, "alloc after alloc(1) is aligned");
 
     /* 4-3. Odd-size chain: 3, 5, 7 bytes — each result must be aligned. */
@@ -226,7 +226,7 @@ static void test_alignment(void)
         char label[64];
         snprintf(label, sizeof(label), "alloc(%u) is aligned", odd_sizes[i]);
         TEST_START(n++, label);
-        void *p = arena_allocate(arena, odd_sizes[i]);
+        void *p = arena_allocate(arena, odd_sizes[i],-1);
         expect_aligned(p, align, label);
     }
 
@@ -258,7 +258,7 @@ static void test_block_overflow(void)
      * allocation of `align` bytes will just barely not fit. */
     LVSize32_t align    = arena_alignment();
     LVSize32_t fill     = BLOCK_DEFAULT_SIZE - align;
-    void *fill_ptr = arena_allocate(arena, fill);
+    void *fill_ptr = arena_allocate(arena, fill,-1);
 
     TEST_START(n++, "fill allocation succeeds");
     expect_ptr_not_null(fill_ptr, "fill allocation succeeds");
@@ -266,7 +266,7 @@ static void test_block_overflow(void)
     /* 5-1. Now allocate something that won't fit in the remaining space.
      *      The arena must create a new block. */
     TEST_START(n++, "overflow triggers new block");
-    void *overflow_ptr = arena_allocate(arena, align * 2);
+    void *overflow_ptr = arena_allocate(arena, align * 2,-1);
     expect_ptr_not_null(overflow_ptr, "overflow triggers new block");
 
     /* If a new block was created, current_block must have changed. */
@@ -310,7 +310,7 @@ static void test_dedicated_block(void)
     /* 6-1. Request more than BLOCK_DEFAULT_SIZE bytes. */
     LVSize32_t large = BLOCK_DEFAULT_SIZE + 1;
     TEST_START(n++, "large alloc (> block size) returns non-null");
-    void *large_ptr = arena_allocate(arena, large);
+    void *large_ptr = arena_allocate(arena, large,-1);
     expect_ptr_not_null(large_ptr, "large alloc (> block size) returns non-null");
 
     /* 6-2. After the large alloc, the arena must have reset to a fresh
@@ -323,7 +323,7 @@ static void test_dedicated_block(void)
 
     /* 6-3. Small alloc after large alloc must succeed. */
     TEST_START(n++, "small alloc after large alloc succeeds");
-    void *small_ptr = arena_allocate(arena, 16);
+    void *small_ptr = arena_allocate(arena, 16,-1);
     expect_ptr_not_null(small_ptr, "small alloc after large alloc succeeds");
 
     /* 6-4. The two pointers must be different (no overlap). */
@@ -385,7 +385,7 @@ static void test_stress(void)
             size = (LVSize32_t)lv_rand_int_range(1, 256);
         }
 
-        void *p = arena_allocate(arena, size);
+        void *p = arena_allocate(arena, size,-1);
 
         if (!p) {
             null_count++;
@@ -435,9 +435,9 @@ static void test_destroy(void)
     Arena *arena = create_arena();
     if (arena) {
         /* Force at least 2 blocks */
-        arena_allocate(arena, BLOCK_DEFAULT_SIZE - 1);
-        arena_allocate(arena, BLOCK_DEFAULT_SIZE - 1);
-        arena_allocate(arena, BLOCK_DEFAULT_SIZE + 1); /* dedicated block */
+        arena_allocate(arena, BLOCK_DEFAULT_SIZE - 1,-1);
+        arena_allocate(arena, BLOCK_DEFAULT_SIZE - 1,-1);
+        arena_allocate(arena, BLOCK_DEFAULT_SIZE + 1,-1); /* dedicated block */
         destroy_arena(arena);
         TEST_SUCCESS("destroy after multi-block usage does not crash");
     }
