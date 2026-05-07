@@ -11,6 +11,11 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
     int flag = 0;
     LVSchema *schema = NULL;
 
+    if (vector_dim > LV_MAX_DIMENSION || field_count > LV_MAX_META_FIELDS)
+    {
+        goto cleanup;
+    }
+
     LVSchema *schema_temp = malloc(sizeof(LVSchema));
     if (!schema_temp)
     {
@@ -191,8 +196,11 @@ LVStatus schema_write(const int fd, const LVSchema *schema)
 
     // write checksum
     put_fixed_32(BUF_32, checksum);
-    result = write_helper(fd, BUF_32, sizeof(uint32_t));
+    if((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK){
+        goto _return;
+    }
 
+    result =  write_helper_flush(fd, 1);
 _return:
     return result;
 }
