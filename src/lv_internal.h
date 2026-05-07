@@ -70,6 +70,12 @@ typedef struct Node Node;
 typedef struct LVMemTable LVMemTable;
 typedef struct LightVec LightVec;
 
+typedef struct LVHnswNode LVHnswNode;
+typedef struct LVHnsw LVHnsw;
+
+
+#define LV_MAX_DIMENSION 4096
+
 /* ── Status codes ───────────────────────────────────────────────────────────
  * Returned by all functions except lifecycle constructors.
  * Constructors return a pointer + write status to an output parameter.
@@ -91,13 +97,11 @@ typedef enum {
  * Used to validate that the correct file type is being opened.
  */
 #define LV_MAGIC_SIZE 4
-#define LV_MAGIC_WAL "LVWL"
 #define LV_MAGIC_SST "LVST"
 #define LV_MAGIC_SCHEMA     "LVSM"
 #define LV_MAGIC_VECTORS    "LVVC"
 #define LV_MAGIC_HNSW_INDEX "LVHI"
 #define LV_MAGIC_HNSW_GRAPH "LVHG"
-#define LV_MAGIC_MANIFEST   "LVMF"
 
 /* ── File format version ────────────────────────────────────────────────────
  * Increment when the on-disk format changes in a breaking way.
