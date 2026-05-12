@@ -335,14 +335,14 @@ LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len,
 
     // append to WAL
 
-    if ((result = wal_append(db->wal_fd, LV_WAL_PUT, db->next_seq, new_level, key_len, key, value_len, value, db->next_vector_id, field_mask, field_count, field_size, fields)) != LV_OK)
+    if ((result = wal_append(db->wal_fd, LV_PUT, db->next_seq, new_level, key_len, key, value_len, value, db->next_vector_id, field_mask, field_count, field_size, fields)) != LV_OK)
     {
         goto _return;
     }
 
     // append to MemTable
 
-    if ((result = table_insert(db->memtable, LV_WAL_PUT, db->next_seq, new_level, key_len, key, value_len, value, db->next_vector_id, field_mask, field_count, field_size, fields)) != LV_OK)
+    if ((result = table_insert(db->memtable, LV_PUT, db->next_seq, new_level, key_len, key, value_len, value, db->next_vector_id, field_mask, field_count, field_size, fields)) != LV_OK)
     {
         goto _return;
     }
