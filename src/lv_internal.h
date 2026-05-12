@@ -89,6 +89,7 @@ typedef enum {
     LV_ERR_INVALID   = -5,   /* bad argument (NULL, out-of-range, etc.)   */
     LV_ERR_FULL      = -6,   /* capacity exceeded                         */
     LV_ERR_DUPLICATE = -7,   /* key already exists (if uniqueness required)*/
+    LV_ERR_INVALID_DB = -8,
 } LVStatus;
 
 
@@ -102,6 +103,9 @@ typedef enum {
 #define LV_MAGIC_VECTORS    "LVVC"
 #define LV_MAGIC_HNSW_INDEX "LVHI"
 #define LV_MAGIC_HNSW_GRAPH "LVHG"
+
+
+#define LV_MAGIC 0x4C564442
 
 /* ── File format version ────────────────────────────────────────────────────
  * Increment when the on-disk format changes in a breaking way.
