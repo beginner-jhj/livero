@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include "helper.h"
 
-LVStatus wal_append(const int fd, const LVWalOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
+LVStatus wal_append(const int fd, const LVInsertOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
 {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
@@ -56,7 +56,7 @@ LVStatus wal_append(const int fd, const LVWalOp op, const LVSeq64_t seq, const L
     checksum = crc_calc(BUF_32, sizeof(uint32_t), checksum);
 
     // DELETE op
-    if (op == LV_WAL_DELETE)
+    if (op == LV_DELETE)
     {
         if ((result = write_helper(fd, key, key_len)) != LV_OK)
         {
@@ -258,8 +258,8 @@ LVStatus wal_recover(const int fd, const LVMemTable *table)
 
         Node *reserved_node = node_reserve(table->arena, node_size_to_reserve);
 
-        reserved_node->type = DATA;
-        reserved_node->op = (LVWalOp)saved_op;
+        reserved_node->type = LV_NODE_DATA;
+        reserved_node->op = (LVInsertOp)saved_op;
         reserved_node->seq = saved_seq;
         reserved_node->level = saved_level;
         reserved_node->key_len = saved_key_len;
@@ -270,7 +270,7 @@ LVStatus wal_recover(const int fd, const LVMemTable *table)
 
         memset(reserved_node->levels, 0, saved_level * sizeof(Node *));
 
-        if (reserved_node->op == LV_WAL_DELETE)
+        if (reserved_node->op == LV_DELETE)
         {
             if ((result = read_helper(fd, node_access_key(reserved_node), saved_key_len)) != LV_OK)
             {
@@ -354,7 +354,7 @@ LVStatus wal_read_head(const int fd, uint32_t *checksum, uint8_t *op, LVSeq64_t 
     *key_len = get_fixed_32(BUF_32);
 
     // if it is a to be deleted node then skip else
-    if (*op == LV_WAL_DELETE)
+    if (*op == LV_DELETE)
     {
         *value_len = 0;
         *vector_id = (uint64_t)-1;
