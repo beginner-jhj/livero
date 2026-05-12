@@ -23,7 +23,7 @@ LVMemTable *create_table(const LVSeq64_t seq)
 
     table = table_temp;
 
-    Arena *arena_temp = create_arena();
+    Arena *arena_temp = create_arena(BLOCK_DEFAULT_SIZE);
 
     if (!arena_temp)
     {
