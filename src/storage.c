@@ -35,7 +35,7 @@ LVMemTable *create_table(const LVSeq64_t seq)
 
     table->arena = arena;
 
-    Node *head_temp = create_node(table->arena, HEAD, seq, LV_WAL_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+    Node *head_temp = create_node(table->arena, LV_NODE_HEAD, seq, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
 
     if (!head_temp)
     {
@@ -45,7 +45,7 @@ LVMemTable *create_table(const LVSeq64_t seq)
 
     head = head_temp;
 
-    Node *tail_temp = create_node(table->arena, TAIL, seq, LV_WAL_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+    Node *tail_temp = create_node(table->arena, LV_NODE_TAIL, seq, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
 
     if (!tail_temp)
     {
@@ -75,7 +75,7 @@ cleanup:
     return table;
 }
 
-LVStatus table_insert(LVMemTable *table, const LVWalOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
+LVStatus table_insert(LVMemTable *table, const LVInsertOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
 {
     LVStatus result = LV_OK;
     Node *update[LV_SKIPLIST_MAX_LEVEL];
@@ -87,18 +87,20 @@ LVStatus table_insert(LVMemTable *table, const LVWalOp op, const LVSeq64_t seq, 
 
     while (current_update_level >= 0)
     {
-        while (node_cmp(current_cmp_node->type, node_access_key(current_cmp_node), current_cmp_node->key_len, current_cmp_node->seq, DATA, key, key_len, seq) < 0)
+        while (node_cmp(current_cmp_node->type, node_access_key(current_cmp_node), current_cmp_node->key_len, current_cmp_node->seq, LV_NODE_DATA, key, key_len, seq) < 0)
         {
             current_head = current_cmp_node;
             current_cmp_node = current_head->levels[current_update_level];
         }
 
         update[current_update_level] = current_head;
+        if (current_update_level == 0)
+            break;
         --current_update_level;
         current_cmp_node = current_head->levels[current_update_level];
     }
 
-    Node *new_node = create_node(table->arena, DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_list);
+    Node *new_node = create_node(table->arena, LV_NODE_DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_list);
     if (!new_node)
     {
         result = LV_ERR_FULL;
@@ -142,6 +144,8 @@ void table_direct_insert(LVMemTable *table, Node *node)
         }
 
         update[current_update_level] = current_head;
+        if (current_update_level == 0)
+            break;
         --current_update_level;
         current_cmp_node = current_head->levels[current_update_level];
     }
@@ -160,4 +164,42 @@ void table_direct_insert(LVMemTable *table, Node *node)
         node->levels[i] = update[i]->levels[i];
         update[i]->levels[i] = node;
     }
+}
+
+Node *table_search(const LVMemTable *table, const void *key, const LVKeyLen32_t key_len)
+{
+    Node *result = NULL;
+    const LVSeq64_t seq_for_search = UINT64_MAX;
+    LVLevel8_t current_level = table->current_level - 1;
+    Node *current_candidate = table->head;
+    Node *current_cmp_node = current_candidate->levels[current_level];
+
+    while (current_level >= 0)
+    {
+        while (node_cmp(current_cmp_node->type, node_access_key(current_cmp_node), current_cmp_node->key_len, current_cmp_node->seq, LV_NODE_DATA, key, key_len, seq_for_search) < 0)
+        {
+            current_candidate = current_cmp_node;
+            current_cmp_node = current_candidate->levels[current_level];
+        }
+        if (node_key_equal(node_access_key(current_cmp_node), current_cmp_node->key_len, key, key_len))
+        {
+            if (current_cmp_node->op != LV_DELETE)
+            {
+                result = current_cmp_node;
+                goto _return;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        if (current_level == 0)
+            break;
+        --current_level;
+        current_cmp_node = current_candidate->levels[current_level];
+    }
+
+_return:
+    return result;
 }
