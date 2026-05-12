@@ -31,6 +31,7 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
     schema->field_count = field_count;
 
     schema->next_field_mask = 1;
+    schema->total_field_mask = 0;
 
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
 
@@ -52,6 +53,7 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
             goto cleanup;
         }
 
+        schema->total_field_mask |= schema->next_field_mask;
         schema->next_field_mask <<= 1;
     }
 
@@ -287,7 +289,8 @@ LVStatus schema_read(const int fd, LVSchema *schema)
 
     int count = 0;
 
-    uint32_t mask = 1;
+    uint32_t next_filed_mask = 1;
+    uint32_t total_filed_mask = 0;
 
     char saved_field_name[LV_META_NAME_MAX];
     memset(saved_field_name, 0, LV_META_NAME_MAX);
@@ -330,17 +333,19 @@ LVStatus schema_read(const int fd, LVSchema *schema)
 
         checksum = crc_calc(BUF_32, sizeof(uint32_t), checksum);
 
-        if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, mask)) != LV_OK)
+        if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, next_filed_mask)) != LV_OK)
         {
             goto _return;
         }
 
-        mask <<= 1;
+        total_filed_mask |= next_filed_mask;
+        next_filed_mask <<= 1;
 
         ++count;
     }
 
-    schema->next_field_mask = mask;
+    schema->total_field_mask = total_filed_mask;
+    schema->next_field_mask = next_filed_mask;
 
     // read checksum
     if ((result = read_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
