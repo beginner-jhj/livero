@@ -15,9 +15,10 @@ typedef struct Block{
 typedef struct Arena {
     Block* current_block;
     LVSize32_t current_offset;
+    LVSize32_t block_size;
 } Arena;
 
-Arena* create_arena(void);
+Arena* create_arena(const LVSize32_t block_size);
 
 void destroy_arena(Arena* arena);
 

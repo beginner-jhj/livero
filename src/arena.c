@@ -3,7 +3,7 @@
 #include <stdalign.h>
 #include "helper.h"
 
-Arena *create_arena(void)
+Arena *create_arena(const LVSize32_t block_size)
 {
     int flag = 0;
     Arena *arena = NULL;
@@ -43,6 +43,7 @@ Arena *create_arena(void)
 
     arena->current_block = block;
     arena->current_offset = 0;
+    arena->block_size = block_size;
 
 cleanup:
     if (flag)
@@ -81,7 +82,7 @@ void *arena_allocate(Arena *arena, const LVSize32_t total, LVSize32_t align)
 
     void *result = NULL;
 
-    if (total > BLOCK_DEFAULT_SIZE)
+    if (total > arena->block_size)
     {
         int flag = 0;
 
@@ -122,9 +123,9 @@ void *arena_allocate(Arena *arena, const LVSize32_t total, LVSize32_t align)
         normal_block = normal_block_temp;
         normal_block->data = NULL;
         normal_block->prev = NULL;
-        normal_block->size = BLOCK_DEFAULT_SIZE;
+        normal_block->size = arena->block_size;
 
-        normal_block_data = malloc(BLOCK_DEFAULT_SIZE);
+        normal_block_data = malloc(arena->block_size);
         if (!normal_block_data)
         {
             flag = 1;
@@ -151,7 +152,7 @@ void *arena_allocate(Arena *arena, const LVSize32_t total, LVSize32_t align)
         goto _return;
     }
 
-    if (aligned_offset + total > BLOCK_DEFAULT_SIZE)
+    if (aligned_offset + total > arena->block_size)
     {
         Block *new_block = malloc(sizeof(Block));
 
@@ -160,7 +161,7 @@ void *arena_allocate(Arena *arena, const LVSize32_t total, LVSize32_t align)
             goto _return;
         }
 
-        void *temp_data = malloc(BLOCK_DEFAULT_SIZE);
+        void *temp_data = malloc(arena->block_size);
 
         if (!temp_data)
         {
@@ -170,7 +171,7 @@ void *arena_allocate(Arena *arena, const LVSize32_t total, LVSize32_t align)
 
         new_block->data = temp_data;
         new_block->prev = arena->current_block;
-        new_block->size = BLOCK_DEFAULT_SIZE;
+        new_block->size = arena->block_size;
 
         arena->current_block = new_block;
         arena->current_offset = total;
