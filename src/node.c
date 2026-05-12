@@ -3,7 +3,7 @@
 #include "arena.h"
 #include <string.h>
 
-Node *create_node(const Arena *arena, const NodeType type, const LVSeq64_t seq, const LVWalOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count,const LVSize32_t field_size, const LVMetaField *field_list)
+Node *create_node(const Arena *arena, const LVNodeType type, const LVSeq64_t seq, const LVInsertOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
 {
     int flag = 0;
     Node *node = NULL;
@@ -11,8 +11,7 @@ Node *create_node(const Arena *arena, const NodeType type, const LVSeq64_t seq, 
     // Node + level*(Node ptr) + key + value + field
     uint32_t total_node_size = sizeof(Node) + level * sizeof(Node *) + key_len + value_len + field_size;
 
-
-    if ((node = (Node *)arena_allocate(arena, total_node_size,-1)) == NULL)
+    if ((node = (Node *)arena_allocate(arena, total_node_size, -1)) == NULL)
     {
         goto _return;
     }
@@ -92,15 +91,15 @@ _return:
 
 void *node_reserve(const Arena *arena, const LVSize32_t node_size)
 {
-    return (Node*)arena_allocate(arena, node_size,-1);
+    return (Node *)arena_allocate(arena, node_size, -1);
 }
 
-//-1: a is smaller than b
-// 1: a is bigger than b
+//-1: a < b
+// 1: a > b
 
-int node_cmp(const NodeType type_a, const void *key_a, const LVKeyLen32_t klen_a, const LVSeq64_t seq_a, const NodeType type_b, const void *key_b, const LVKeyLen32_t klen_b, const LVSeq64_t seq_b)
+int node_cmp(const LVNodeType type_a, const void *key_a, const LVKeyLen32_t klen_a, const LVSeq64_t seq_a, const LVNodeType type_b, const void *key_b, const LVKeyLen32_t klen_b, const LVSeq64_t seq_b)
 {
-    if (type_a == DATA && type_b == DATA)
+    if (type_a == LV_NODE_DATA && type_b == LV_NODE_DATA)
     {
         const LVKeyLen32_t min_len = klen_a < klen_b ? klen_a : klen_b;
 
@@ -140,24 +139,24 @@ int node_cmp(const NodeType type_a, const void *key_a, const LVKeyLen32_t klen_a
 
     else
     {
-        if (type_a == HEAD)
+        if (type_a == LV_NODE_HEAD)
         {
             return -1;
         }
 
-        else if (type_a == TAIL)
+        else if (type_a == LV_NODE_TAIL)
         {
             return 1;
         }
 
         else
         {
-            if (type_b == HEAD)
+            if (type_b == LV_NODE_HEAD)
             {
                 return 1;
             }
 
-            else if (type_b == TAIL)
+            else if (type_b == LV_NODE_TAIL)
             {
                 return -1;
             }
@@ -165,11 +164,19 @@ int node_cmp(const NodeType type_a, const void *key_a, const LVKeyLen32_t klen_a
     }
 }
 
+int node_key_equal(const void *key_a, const LVKeyLen32_t klen_a, const void *key_b, const LVKeyLen32_t klen_b)
+{
+    if (klen_a != klen_b)
+        return 0;
+    return memcpy(key_a, key_b, klen_a) == 0;
+}
+
 void *node_access_key(const Node *node)
 {
     return (char *)node + node_key_offset(node->level);
 }
 
-void*node_access_value(const Node* node){
-    return (char*)node + node_value_offset(node->level, node->key_len);
+void *node_access_value(const Node *node)
+{
+    return (char *)node + node_value_offset(node->level, node->key_len);
 }
