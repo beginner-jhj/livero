@@ -34,9 +34,9 @@ typedef enum {
 
 /* ── WAL operation ──────────────────────────────────────────────────────────*/
 typedef enum {
-    LV_WAL_PUT = 0,
-    LV_WAL_DELETE = 1,
-} LVWalOp;
+    LV_PUT = 0,
+    LV_DELETE = 1,
+} LVInsertOp;
 
 /* ── Metadata field type ────────────────────────────────────────────────────
  * Determines how each metadata field is encoded on disk and compared
@@ -50,10 +50,10 @@ typedef enum {
 
 /* ── Node type ──────────────────────────────────────────────────────────────*/
 typedef enum {
-    HEAD = 0,
-    TAIL = 1,
-    DATA = 2,
-} NodeType;
+    LV_NODE_HEAD = 0,
+    LV_NODE_TAIL = 1,
+    LV_NODE_DATA = 2,
+} LVNodeType;
 
 /* ── Forward declarations ────────────────────────────────────────────────────
  * Centralized opaque type declarations for internal structs.
