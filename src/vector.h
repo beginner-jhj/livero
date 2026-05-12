@@ -47,7 +47,7 @@ typedef struct LVHnswIDMap
 typedef enum LVDisType
 {
     LV_DIS_F32 = 0,
-    LV_DIS_I32 = 1,
+    LV_DIS_U32 = 1,
 } LVDisType;
 
 typedef struct LVHnswEntry

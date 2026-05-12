@@ -612,7 +612,7 @@ static inline LVStatus vector_hnsw_search_layer(LVHnsw *hnsw, const LVHnswNode *
             const int8_t *ep_vector = (int8_t *)(hnsw->id_vector_map->map[ep_list[i]->id]);
             ep_entry.id = ep_list[i]->id;
             ep_entry.dis.i32 = vector_i8_l2_sq((int8_t *)new_node_vector, ep_vector, hnsw->aligned_dim);
-            ep_entry.dis_type = LV_DIS_I32;
+            ep_entry.dis_type = LV_DIS_U32;
         }
         if ((result = vector_heap_insert(hnsw->frontier_heap, &ep_entry)) != LV_OK)
         {
@@ -679,7 +679,7 @@ static inline LVStatus vector_hnsw_search_layer(LVHnsw *hnsw, const LVHnswNode *
                     const uint32_t dis = vector_i8_l2_sq((int8_t *)new_node_vector, (int8_t *)neighbor_vector, hnsw->aligned_dim);
                     if (hnsw->result_heap->size < HNSW_EF_CONSTRUCTION || dis < hnsw->result_heap->entries[0].dis.i32)
                     {
-                        LVHnswEntry new_entry = {.id = neighbor_id, .dis = dis, .dis_type = LV_DIS_I32};
+                        LVHnswEntry new_entry = {.id = neighbor_id, .dis = dis, .dis_type = LV_DIS_U32};
                         if ((result = vector_heap_insert(hnsw->frontier_heap, &new_entry)) != LV_OK)
                         {
                             goto _return;
