@@ -18,6 +18,7 @@ typedef struct Node
 } Node;
 
 Node *create_node(const Arena *arena, const LVNodeType type, const LVSeq64_t seq, const LVInsertOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list);
+void *node_reserve(const Arena *arena, const LVSize32_t node_size);
 
 uint32_t node_key_offset(const LVLevel8_t level)
 {
@@ -39,7 +40,8 @@ int node_key_equal(const void *key_a, const LVKeyLen32_t klen_a, const void *key
 
 void *node_access_key(const Node *node);
 void *node_access_value(const Node *node);
+void *node_access_field(const Node *node, const int number);
 
-void *node_reserve(const Arena *arena, const LVSize32_t node_size);
+int node_field_number(const Node* node, const LVSize32_t mask);
 
 #endif

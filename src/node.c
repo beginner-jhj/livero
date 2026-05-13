@@ -168,7 +168,7 @@ int node_key_equal(const void *key_a, const LVKeyLen32_t klen_a, const void *key
 {
     if (klen_a != klen_b)
         return 0;
-    return memcpy(key_a, key_b, klen_a) == 0;
+    return memcmp(key_a, key_b, klen_a) == 0;
 }
 
 void *node_access_key(const Node *node)
@@ -179,4 +179,58 @@ void *node_access_key(const Node *node)
 void *node_access_value(const Node *node)
 {
     return (char *)node + node_value_offset(node->level, node->key_len);
+}
+
+void *node_access_field(const Node *node, const int number)
+{
+    char *field = (char *)node + node_field_offset(node->level, node->key_len, node->value_len);
+    LVMetaType type;
+    for (int i = 0; i < number; ++i)
+    {
+        memcpy(&type, field, sizeof(LVMetaType));
+        field += sizeof(LVMetaType);
+
+        switch (type)
+        {
+        case LV_META_FLOAT:
+            field += sizeof(double);
+            break;
+        case LV_META_INT:
+            field += sizeof(int64_t);
+            break;
+
+        case LV_META_STRING:
+        {
+            uint32_t len = 0;
+            memcpy(&len, field, sizeof(uint32_t));
+            field += sizeof(uint32_t) + len;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    return field;
+}
+
+int node_field_number(const Node *node, const LVSize32_t mask)
+{
+    if (!(node->field_mask & mask) || node->field_count == 0)
+        return -1;
+    int number = 0;
+    for (int i = 0; i < LV_MAX_META_FIELDS - 1; ++i)
+    {
+        uint32_t bit = (1 << i);
+        if (bit == mask)
+        {
+            return number;
+        }
+        if (node->field_mask & bit)
+        {
+            ++number;
+        }
+    }
+
+    return -1;
 }
