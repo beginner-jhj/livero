@@ -3,12 +3,6 @@
 
 #include "lv_internal.h"
 
-/* ── Schema ─────────────────────────────────────────────────────────────────
- * Defined once at lv_open. Stored in schema.lv. All records share one schema.
- */
-#define LV_MAX_META_FIELDS 32
-#define LV_META_NAME_MAX 64 /* includes null terminator */
-
 typedef struct LVMetaFieldDef
 {
     char name[LV_META_NAME_MAX];
@@ -26,7 +20,7 @@ typedef struct LVMetaField
         struct
         {
             uint32_t len;
-            const void *string;
+            const char *string;
         } str;
     } value;
 } LVMetaField;
@@ -35,6 +29,7 @@ typedef struct LVMetaFieldHash
 {
     LVHash32_t hash;
     char field_name[LV_META_NAME_MAX];
+    LVMetaType type;
     uint32_t mask;
     struct LVMetaFieldHash *next;
 } LVMetaFieldHash;
@@ -58,7 +53,7 @@ LVStatus schema_write(const int fd, const LVSchema *schema);
 LVStatus schema_read(const int fd, LVSchema *schema);
 
 void schema_destroy_field_hashes(LVMetaFieldHash **hashes);
-LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_name, const uint32_t mask);
+LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_name,const LVMetaType type, const uint32_t mask);
 
 // 1 exists, 0 non-exists
 LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash **hashes, const char *field_name);

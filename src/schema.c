@@ -39,15 +39,24 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
     {
         const LVMetaFieldDef *current_def = field_defs + i;
 
-        if (current_def->name > LV_META_NAME_MAX)
+        if (strlen(current_def->name) > LV_META_NAME_MAX)
         {
             flag = 1;
             goto cleanup;
         }
 
+        for (int j = 0; j < strlen(current_def->name); ++j) //check name is valid
+        {
+            if (!isalnum(current_def->name[j]) && current_def->name[j] != '_')
+            {
+                flag = 1;
+                goto cleanup;
+            }
+        }
+
         schema->field_defs[i] = *current_def;
 
-        if (schema_insert_field_hash(schema->field_hashes, current_def->name, schema->next_field_mask) != LV_OK)
+        if (schema_insert_field_hash(schema->field_hashes, current_def->name, current_def->type, schema->next_field_mask) != LV_OK)
         {
             flag = 1;
             goto cleanup;
@@ -198,11 +207,12 @@ LVStatus schema_write(const int fd, const LVSchema *schema)
 
     // write checksum
     put_fixed_32(BUF_32, checksum);
-    if((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK){
+    if ((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
+    {
         goto _return;
     }
 
-    result =  write_helper_flush(fd, 1);
+    result = write_helper_flush(fd, 1);
 _return:
     return result;
 }
@@ -333,7 +343,7 @@ LVStatus schema_read(const int fd, LVSchema *schema)
 
         checksum = crc_calc(BUF_32, sizeof(uint32_t), checksum);
 
-        if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, next_filed_mask)) != LV_OK)
+        if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, saved_field_type, next_filed_mask)) != LV_OK)
         {
             goto _return;
         }
@@ -364,7 +374,7 @@ _return:
     return result;
 }
 
-LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_name, const uint32_t mask)
+LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_name, const LVMetaType type, const uint32_t mask)
 {
     LVStatus result = LV_OK;
     const LVHash32_t hash = fnv1a_hash(field_name, strlen(field_name));
@@ -385,6 +395,7 @@ LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_na
         memset(meta_hash->field_name, 0, LV_META_NAME_MAX);
         memcpy(meta_hash->field_name, field_name, strlen(field_name));
         meta_hash->field_name[strlen(field_name)] = '\0';
+        meta_hash->type = type;
         meta_hash->mask = mask;
 
         hashes[index] = meta_hash;
@@ -408,6 +419,7 @@ LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_na
         memset(meta_hash->field_name, 0, LV_META_NAME_MAX);
         memcpy(meta_hash->field_name, field_name, strlen(field_name));
         meta_hash->field_name[strlen(field_name)] = '\0';
+        meta_hash->type = type;
         meta_hash->mask = mask;
 
         current->next = meta_hash;
