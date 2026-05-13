@@ -62,7 +62,7 @@ LVHnsw *create_hnsw(const LVVectorType vector_type, const LVDim32_t dim)
     hnsw->node_count = 0;
     hnsw->vector_type = vector_type;
 
-    node_arena = create_arena(BLOCK_DEFAULT_SIZE);
+    node_arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!node_arena)
     {
         flag = 1;
@@ -71,7 +71,7 @@ LVHnsw *create_hnsw(const LVVectorType vector_type, const LVDim32_t dim)
 
     hnsw->node_arena = node_arena;
 
-    vector_arena = create_arena(BLOCK_DEFAULT_SIZE);
+    vector_arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!vector_arena)
     {
         flag = 1;

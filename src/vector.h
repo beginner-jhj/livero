@@ -35,8 +35,6 @@ typedef struct LVHnswNode
     */
 } LVHnswNode;
 
-#define LV_DEFAULT_CAPACITY 64 // default capacity for heap and dynamic array
-
 typedef struct LVHnswIDMap
 {
     uint32_t capacity;
