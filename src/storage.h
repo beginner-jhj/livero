@@ -17,8 +17,15 @@ typedef struct LVMemTable
     Node *head;
     Node* tail;
     Arena *arena;
+    LVSize32_t node_count;
     LVLevel8_t current_level;
 } LVMemTable;
+
+typedef struct LVResultSet {
+    Node **nodes;
+    LVSize32_t size;
+    LVSize32_t capacity;
+} LVResultSet;
 
 LVMemTable *create_table(const LVSeq64_t seq);
 
@@ -27,5 +34,13 @@ LVStatus table_insert(LVMemTable* table,const LVInsertOp op, const LVSeq64_t seq
 void table_direct_insert(LVMemTable* table, Node* node);
 
 Node* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_t key_len);
+
+LVResultSet *table_query(const LVMemTable *table, const LVSchema *schema, const LVAstNode *query, const LVSize32_t field_mask);
+
+LVResultSet* create_result_set(void);
+
+LVStatus table_result_set_append(LVResultSet* result_set, const Node* node);
+
+void destroy_result_set(LVResultSet* result_set);
 
 #endif

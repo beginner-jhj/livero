@@ -4,6 +4,7 @@
 #include "arena.h"
 #include "node.h"
 #include "helper.h"
+#include "query.h"
 
 LVMemTable *create_table(const LVSeq64_t seq)
 {
@@ -23,7 +24,7 @@ LVMemTable *create_table(const LVSeq64_t seq)
 
     table = table_temp;
 
-    Arena *arena_temp = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena_temp = create_arena(LV_DEFAULT_BLOCK_SIZE);
 
     if (!arena_temp)
     {
@@ -61,9 +62,11 @@ LVMemTable *create_table(const LVSeq64_t seq)
     for (int i = 0; i < LV_SKIPLIST_MAX_LEVEL; ++i)
     {
         table->head->levels[i] = table->tail;
+        table->tail->levels[i] = NULL;
     }
 
     table->current_level = 1;
+    table->node_count = 0;
 
 cleanup:
     if (flag)
@@ -122,6 +125,8 @@ LVStatus table_insert(LVMemTable *table, const LVInsertOp op, const LVSeq64_t se
         update[i]->levels[i] = new_node;
     }
 
+    table->node_count += 1;
+
 _return:
     return result;
 }
@@ -164,6 +169,8 @@ void table_direct_insert(LVMemTable *table, Node *node)
         node->levels[i] = update[i]->levels[i];
         update[i]->levels[i] = node;
     }
+
+    table->node_count += 1;
 }
 
 Node *table_search(const LVMemTable *table, const void *key, const LVKeyLen32_t key_len)
@@ -202,4 +209,99 @@ Node *table_search(const LVMemTable *table, const void *key, const LVKeyLen32_t 
 
 _return:
     return result;
+}
+
+LVResultSet *table_query(const LVMemTable *table, const LVSchema *schema, const LVAstNode *query, const LVSize32_t field_mask)
+{
+
+    LVResultSet *result_set = create_result_set();
+    if (!result_set)
+    {
+        return NULL;
+    }
+
+    if (table->node_count == 0)
+    {
+        return result_set;
+    }
+
+    Node *current_node = table->head->levels[0];
+    while (current_node->type != LV_NODE_TAIL)
+    {
+        if ((field_mask & current_node->field_mask))
+        {
+            if (query_eval_ast(query, current_node, schema))
+            {
+                if (table_result_set_append(result_set, current_node) != LV_OK)
+                {
+                    destroy_result_set(result_set);
+                    return NULL;
+                }
+            }
+        }
+        current_node = current_node->levels[0];
+    }
+
+    return result_set;
+}
+
+LVResultSet *create_result_set(void)
+{
+    int flag = 0;
+    LVResultSet *result_set = NULL;
+
+    LVResultSet *result_set_tmp = malloc(sizeof(LVResultSet));
+
+    if (!result_set_tmp)
+    {
+        return NULL;
+    }
+
+    Node **nodes = malloc(sizeof(Node *) * LV_DEFAULT_CAPACITY);
+    if (!nodes)
+    {
+        flag = 1;
+        goto cleanup;
+    }
+
+    result_set = result_set_tmp;
+    result_set->capacity = LV_DEFAULT_CAPACITY;
+    result_set->size = 0;
+    result_set->nodes = nodes;
+
+cleanup:
+    if (flag)
+    {
+        safe_free(&result_set);
+    }
+
+    return result_set;
+}
+
+LVStatus table_result_set_append(LVResultSet *result_set, const Node *node)
+{
+    if (result_set->size >= result_set->capacity)
+    {
+        LVSize32_t new_capacity = result_set->capacity * 2;
+        Node **nodes_tmp = realloc(result_set->nodes, new_capacity * sizeof(Node *));
+        if (!nodes_tmp)
+        {
+            return LV_ERR_FULL;
+        }
+        result_set->capacity = new_capacity;
+        result_set->nodes = nodes_tmp;
+    }
+
+    result_set->nodes[result_set->size] = node;
+    result_set->size += 1;
+    return LV_OK;
+}
+
+void destroy_result_set(LVResultSet *result_set)
+{
+    if (result_set)
+    {
+        free(result_set->nodes);
+        free(result_set);
+    }
 }
