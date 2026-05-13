@@ -3,9 +3,6 @@
 
 #include "lv_internal.h"
 
-
-#define BLOCK_DEFAULT_SIZE 4096 //4kb
-
 typedef struct Block{
     void* data;
     LVSize32_t size;

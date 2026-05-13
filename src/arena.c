@@ -23,7 +23,7 @@ Arena *create_arena(const LVSize32_t block_size)
     block->prev = NULL;
     block->size = 0;
 
-    block_data = malloc(BLOCK_DEFAULT_SIZE);
+    block_data = malloc(block_size);
     if (!block_data)
     {
         flag = 1;
