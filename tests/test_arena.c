@@ -47,7 +47,7 @@ static void test_create_arena(void)
 
     /* 1-1. create_arena() must return a non-NULL pointer. */
     TEST_START(n++, "create returns non-null");
-    Arena *arena = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     expect_ptr_not_null(arena, "create returns non-null");
 
     if (!arena) {
@@ -90,7 +90,7 @@ static void test_basic_allocation(void)
     int n = 1;
     printf("\n=== basic allocation ===\n");
 
-    Arena *arena = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -135,7 +135,7 @@ static void test_no_overlap(void)
     int n = 1;
     printf("\n=== consecutive allocations don't overlap ===\n");
 
-    Arena *arena = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -201,7 +201,7 @@ static void test_alignment(void)
     int n = 1;
     printf("\n=== alignment ===\n");
 
-    Arena *arena = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -245,7 +245,7 @@ static void test_block_overflow(void)
     int n = 1;
     printf("\n=== block overflow ===\n");
 
-    Arena *arena = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -254,10 +254,10 @@ static void test_block_overflow(void)
     Block *first_block = arena->current_block;
 
     /* Fill the first block almost completely.
-     * We allocate (BLOCK_DEFAULT_SIZE - align) bytes so the next
+     * We allocate (LV_DEFAULT_BLOCK_SIZE - align) bytes so the next
      * allocation of `align` bytes will just barely not fit. */
     LVSize32_t align    = arena_alignment();
-    LVSize32_t fill     = BLOCK_DEFAULT_SIZE - align;
+    LVSize32_t fill     = LV_DEFAULT_BLOCK_SIZE - align;
     void *fill_ptr = arena_allocate(arena, fill,-1);
 
     TEST_START(n++, "fill allocation succeeds");
@@ -289,7 +289,7 @@ static void test_block_overflow(void)
 }
 
 /* ============================================================
- * Group 6 — dedicated block (total > BLOCK_DEFAULT_SIZE)
+ * Group 6 — dedicated block (total > LV_DEFAULT_BLOCK_SIZE)
  *
  * Large allocations that exceed one block's size get their own
  * dedicated block. After serving the large alloc, the arena
@@ -299,16 +299,16 @@ static void test_block_overflow(void)
 static void test_dedicated_block(void)
 {
     int n = 1;
-    printf("\n=== dedicated block (total > BLOCK_DEFAULT_SIZE) ===\n");
+    printf("\n=== dedicated block (total > LV_DEFAULT_BLOCK_SIZE) ===\n");
 
-    Arena *arena = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
     }
 
-    /* 6-1. Request more than BLOCK_DEFAULT_SIZE bytes. */
-    LVSize32_t large = BLOCK_DEFAULT_SIZE + 1;
+    /* 6-1. Request more than LV_DEFAULT_BLOCK_SIZE bytes. */
+    LVSize32_t large = LV_DEFAULT_BLOCK_SIZE + 1;
     TEST_START(n++, "large alloc (> block size) returns non-null");
     void *large_ptr = arena_allocate(arena, large,-1);
     expect_ptr_not_null(large_ptr, "large alloc (> block size) returns non-null");
@@ -362,7 +362,7 @@ static void test_stress(void)
      * for fuzzing, but then failures won't be reproducible. */
     lv_rand_seed(42);
 
-    Arena *arena = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -380,7 +380,7 @@ static void test_stress(void)
         LVSize32_t size;
         if (lv_rand_u32() % 20 == 0) {
             /* ~5% chance of a dedicated-block allocation */
-            size = BLOCK_DEFAULT_SIZE + (LVSize32_t)lv_rand_int_range(1, 512);
+            size = LV_DEFAULT_BLOCK_SIZE + (LVSize32_t)lv_rand_int_range(1, 512);
         } else {
             size = (LVSize32_t)lv_rand_int_range(1, 256);
         }
@@ -432,12 +432,12 @@ static void test_destroy(void)
 
     /* 8-2. Normal destroy after allocations (valgrind will catch leaks). */
     TEST_START(n++, "destroy after multi-block usage does not crash");
-    Arena *arena = create_arena(BLOCK_DEFAULT_SIZE);
+    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (arena) {
         /* Force at least 2 blocks */
-        arena_allocate(arena, BLOCK_DEFAULT_SIZE - 1,-1);
-        arena_allocate(arena, BLOCK_DEFAULT_SIZE - 1,-1);
-        arena_allocate(arena, BLOCK_DEFAULT_SIZE + 1,-1); /* dedicated block */
+        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1,-1);
+        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1,-1);
+        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE + 1,-1); /* dedicated block */
         destroy_arena(arena);
         TEST_SUCCESS("destroy after multi-block usage does not crash");
     }
