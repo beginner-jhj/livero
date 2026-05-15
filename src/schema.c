@@ -56,7 +56,7 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
             goto cleanup;
         }
 
-        for (int k = 0; LV_RESERVED_NAMES[i] != NULL; ++k)
+        for (int k = 0; LV_RESERVED_NAMES[k] != NULL; ++k)
         {
             if (strncasecmp(current_def->name, LV_RESERVED_NAMES[k],
                             strlen(LV_RESERVED_NAMES[k]) + 1) == 0)
@@ -407,7 +407,7 @@ LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_na
         LVMetaFieldHash *meta_hash = malloc(sizeof(LVMetaFieldHash));
         if (!meta_hash)
         {
-            result = LV_ERR_FULL;
+            result = LV_ERR_OOM;
             goto _return;
         }
         meta_hash->hash = hash;
@@ -431,7 +431,7 @@ LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_na
         LVMetaFieldHash *meta_hash = malloc(sizeof(LVMetaFieldHash));
         if (!meta_hash)
         {
-            result = LV_ERR_FULL;
+            result = LV_ERR_OOM;
             goto _return;
         }
         meta_hash->hash = hash;
