@@ -679,7 +679,7 @@ LVStatus vector_insert_hnsw_node(LVHnsw *hnsw, const LVVectorId64_t id, const LV
     LVHnswNode *allocated_node = arena_allocate(hnsw->node_arena, node_size, -1);
     if (!allocated_node)
     {
-        result = LV_ERR_FULL;
+        result = LV_ERR_OOM;
         goto _return;
     }
 
@@ -693,7 +693,7 @@ LVStatus vector_insert_hnsw_node(LVHnsw *hnsw, const LVVectorId64_t id, const LV
     void *allocated_vector = arena_allocate(hnsw->vector_arena, hnsw->aligned_dim, hnsw->vector_align);
     if (!allocated_vector)
     {
-        result = LV_ERR_FULL;
+        result = LV_ERR_OOM;
         goto _return;
     }
     const LVSize32_t vector_size = hnsw->vector_type == LV_VEC_FLOAT32 ? sizeof(float) : sizeof(int8_t);
@@ -749,7 +749,7 @@ LVStatus vector_heap_insert(LVHnswHeap *heap, const LVHnswEntry *entry)
 
         if (!new_entries)
         {
-            return LV_ERR_FULL;
+            return LV_ERR_OOM;
         }
 
         heap->entries = new_entries;
@@ -859,7 +859,7 @@ LVStatus vector_idmap_append(LVHnswIDMap *idmap, const LVVectorId64_t id, const 
         void *ptrs = realloc(idmap->map, new_capacity * sizeof(void *));
         if (!ptrs)
         {
-            return LV_ERR_FULL;
+            return LV_ERR_OOM;
         }
         idmap->map = ptrs;
         idmap->capacity = new_capacity;
