@@ -147,11 +147,6 @@ typedef struct LVQueryResult{
     void* vector;
 } LVQueryResult;
 
-typedef struct LVTableQueryResultSet{
-    LVSize32_t size;
-    LVQueryResult results[];
-} LVTableQueryResultSet;
-
 int query_is_value_token(const LVQueryToken token);
 int query_is_op_token(const LVQueryToken token);
 
@@ -173,6 +168,9 @@ int query_lexer_is_stop_char(char c);
 
 int64_t query_strtol(const char *ptr, const LVSize32_t size);
 double query_strtod(const char *ptr, const LVSize32_t size);
+
+LVSQLParser* create_parser(void);
+void destory_parser(LVSQLParser* parser);
 
 LVAstNode *query_parse(LVSQLParser *parser, const LVSchema *schema);
 LVAstNode *query_parse_or(LVSQLParser *parser, const LVSchema *schema);
