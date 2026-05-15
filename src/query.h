@@ -2,6 +2,7 @@
 #define QUERY
 
 #include "lv_internal.h"
+#include <math.h>
 
 typedef enum LVQueryToken
 {
@@ -31,6 +32,40 @@ typedef enum LVQueryOp
     LV_QOP_GTE = 4, // >=
     LV_QOP_LTE = 5, // <=
 } LVQueryOp;
+
+typedef enum LVQueryOptionFlag
+{
+    LV_QOPT_NONE = 1 << 0, // 1
+    LV_QOPT_LIMIT = 1 << 1,        // universal 2
+    LV_QOPT_ORDER_BY = 1 << 2,     // universal (field) / "VECTOR" 4
+    LV_QOPT_VECTOR_RANGE = 1 << 3, // vector only 8
+} LVQueryOptionFlag;
+
+typedef enum LVQueryOrderDir
+{
+    LV_ORDER_ASC = 0,
+    LV_ORDER_DESC = 1,
+} LVQueryOrderDir;
+
+#define LV_RANGE_NINF -(float)(INFINITY)
+#define LV_RANGE_PINF (float)INFINITY
+
+typedef struct LVQueryOption
+{
+    uint32_t flags;
+    LVSize32_t limit;
+    struct
+    {
+        char by[LV_META_NAME_MAX];
+        LVQueryOrderDir dir;
+    } order;
+    struct
+    {
+        float left_endpoint;
+        float right_endpoint;
+    } vector_range;
+    LVVectorMetric vector_metric;
+} LVQueryOption;
 
 typedef struct LVFilterValue
 {
@@ -95,26 +130,61 @@ typedef struct LVSQLTokenViewer
 
 typedef struct LVSQLParser
 {
-    char* sql;
     LVSize32_t capacity;
     LVSize32_t size;
-    LVSQLTokenViewer* viewers;
+    LVSQLTokenViewer *viewers;
+    LVSQLTokenViewer *current_viewer;
+    LVSize32_t cursor;
 } LVSQLParser;
+
+typedef struct LVQueryResult{
+    LVSeq64_t node_seq;
+    LVVectorId64_t vector_id;
+    void* key;
+    LVKeyLen32_t key_len;
+    void* value;
+    LVValueLen32_t value_len;
+    void* vector;
+} LVQueryResult;
+
+typedef struct LVTableQueryResultSet{
+    LVSize32_t size;
+    LVQueryResult results[];
+} LVTableQueryResultSet;
+
+int query_is_value_token(const LVQueryToken token);
+int query_is_op_token(const LVQueryToken token);
 
 LVAstNode *query_and_node(const LVAstNode *left, const LVAstNode *right);
 LVAstNode *query_or_node(const LVAstNode *left, const LVAstNode *right);
 LVAstNode *query_filter_node(const char *field_name, const LVQueryOp op, const LVFilterValue *value);
 
-int query_eval_ast(const LVAstNode *ast_node, const Node *record, const LVSchema *schema);
-LVStatus query_eval_filter(const LVFilter *filter, const Node *node, const LVSchema *schema);
+int query_eval_ast(const LVAstNode *ast_node, const LVNode *record, const LVSchema *schema);
+LVStatus query_eval_filter(const LVFilter *filter, const LVNode *node, const LVSchema *schema);
 void destroy_ast(LVAstNode *node);
 
-LVStatus query_tokenize(const char *sql, LVSQLParser* parser);
-LVStatus query_append_tokenviewer(LVSQLParser* parser, const LVQueryToken token, const char* start, const LVSize32_t size);
+LVStatus query_tokenize(const char *sql, LVSQLParser *parser);
 void query_advance_lexer(LVSQLLexer *lexer);
 void query_lexer_skip_whitespace(LVSQLLexer *lexer);
 int query_lexer_expect_next(const LVSQLLexer *lexer, const char expected);
 int query_lexer_expect_next_not(const LVSQLLexer *lexer, const char expected);
 int query_lexer_isdigit(int c);
 int query_lexer_is_stop_char(char c);
+
+int64_t query_strtol(const char *ptr, const LVSize32_t size);
+double query_strtod(const char *ptr, const LVSize32_t size);
+
+LVAstNode *query_parse(LVSQLParser *parser, const LVSchema *schema);
+LVAstNode *query_parse_or(LVSQLParser *parser, const LVSchema *schema);
+LVAstNode *query_parse_and(LVSQLParser *parser, const LVSchema *schema);
+LVAstNode *query_parse_term(LVSQLParser *parser, const LVSchema *schema);
+LVAstNode *query_parse_filter(LVSQLParser *parser, const LVSchema *schema);
+
+LVStatus query_append_tokenviewer(LVSQLParser *parser, const LVQueryToken token, const char *start, const LVSize32_t size);
+void query_advance_parser(LVSQLParser *parser);
+void query_parser_consume(LVSQLParser *parser, const LVQueryToken token);
+int query_parser_match(LVSQLParser *parser, const LVQueryToken expected);
+
+uint32_t query_get_fieldmask(const LVAstNode* node, const LVSchema* schema);
+
 #endif

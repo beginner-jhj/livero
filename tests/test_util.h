@@ -96,7 +96,7 @@ static void expect_ptr_null(const void *ptr, const char *test_name)
 /* ============================================================
  * Alignment check
  *
- * Arena allocations often need to be aligned to a power of 2
+ * LVArena allocations often need to be aligned to a power of 2
  * (e.g. 8 bytes on 64-bit systems) to avoid unaligned access
  * which can cause crashes or slowdowns depending on the CPU.
  *

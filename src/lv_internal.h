@@ -47,11 +47,11 @@ typedef enum
 typedef enum
 {
     LV_META_STRING = 0,
-    LV_META_INT = 1,
-    LV_META_FLOAT = 2,
+    LV_META_INT = 1, //i64
+    LV_META_FLOAT = 2, //f64 double
 } LVMetaType;
 
-/* ── Node type ──────────────────────────────────────────────────────────────*/
+/* ── LVNode type ──────────────────────────────────────────────────────────────*/
 typedef enum
 {
     LV_NODE_HEAD = 0,
@@ -62,24 +62,44 @@ typedef enum
 /* ── Forward declarations ────────────────────────────────────────────────────
  * Centralized opaque type declarations for internal structs.
  */
-typedef struct Block Block;
-typedef struct Arena Arena;
+typedef struct LVArenaBlock LVArenaBlock;
+typedef struct LVArena LVArena;
 
 typedef struct LVMetaField LVMetaField;
 typedef struct LVMetaFieldDef LVMetaFieldDef;
 typedef struct LVMetaFieldHash LVMetaFieldHash;
 typedef struct LVSchema LVSchema;
 
-typedef struct Node Node;
+typedef struct LVNode LVNode;
 typedef struct LVMemTable LVMemTable;
 typedef struct LightVec LightVec;
 
 typedef struct LVHnswNode LVHnswNode;
 typedef struct LVHnsw LVHnsw;
+typedef struct LVHnswIDMap LVHnswIDMap;
+typedef union LVVectorDisValue
+{
+    uint32_t i32;
+    float f32;
+} LVVectorDisValue;
 
 typedef struct LVAstNode LVAstNode;
+typedef struct LVQueryOption LVQueryOption;
+typedef struct LVTableQueryResultSet LVTableQueryResultSet;
 
-#define LV_MAX_DIMENSION 4096
+// i8
+typedef int32_t (*LVI8DistFunc)(const int8_t *, const int8_t *, LVDim32_t);
+// f32
+typedef float (*LVF32DistFunc)(const float *, const float *, LVDim32_t);
+
+typedef enum LVVectorMetric
+{
+    LV_METRIC_L2 = 0,
+    LV_METRIC_DOT = 1,
+} LVVectorMetric;
+
+#define LV_MAX_DIMENSION 4096      // vector max dimension
+#define LV_NO_VECTOR_ID UINT64_MAX // sentinel: no vector
 
 /* ── Status codes ───────────────────────────────────────────────────────────
  * Returned by all functions except lifecycle constructors.
@@ -88,8 +108,8 @@ typedef struct LVAstNode LVAstNode;
 typedef enum
 {
     LV_OK = 2,
-    LV_QFILTER_T = 1, //query filter true
-    LV_QFILTER_F = 0, //query filter false
+    LV_QFILTER_T = 1,      // query filter true
+    LV_QFILTER_F = 0,      // query filter false
     LV_ERR_IO = -1,        /* file I/O failure                          */
     LV_ERR_OOM = -2,       /* out of memory                             */
     LV_ERR_NOT_FOUND = -3, /* key does not exist                        */
@@ -125,8 +145,7 @@ typedef enum
 #define LV_MAX_META_FIELDS 32
 #define LV_META_NAME_MAX 64 /* includes null terminator */
 
-
-#define LV_DEFAULT_BLOCK_SIZE 4096 //4kb
+#define LV_DEFAULT_BLOCK_SIZE 4096 // 4kb
 #define LV_DEFAULT_CAPACITY 16
 
 /* ── Bloom filter parameters ────────────────────────────────────────────────

@@ -8,6 +8,8 @@
 #include "storage.h"
 #include "vector.h"
 #include "helper.h"
+#include "query.h"
+#include "node.h"
 
 struct LightVec
 {
@@ -21,7 +23,7 @@ struct LightVec
     LVSeq64_t next_seq;
 
     // Vector
-    int vector_fd;                 // vectors.lv (O(1) access)[cite: 1, 2]
+    int vector_fd;                 // vectors.lv (O(1) access)
     LVBigCount64_t next_vector_id; //
     int hnsw_index_fd;             // hnsw_index.lv
     int hnsw_graph_fd;             // hnsw_graph.lv
@@ -230,7 +232,7 @@ cleanup:
     return result;
 }
 
-LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len, const void *value, const LVValueLen32_t value_len, const void *vector, const LVCount32_t field_count, const LVMetaField *fields)
+LVStatus lv_put(LightVec *db, const void *key, const LVKeyLen32_t key_len, const void *value, const LVValueLen32_t value_len, const void *vector, const LVCount32_t field_count, const LVMetaField *fields, const LVVectorMetric vecotr_metric)
 {
     LVStatus result = LV_OK;
 
@@ -249,13 +251,21 @@ LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len,
         goto _return;
     }
 
+    // check key length and value length are valid
+
+    if (key_len < 0 || value_len < 0)
+    {
+        result = LV_ERR_INVALID;
+        goto _return;
+    }
+
     uint32_t field_mask = 0;
     LVSize32_t field_size = 0;
 
     for (int i = 0; i < field_count; ++i)
     {
         LVMetaField *current_field = fields + i;
-        LVMetaFieldHash *search_result = schema_search_field_hash(db->schema->field_hashes, current_field->name);
+        LVMetaFieldHash *search_result = schema_search_field_hash(db->schema->field_hashes, current_field->name, strlen(current_field->name));
         if (!search_result)
         { // check field name exists
             result = LV_ERR_INVALID;
@@ -295,6 +305,9 @@ LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len,
         ++new_level;
     }
 
+    const LVSeq64_t current_seq = db->next_seq;
+    const LVSeq64_t current_vector_id = db->next_vector_id;
+
     // append to vectors.lv and hnsw
     if (vector)
     {
@@ -305,7 +318,7 @@ LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len,
             {
                 goto _return;
             }
-            if ((result = vector_hnsw_f32_insert(db->hnsw, db->next_vector_id, f32_vector)) != LV_OK)
+            if ((result = vector_hnsw_f32_insert(db->hnsw, current_vector_id, f32_vector, vecotr_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot)) != LV_OK)
             {
                 goto _return;
             }
@@ -317,35 +330,114 @@ LVStatus lv_put(const LightVec *db, const void *key, const LVKeyLen32_t key_len,
             {
                 goto _return;
             }
-            if ((result = vector_hnsw_i8_insert(db->hnsw, db->next_vector_id, i8_vector)) != LV_OK)
+            if ((result = vector_hnsw_i8_insert(db->hnsw, current_vector_id, i8_vector, vecotr_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK)
             {
                 goto _return;
             }
         }
+
+        db->next_vector_id += 1; // increase vector id for next
     }
 
-    else
+    void *KEY = key;
+    LVKeyLen32_t KEY_LEN = key_len;
+    void *VALUE = value;
+    LVValueLen32_t VALUE_LEN = value_len;
+
+    if (KEY == NULL)
     {
-        const int8_t *i8_vector = (int8_t *)vector;
-        if ((result = vector_write_i8_vector(db->vector_fd, db->schema->vector_dim, i8_vector)) != LV_OK)
-        {
-            goto _return;
-        }
+        KEY = &current_seq;
+        KEY_LEN = sizeof(LVSeq64_t);
+    }
+
+    if (VALUE == NULL)
+    {
+        VALUE_LEN = 0;
     }
 
     // append to WAL
 
-    if ((result = wal_append(db->wal_fd, LV_PUT, db->next_seq, new_level, key_len, key, value_len, value, db->next_vector_id, field_mask, field_count, field_size, fields)) != LV_OK)
+    if ((result = wal_append(db->wal_fd, LV_PUT, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, fields)) != LV_OK)
     {
         goto _return;
     }
 
     // append to MemTable
 
-    if ((result = table_insert(db->memtable, LV_PUT, db->next_seq, new_level, key_len, key, value_len, value, db->next_vector_id, field_mask, field_count, field_size, fields)) != LV_OK)
+    if ((result = table_insert(db->memtable, LV_PUT, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, fields)) != LV_OK)
     {
         goto _return;
     }
+
+    db->next_seq += 1;
+
+_return:
+    return result;
+}
+
+LVStatus lv_query(const LightVec *db, const char *query, const void *query_vector, const LVQueryOption *option, LVTableQueryResultSet **outputs)
+{
+    LVStatus result = LV_OK;
+
+    // check db is properly initialized
+    if (db->magic != LV_MAGIC)
+    {
+        result = LV_ERR_INVALID_DB;
+        goto _return;
+    }
+
+    // check query
+    if (query == NULL || strlen(query) <= 0)
+    {
+        result = LV_ERR_INVALID_QUERY;
+        goto _return;
+    }
+
+    const int has_option = option != NULL && !(option->flags & LV_QOPT_NONE);
+
+    // check options
+    if (has_option && !query_vector && (option->flags & LV_QOPT_VECTOR_RANGE))
+    {
+        result = LV_ERR_INVALID_QUERY;
+        goto _return;
+    }
+
+    if (has_option && (option->flags & LV_QOPT_ORDER_BY) && !query_vector && strncasecmp(option->order.by, "VECTOR", strlen("VECTOR")) == 0)
+    {
+
+        result = LV_ERR_INVALID_QUERY;
+        goto _return;
+    }
+
+    if (has_option && (option->flags & LV_QOPT_LIMIT) && option->limit < 0)
+    {
+        result = LV_ERR_INVALID_QUERY;
+        goto _return;
+    }
+
+    LVSQLParser parser;
+    if ((result = query_tokenize(query, &parser)) != LV_OK)
+    {
+        goto _return;
+    }
+    const LVAstNode *tree = query_parse(&parser, db->schema);
+
+    if (!tree)
+    {
+        result = LV_ERR_INVALID_QUERY;
+        goto _return;
+    }
+
+    const uint32_t fieldmask = query_get_fieldmask(tree, db->schema);
+
+    LVTableQueryResultSet *table_query_result = table_query(db->memtable, db->schema, tree,query_vector,db->hnsw->aligned_dim, db->hnsw->id_vector_map, fieldmask, option);
+    if (!table_query_result)
+    {
+        result = LV_ERR_FULL;
+        goto _return;
+    }
+
+    *outputs = table_query_result;
 
 _return:
     return result;

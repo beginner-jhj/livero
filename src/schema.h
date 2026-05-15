@@ -56,6 +56,6 @@ void schema_destroy_field_hashes(LVMetaFieldHash **hashes);
 LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_name,const LVMetaType type, const uint32_t mask);
 
 // 1 exists, 0 non-exists
-LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash **hashes, const char *field_name);
+LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash **hashes, const char *field_name, const LVSize32_t field_len);
 
 #endif

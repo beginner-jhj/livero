@@ -254,9 +254,9 @@ LVStatus wal_recover(const int fd, const LVMemTable *table)
             goto _return;
         }
 
-        node_size_to_reserve = sizeof(Node) + saved_level * sizeof(Node *) + saved_key_len + saved_value_len + saved_field_size;
+        node_size_to_reserve = sizeof(LVNode) + saved_level * sizeof(LVNode *) + saved_key_len + saved_value_len + saved_field_size;
 
-        Node *reserved_node = node_reserve(table->arena, node_size_to_reserve);
+        LVNode *reserved_node = node_reserve(table->arena, node_size_to_reserve);
 
         reserved_node->type = LV_NODE_DATA;
         reserved_node->op = (LVInsertOp)saved_op;
@@ -268,7 +268,7 @@ LVStatus wal_recover(const int fd, const LVMemTable *table)
         reserved_node->field_count = saved_field_count;
         reserved_node->field_mask = saved_field_mask;
 
-        memset(reserved_node->levels, 0, saved_level * sizeof(Node *));
+        memset(reserved_node->levels, 0, saved_level * sizeof(LVNode *));
 
         if (reserved_node->op == LV_DELETE)
         {

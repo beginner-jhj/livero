@@ -1,5 +1,5 @@
 /*
- * test_arena.c — Unit tests for the Arena allocator
+ * test_arena.c — Unit tests for the LVArena allocator
  *
  * Tests are grouped by behavior, not by function name,
  * because a single function can have multiple distinct code paths.
@@ -47,7 +47,7 @@ static void test_create_arena(void)
 
     /* 1-1. create_arena() must return a non-NULL pointer. */
     TEST_START(n++, "create returns non-null");
-    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     expect_ptr_not_null(arena, "create returns non-null");
 
     if (!arena) {
@@ -90,7 +90,7 @@ static void test_basic_allocation(void)
     int n = 1;
     printf("\n=== basic allocation ===\n");
 
-    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -135,7 +135,7 @@ static void test_no_overlap(void)
     int n = 1;
     printf("\n=== consecutive allocations don't overlap ===\n");
 
-    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -201,7 +201,7 @@ static void test_alignment(void)
     int n = 1;
     printf("\n=== alignment ===\n");
 
-    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -245,13 +245,13 @@ static void test_block_overflow(void)
     int n = 1;
     printf("\n=== block overflow ===\n");
 
-    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
     }
 
-    Block *first_block = arena->current_block;
+    LVArenaBlock *first_block = arena->current_block;
 
     /* Fill the first block almost completely.
      * We allocate (LV_DEFAULT_BLOCK_SIZE - align) bytes so the next
@@ -301,7 +301,7 @@ static void test_dedicated_block(void)
     int n = 1;
     printf("\n=== dedicated block (total > LV_DEFAULT_BLOCK_SIZE) ===\n");
 
-    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -362,7 +362,7 @@ static void test_stress(void)
      * for fuzzing, but then failures won't be reproducible. */
     lv_rand_seed(42);
 
-    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -432,7 +432,7 @@ static void test_destroy(void)
 
     /* 8-2. Normal destroy after allocations (valgrind will catch leaks). */
     TEST_START(n++, "destroy after multi-block usage does not crash");
-    Arena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
     if (arena) {
         /* Force at least 2 blocks */
         arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1,-1);
@@ -450,7 +450,7 @@ static void test_destroy(void)
 int main(void)
 {
     printf("========================================\n");
-    printf("  LightVec — Arena Allocator Unit Tests \n");
+    printf("  LightVec — LVArena Allocator Unit Tests \n");
     printf("========================================\n");
 
     test_create_arena();

@@ -3,22 +3,22 @@
 
 #include "lv_internal.h"
 
-typedef struct Block{
+typedef struct LVArenaBlock{
     void* data;
     LVSize32_t size;
-    struct Block* prev;
-} Block;
+    struct LVArenaBlock* prev;
+} LVArenaBlock;
 
-typedef struct Arena {
-    Block* current_block;
+typedef struct LVArena {
+    LVArenaBlock* current_block;
     LVSize32_t current_offset;
     LVSize32_t block_size;
-} Arena;
+} LVArena;
 
-Arena* create_arena(const LVSize32_t block_size);
+LVArena* create_arena(const LVSize32_t block_size);
 
-void destroy_arena(Arena* arena);
+void destroy_arena(LVArena* arena);
 
-void* arena_allocate(Arena* arena,const LVSize32_t total,LVSize32_t align);
+void* arena_allocate(LVArena* arena,const LVSize32_t total,LVSize32_t align);
 
 #endif

@@ -35,6 +35,17 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
 
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
 
+    static const char *LV_RESERVED_NAMES[] = {
+        "VECTOR",
+        "AND",
+        "OR",
+        "==",
+        "!=",
+        "<=",
+        ">=",
+        NULL // sentinel
+    };
+
     for (int i = 0; i < schema->field_count; ++i)
     {
         const LVMetaFieldDef *current_def = field_defs + i;
@@ -45,7 +56,17 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
             goto cleanup;
         }
 
-        for (int j = 0; j < strlen(current_def->name); ++j) //check name is valid
+        for (int k = 0; LV_RESERVED_NAMES[i] != NULL; ++k)
+        {
+            if (strncasecmp(current_def->name, LV_RESERVED_NAMES[k],
+                            strlen(LV_RESERVED_NAMES[k]) + 1) == 0)
+            {
+                flag = 1;
+                goto cleanup;
+            }
+        }
+
+        for (int j = 0; j < strlen(current_def->name); ++j) // check name is valid
         {
             if (!isalnum(current_def->name[j]) && current_def->name[j] != '_')
             {
@@ -429,9 +450,9 @@ _return:
     return result;
 }
 
-LVMetaFieldHash *schema_search_field_hash(LVMetaFieldHash **hashes, const char *field_name)
+LVMetaFieldHash *schema_search_field_hash(LVMetaFieldHash **hashes, const char *field_name, const LVSize32_t field_len)
 {
-    const LVHash32_t hash = fnv1a_hash(field_name, strlen(field_name));
+    const LVHash32_t hash = fnv1a_hash(field_name, field_len);
 
     const int index = hash % LV_MAX_META_FIELDS;
 

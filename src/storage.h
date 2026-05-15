@@ -14,33 +14,101 @@
 
 typedef struct LVMemTable
 {
-    Node *head;
-    Node* tail;
-    Arena *arena;
+    LVNode* head;
+    LVNode* tail;
+    LVArena* arena;
     LVSize32_t node_count;
     LVLevel8_t current_level;
 } LVMemTable;
 
-typedef struct LVResultSet {
-    Node **nodes;
+typedef struct LVTableQueryValue
+{
+    LVNode* node;
+    LVVectorDisValue dis;
+    uint32_t ordby_field_mask;
+} LVTableQueryValue;
+
+typedef struct LVTableQVList
+{
+    LVTableQueryValue* values;
     LVSize32_t size;
     LVSize32_t capacity;
-} LVResultSet;
+} LVTableQVList;
 
-LVMemTable *create_table(const LVSeq64_t seq);
+typedef struct LVTableQueryResult{
+    LVSeq64_t node_seq;
+    LVVectorId64_t vector_id;
+    void* key;
+    LVKeyLen32_t key_len;
+    void* value;
+    LVValueLen32_t value_len;
+    void* vector;
+} LVTableQueryResult;
 
-LVStatus table_insert(LVMemTable* table,const LVInsertOp op, const LVSeq64_t seq,const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value,const uint64_t vector_id ,const uint32_t field_mask, const uint32_t field_count,const LVSize32_t field_size,const LVMetaField* field_list);
+typedef struct LVTableQueryResultSet{
+    LVSize32_t size;
+    LVTableQueryResult* results;
+} LVTableQueryResultSet;
 
-void table_direct_insert(LVMemTable* table, Node* node);
+LVMemTable* create_table(const LVSeq64_t seq);
 
-Node* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_t key_len);
+LVStatus table_insert(LVMemTable* table, const LVInsertOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField* field_list);
 
-LVResultSet *table_query(const LVMemTable *table, const LVSchema *schema, const LVAstNode *query, const LVSize32_t field_mask);
+void table_direct_insert(LVMemTable* table, LVNode* node);
 
-LVResultSet* create_result_set(void);
+LVNode* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_t key_len);
 
-LVStatus table_result_set_append(LVResultSet* result_set, const Node* node);
+LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* schema, const LVAstNode* query, const void* query_vector, const LVDim32_t dim, const LVHnswIDMap* id_vector_map, const LVSize32_t field_mask, const LVQueryOption* option);
 
-void destroy_result_set(LVResultSet* result_set);
+void table_query_apply_range(LVTableQVList* qv_list, const LVVectorType vector_type, const LVQueryOption* option);
+void table_query_apply_ordby(LVTableQVList* qv_list, const LVQueryOption* option, const LVSchema* schema);
+
+int ordvec_f32_desc(const void* a, const void* b) {
+    LVTableQueryValue* qva = a;
+    LVTableQueryValue* qvb = b;
+    return (qva->dis.f32 < qvb->dis.f32) - (qva->dis.f32 > qvb->dis.f32);
+}
+
+int ordvec_f32_asc(const void* a, const void* b) {
+    LVTableQueryValue* qva = a;
+    LVTableQueryValue* qvb = b;
+    return (qva->dis.f32 > qvb->dis.f32) - (qva->dis.f32 < qvb->dis.f32);
+}
+
+int ordvec_i8_desc(const void* a, const void* b) {
+    LVTableQueryValue* qva = a;
+    LVTableQueryValue* qvb = b;
+    return (qva->dis.i32 < qvb->dis.i32) - (qva->dis.i32 > qvb->dis.i32);
+}
+
+int ordvec_i8_asc(const void* a, const void* b) {
+    LVTableQueryValue* qva = a;
+    LVTableQueryValue* qvb = b;
+    return (qva->dis.i32 > qvb->dis.i32) - (qva->dis.i32 < qvb->dis.i32);
+}
+
+#define ordvec_f32_dot_nearest ordvec_f32_desc
+#define ordvec_f32_dot_farthest ordvec_f32_asc
+#define ordvec_f32_l2_nearest ordvec_f32_asc
+#define ordvec_f32_l2_farthest ordvec_f32_desc
+
+#define ordvec_i8_dot_nearest ordvec_i8_desc
+#define ordvec_i8_dot_farthest ordvec_i8_asc
+#define ordvec_i8_l2_nearest ordvec_i8_asc
+#define ordvec_i8_l2_farthest ordvec_i8_desc
+
+void table_query_apply_limit(LVTableQVList* qv_list,const LVSize32_t limit);
+
+int ordby_f64_asc(const void* a, const void*b);
+int ordby_f64_desc(const void* a, const void*b);
+
+int ordby_i64_asc(const void* a, const void*b);
+int ordby_i64_desc(const void* a, const void*b);
+
+LVTableQVList* create_qv_list(void);
+
+LVStatus table_qv_list_append(LVTableQVList* qv_list, const LVNode* node, const LVVectorDisValue dis, const uint32_t ordby_field_mask);
+
+void destroy_qv_list(LVTableQVList* qv_list);
 
 #endif
