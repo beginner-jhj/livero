@@ -108,7 +108,7 @@ LVStatus table_insert(LVMemTable* table, const LVInsertOp op, const LVSeq64_t se
     LVNode* new_node = create_node(table->arena, LV_NODE_DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_list);
     if (!new_node)
     {
-        result = LV_ERR_FULL;
+        result = LV_ERR_OOM;
         goto _return;
     }
 
@@ -231,12 +231,12 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
 
     LVNode* current_node = table->head->levels[0];
 
-    const int has_option = !(option->flags & LV_QOPT_NONE) && option;
+    const int has_option = option && !(option->flags & LV_QOPT_NONE);
 
     const int is_limit_on = has_option && option->flags & LV_QOPT_LIMIT;
     const int is_range_on = has_option && query_vector && option->flags & LV_QOPT_VECTOR_RANGE;
     const int is_ordby_on = has_option && option->flags & LV_QOPT_ORDER_BY;
-    const int is_ordby_vec = is_ordby_on && query_vector && (strncasecmp(option->order.by, "vecotr", sizeof("vector")));
+    const int is_ordby_vec = is_ordby_on && query_vector && (strncasecmp(option->order.by, "vector", sizeof("vector")));
     const int needs_calc_dis = is_range_on || is_ordby_vec;
 
     uint32_t ordby_field_mask = 0;
@@ -306,7 +306,7 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
         goto cleanup;
     }
 
-    for(int i=0; i<qv_list->size; ++i){
+    for (int i = 0; i < qv_list->size; ++i) {
         const LVNode* current_node = qv_list->values[i].node;
         results_tmp[i].node_seq = current_node->seq;
         results_tmp[i].vector_id = current_node->vector_id;
@@ -314,7 +314,7 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
         results_tmp[i].key_len = current_node->key_len;
         results_tmp[i].value = node_access_value(current_node);
         results_tmp[i].value_len = current_node->value_len;
-        results_tmp[i].vector = current_node->vector_id == LV_NO_VECTOR_ID ? NULL:id_vector_map->map[current_node->vector_id];
+        results_tmp[i].vector = current_node->vector_id == LV_NO_VECTOR_ID ? NULL : id_vector_map->map[current_node->vector_id];
     }
 
     result->size = qv_list->size;
@@ -322,9 +322,9 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
 
 cleanup:
     if (flag) {
-        destroy_qv_list(qv_list);
         safe_free(&result);
     }
+    destroy_qv_list(qv_list);
     return result;
 }
 
@@ -345,7 +345,7 @@ void table_query_apply_range(LVTableQVList* qv_list, const LVVectorType vector_t
     while (left < right)
     {
         while (left < right && qv_list->values[left].node != NULL) left++;
-        while (left < right && qv_list->values[left].node != NULL) right--;
+        while (left < right && qv_list->values[right].node != NULL) right--;
 
         if (left < right)
         {
@@ -361,7 +361,7 @@ void table_query_apply_range(LVTableQVList* qv_list, const LVVectorType vector_t
 void table_query_apply_ordby(LVTableQVList* qv_list, const LVQueryOption* option, const LVSchema* schema)
 {
     const int is_range_on = option->flags & LV_QOPT_VECTOR_RANGE;
-    const int is_ordby_vec = (strncasecmp(option->order.by, "vecotr", sizeof("vector")));
+    const int is_ordby_vec = (strncasecmp(option->order.by, "vector", strlen("vector")));
 
     LVSize32_t set_size = qv_list->size;
 
@@ -369,18 +369,18 @@ void table_query_apply_ordby(LVTableQVList* qv_list, const LVQueryOption* option
         const int is_f32 = schema->vector_type == LV_VEC_FLOAT32;
         if (option->order.dir == LV_ORDER_ASC) {
             if (option->vector_metric == LV_METRIC_DOT) {
-                qsort(qv_list, set_size, sizeof(LVTableQueryValue), is_f32 ? ordvec_f32_dot_nearest : ordvec_i8_dot_nearest);
+                qsort(qv_list->values, set_size, sizeof(LVTableQueryValue), is_f32 ? ordvec_f32_dot_nearest : ordvec_i8_dot_nearest);
             }
             else {
-                qsort(qv_list, set_size, sizeof(LVTableQueryValue), is_f32 ? ordvec_f32_l2_nearest : ordvec_i8_l2_nearest);
+                qsort(qv_list->values, set_size, sizeof(LVTableQueryValue), is_f32 ? ordvec_f32_l2_nearest : ordvec_i8_l2_nearest);
             }
         }
         else {
             if (option->vector_metric == LV_METRIC_DOT) {
-                qsort(qv_list, set_size, sizeof(LVTableQueryValue), is_f32 ? ordvec_f32_dot_farthest : ordvec_i8_dot_farthest);
+                qsort(qv_list->values, set_size, sizeof(LVTableQueryValue), is_f32 ? ordvec_f32_dot_farthest : ordvec_i8_dot_farthest);
             }
             else {
-                qsort(qv_list, set_size, sizeof(LVTableQueryValue), is_f32 ? ordvec_f32_l2_farthest : ordvec_i8_l2_farthest);
+                qsort(qv_list->values, set_size, sizeof(LVTableQueryValue), is_f32 ? ordvec_f32_l2_farthest : ordvec_i8_l2_farthest);
             }
         }
     }
@@ -541,7 +541,7 @@ LVStatus table_qv_list_append(LVTableQVList* qv_list, const LVNode* node, const 
         LVTableQueryValue* tmp = realloc(qv_list->values, new_capacity * sizeof(LVTableQueryValue));
         if (!tmp)
         {
-            return LV_ERR_FULL;
+            return LV_ERR_OOM;
         }
         qv_list->capacity = new_capacity;
         qv_list->values = tmp;
