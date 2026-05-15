@@ -415,7 +415,11 @@ LVStatus lv_query(const LightVec *db, const char *query, const void *query_vecto
         goto _return;
     }
 
-    LVSQLParser parser;
+    LVSQLParser* parser  = create_parser();
+    if(!parser){
+        result = LV_ERR_OOM;
+        goto _return;
+    }
     if ((result = query_tokenize(query, &parser)) != LV_OK)
     {
         goto _return;
@@ -433,12 +437,15 @@ LVStatus lv_query(const LightVec *db, const char *query, const void *query_vecto
     LVTableQueryResultSet *table_query_result = table_query(db->memtable, db->schema, tree,query_vector,db->hnsw->aligned_dim, db->hnsw->id_vector_map, fieldmask, option);
     if (!table_query_result)
     {
-        result = LV_ERR_FULL;
+        result = LV_ERR_OOM;
         goto _return;
     }
 
     *outputs = table_query_result;
 
+
 _return:
+    destory_parser(parser);
+    destroy_ast(tree);
     return result;
 }
