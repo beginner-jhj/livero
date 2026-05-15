@@ -73,12 +73,12 @@ LVStatus write_helper_flush(const int fd, const int sync)
 LVStatus read_helper(const int fd, const void *buf, const uint32_t len)
 {
     ssize_t _read = read(fd, buf, len);
-    if (read < 0)
+    if (_read < 0)
     {
         return LV_ERR_IO;
     }
 
-    else if (read < len)
+    else if (_read < len)
     {
         return LV_ERR_FULL;
     }
