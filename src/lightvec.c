@@ -415,16 +415,17 @@ LVStatus lv_query(const LightVec *db, const char *query, const void *query_vecto
         goto _return;
     }
 
-    LVSQLParser* parser  = create_parser();
+    LVSQLParser* parser  = NULL;
+    parser = create_parser();
     if(!parser){
         result = LV_ERR_OOM;
         goto _return;
     }
-    if ((result = query_tokenize(query, &parser)) != LV_OK)
+    if ((result = query_tokenize(query, parser)) != LV_OK)
     {
         goto _return;
     }
-    const LVAstNode *tree = query_parse(&parser, db->schema);
+    const LVAstNode *tree = query_parse(parser, db->schema);
 
     if (!tree)
     {
@@ -442,7 +443,6 @@ LVStatus lv_query(const LightVec *db, const char *query, const void *query_vecto
     }
 
     *outputs = table_query_result;
-
 
 _return:
     destory_parser(parser);
