@@ -112,14 +112,14 @@ static int cmp_max_i32(const LVHnswEntry *a, const LVHnswEntry *b)
     return (a->dis.i32 < b->dis.i32) - (a->dis.i32 > b->dis.i32);
 }
 
-int cmp_f32_entry(const void *a, const void *b)
+static int cmp_f32_entry(const void *a, const void *b)
 {
     const LVHnswEntry *ea = a;
     const LVHnswEntry *eb = b;
     return (ea->dis.f32 > eb->dis.f32) - (ea->dis.f32 < eb->dis.f32);
 }
 
-int cmp_i32_entry(const void *a, const void *b)
+static int cmp_i32_entry(const void *a, const void *b)
 {
     const LVHnswEntry *ea = a;
     const LVHnswEntry *eb = b;
