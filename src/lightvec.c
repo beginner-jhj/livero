@@ -143,7 +143,7 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
 
     if (wal_exists)
     {
-        wal_fd = open(wal_path, O_RDONLY);
+        wal_fd = open(wal_path, O_RDWR | O_CREAT);
 
         if ((result = wal_recover(wal_fd, LV_MTABLE)) != LV_OK)
         {
@@ -153,7 +153,7 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
     }
     else
     {
-        wal_fd = open(wal_path, O_RDONLY | O_CREAT, 0644);
+        wal_fd = open(wal_path, O_RDWR | O_CREAT, 0644);
     }
 
     LV_DB->wal_fd = wal_fd;
@@ -161,7 +161,7 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
     // vector
     // create a LVHnsw, and write vectors.lv header
 
-    LV_HNSW = create_hnsw(schema->vector_type, schema->vector_type);
+    LV_HNSW = create_hnsw(schema->vector_type, schema->vector_dim);
     if (!LV_HNSW)
     {
         flag = 1;
@@ -198,18 +198,18 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
     int vectors_exists = access(vectors_path, F_OK) == 0;
 
     int vector_fd;
-    int hnsw_index_fd = open(hnsw_index_path, O_RDONLY | O_CREAT, 0644);
-    int hnsw_graph_fd = open(hnsw_graph_path, O_RDONLY | O_CREAT, 0644);
+    int hnsw_index_fd = open(hnsw_index_path, O_RDWR | O_CREAT, 0644);
+    int hnsw_graph_fd = open(hnsw_graph_path, O_RDWR | O_CREAT, 0644);
 
     if (vectors_exists)
     {
         // todo recover hnsw
-        vector_fd = open(vectors_path, O_RDONLY);
+        vector_fd = open(vectors_path, O_RDWR);
     }
 
     else
     {
-        vector_fd = open(vectors_path, O_RDONLY | O_CREAT, 0644);
+        vector_fd = open(vectors_path, O_RDWR | O_CREAT, 0644);
         if ((result = vector_write_header(vector_fd, schema->vector_type, schema->vector_dim, 1)) != LV_OK)
         {
             flag = 1;
@@ -220,6 +220,8 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
     LV_DB->vector_fd = vector_fd;
     LV_DB->hnsw_index_fd = hnsw_index_fd;
     LV_DB->hnsw_graph_fd = hnsw_graph_fd;
+
+    *db = LV_DB;
 
 cleanup:
     if (flag)
