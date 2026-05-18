@@ -20,20 +20,11 @@ typedef struct LVNode
 LVNode *create_node(const LVArena *arena, const LVNodeType type, const LVSeq64_t seq, const LVInsertOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list);
 void *node_reserve(const LVArena *arena, const LVSize32_t node_size);
 
-uint32_t node_key_offset(const LVLevel8_t level)
-{
-    return sizeof(LVNode) + sizeof(LVNode *) * level;
-}
+uint32_t node_key_offset(const LVLevel8_t level);
 
-uint32_t node_value_offset(const LVLevel8_t level, const LVKeyLen32_t klen)
-{
-    return node_key_offset(level) + klen;
-}
+uint32_t node_value_offset(const LVLevel8_t level, const LVKeyLen32_t klen);
 
-uint32_t node_field_offset(const LVLevel8_t level, const LVKeyLen32_t klen, const LVValueLen32_t vlen)
-{
-    return node_value_offset(level, klen) + vlen;
-}
+uint32_t node_field_offset(const LVLevel8_t level, const LVKeyLen32_t klen, const LVValueLen32_t vlen);
 
 int node_cmp(const LVNodeType type_a, const void *key_a, const LVKeyLen32_t klen_a, const LVSeq64_t seq_a, const LVNodeType type_b, const void *key_b, const LVKeyLen32_t klen_b, const LVSeq64_t seq_b);
 int node_key_equal(const void *key_a, const LVKeyLen32_t klen_a, const void *key_b, const LVKeyLen32_t klen_b);

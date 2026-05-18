@@ -94,6 +94,21 @@ void* node_reserve(const LVArena* arena, const LVSize32_t node_size)
     return (LVNode*)arena_allocate(arena, node_size, -1);
 }
 
+uint32_t node_key_offset(const LVLevel8_t level)
+{
+    return sizeof(LVNode) + sizeof(LVNode*) * level;
+}
+
+uint32_t node_value_offset(const LVLevel8_t level, const LVKeyLen32_t klen)
+{
+    return node_key_offset(level) + klen;
+}
+
+uint32_t node_field_offset(const LVLevel8_t level, const LVKeyLen32_t klen, const LVValueLen32_t vlen)
+{
+    return node_value_offset(level, klen) + vlen;
+}
+
 //-1: a < b
 // 1: a > b
 
