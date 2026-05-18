@@ -401,7 +401,7 @@ static inline LVStatus vector_hnsw_insert(LVHnsw *hnsw, const LVVectorId64_t new
 
     LVLevel8_t min_layer = hnsw->current_max_layer < new_layer ? hnsw->current_max_layer : new_layer;
 
-    LVHnswEntry *ep_list[hnsw->node_count];
+    LVHnswNode *ep_list[hnsw->node_count];
     memset(ep_list, 0, sizeof(ep_list));
     ep_list[0] = (LVHnswNode *)hnsw->id_node_map->map[ep_id];
 
@@ -555,9 +555,10 @@ static inline LVStatus vector_hnsw_search_layer(LVHnsw *hnsw, const LVHnswNode *
             }
         }
 
-        LVVectorId64_t *neighbors = vector_access_neighbors(ep_list[candidate.id], layer);
+        const LVHnswNode* candidate_node = hnsw->id_node_map->map[candidate.id];
+        LVVectorId64_t *neighbors = vector_access_neighbors(candidate_node, layer);
 
-        for (int i = 0; i < ep_list[candidate.id]->neighbor_counts[layer]; ++i)
+        for (int i = 0; i < candidate_node->neighbor_counts[layer]; ++i)
         {
             LVVectorId64_t neighbor_id = neighbors[i];
             if (!(visited[neighbor_id / 64] & (1 << (neighbor_id % 64))))
