@@ -88,11 +88,13 @@ LVStatus read_helper(const int fd, const void *buf, const uint32_t len)
 
 uint32_t xorshift(void)
 {
-    uint32_t x = time(NULL);
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    return x;
+    static uint32_t state = 0;
+    if (state == 0) state = (uint32_t)time(NULL);
+    
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
 }
 
 void safe_free(void **ptr)
