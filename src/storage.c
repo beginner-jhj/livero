@@ -236,7 +236,7 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
     const int is_limit_on = has_option && option->flags & LV_QOPT_LIMIT;
     const int is_range_on = has_option && query_vector && option->flags & LV_QOPT_VECTOR_RANGE;
     const int is_ordby_on = has_option && option->flags & LV_QOPT_ORDER_BY;
-    const int is_ordby_vec = is_ordby_on && query_vector && (strncasecmp(option->order.by, "vector", sizeof("vector")));
+    const int is_ordby_vec = is_ordby_on && query_vector && (strncasecmp(option->order.by, "vector", strlen("vector")));
     const int needs_calc_dis = is_range_on || is_ordby_vec;
 
     uint32_t ordby_field_mask = 0;
