@@ -35,7 +35,7 @@ typedef struct LVTableQVList
     LVSize32_t capacity;
 } LVTableQVList;
 
-typedef struct LVTableQueryResult{
+typedef struct LVTableQueryResult {
     LVSeq64_t node_seq;
     LVVectorId64_t vector_id;
     void* key;
@@ -45,7 +45,7 @@ typedef struct LVTableQueryResult{
     void* vector;
 } LVTableQueryResult;
 
-typedef struct LVTableQueryResultSet{
+typedef struct LVTableQueryResultSet {
     LVSize32_t size;
     LVTableQueryResult* results;
 } LVTableQueryResultSet;
@@ -63,29 +63,13 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
 void table_query_apply_range(LVTableQVList* qv_list, const LVVectorType vector_type, const LVQueryOption* option);
 void table_query_apply_ordby(LVTableQVList* qv_list, const LVQueryOption* option, const LVSchema* schema);
 
-int ordvec_f32_desc(const void* a, const void* b) {
-    LVTableQueryValue* qva = a;
-    LVTableQueryValue* qvb = b;
-    return (qva->dis.f32 < qvb->dis.f32) - (qva->dis.f32 > qvb->dis.f32);
-}
+int ordvec_f32_desc(const void* a, const void* b);
 
-int ordvec_f32_asc(const void* a, const void* b) {
-    LVTableQueryValue* qva = a;
-    LVTableQueryValue* qvb = b;
-    return (qva->dis.f32 > qvb->dis.f32) - (qva->dis.f32 < qvb->dis.f32);
-}
+int ordvec_f32_asc(const void* a, const void* b);
 
-int ordvec_i8_desc(const void* a, const void* b) {
-    LVTableQueryValue* qva = a;
-    LVTableQueryValue* qvb = b;
-    return (qva->dis.i32 < qvb->dis.i32) - (qva->dis.i32 > qvb->dis.i32);
-}
+int ordvec_i8_desc(const void* a, const void* b);
 
-int ordvec_i8_asc(const void* a, const void* b) {
-    LVTableQueryValue* qva = a;
-    LVTableQueryValue* qvb = b;
-    return (qva->dis.i32 > qvb->dis.i32) - (qva->dis.i32 < qvb->dis.i32);
-}
+int ordvec_i8_asc(const void* a, const void* b);
 
 #define ordvec_f32_dot_nearest ordvec_f32_desc
 #define ordvec_f32_dot_farthest ordvec_f32_asc
@@ -97,13 +81,13 @@ int ordvec_i8_asc(const void* a, const void* b) {
 #define ordvec_i8_l2_nearest ordvec_i8_asc
 #define ordvec_i8_l2_farthest ordvec_i8_desc
 
-void table_query_apply_limit(LVTableQVList* qv_list,const LVSize32_t limit);
+void table_query_apply_limit(LVTableQVList* qv_list, const LVSize32_t limit);
 
-int ordby_f64_asc(const void* a, const void*b);
-int ordby_f64_desc(const void* a, const void*b);
+int ordby_f64_asc(const void* a, const void* b);
+int ordby_f64_desc(const void* a, const void* b);
 
-int ordby_i64_asc(const void* a, const void*b);
-int ordby_i64_desc(const void* a, const void*b);
+int ordby_i64_asc(const void* a, const void* b);
+int ordby_i64_desc(const void* a, const void* b);
 
 LVTableQVList* create_qv_list(void);
 

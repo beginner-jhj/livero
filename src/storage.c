@@ -412,6 +412,30 @@ void table_query_apply_limit(LVTableQVList* qv_list, const LVSize32_t limit) {
     }
 }
 
+int ordvec_f32_desc(const void* a, const void* b) {
+    LVTableQueryValue* qva = a;
+    LVTableQueryValue* qvb = b;
+    return (qva->dis.f32 < qvb->dis.f32) - (qva->dis.f32 > qvb->dis.f32);
+}
+
+int ordvec_f32_asc(const void* a, const void* b) {
+    LVTableQueryValue* qva = a;
+    LVTableQueryValue* qvb = b;
+    return (qva->dis.f32 > qvb->dis.f32) - (qva->dis.f32 < qvb->dis.f32);
+}
+
+int ordvec_i8_desc(const void* a, const void* b) {
+    LVTableQueryValue* qva = a;
+    LVTableQueryValue* qvb = b;
+    return (qva->dis.i32 < qvb->dis.i32) - (qva->dis.i32 > qvb->dis.i32);
+}
+
+int ordvec_i8_asc(const void* a, const void* b) {
+    LVTableQueryValue* qva = a;
+    LVTableQueryValue* qvb = b;
+    return (qva->dis.i32 > qvb->dis.i32) - (qva->dis.i32 < qvb->dis.i32);
+}
+
 int ordby_f64_asc(const void* a, const void* b) {
     LVTableQueryValue* qva = a;
     LVTableQueryValue* qvb = b;
