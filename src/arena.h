@@ -19,6 +19,6 @@ LVArena* create_arena(const LVSize32_t block_size);
 
 void destroy_arena(LVArena* arena);
 
-void* arena_allocate(LVArena* arena,const LVSize32_t total,LVSize32_t align);
+void* arena_allocate(LVArena* arena,const LVSize32_t total,int32_t align);
 
 #endif

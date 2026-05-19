@@ -76,7 +76,7 @@ void destroy_arena(LVArena *arena)
     }
 }
 
-void *arena_allocate(LVArena *arena, const LVSize32_t total, LVSize32_t align)
+void *arena_allocate(LVArena *arena, const LVSize32_t total, int32_t align)
 {
     if (align <= 0)
     {
@@ -126,7 +126,7 @@ void *arena_allocate(LVArena *arena, const LVSize32_t total, LVSize32_t align)
 
         normal_block = normal_block_temp;
         normal_block->data = NULL;
-        normal_block->prev = NULL;
+        normal_block->prev = dedicated_block;
         normal_block->size = arena->block_size;
 
         normal_block_data = malloc(arena->block_size);
@@ -137,7 +137,6 @@ void *arena_allocate(LVArena *arena, const LVSize32_t total, LVSize32_t align)
         }
 
         normal_block->data = normal_block_data;
-        normal_block->prev = dedicated_block;
 
         arena->current_block = normal_block;
         arena->current_offset = 0;
