@@ -553,9 +553,9 @@ LVStatus query_append_tokenviewer(LVSQLParser* parser, const LVQueryToken token,
 
 void query_advance_lexer(LVSQLLexer* lexer)
 {
-    if (lexer->current_index < lexer->sql_len - 1)
+    lexer->current_index += 1;
+    if (lexer->current_index < lexer->sql_len)
     {
-        lexer->current_index += 1;
         lexer->current_char = lexer->sql[lexer->current_index];
     }
     else
