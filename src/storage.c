@@ -395,10 +395,10 @@ void table_query_apply_ordby(LVTableQVList* qv_list, const LVQueryOption* option
             const int is_float = hash->type == LV_META_FLOAT;
 
             if (option->order.dir == LV_ORDER_ASC) {
-                qsort(qv_list, set_size, sizeof(LVTableQueryValue), is_float ? ordby_f64_asc : ordby_i64_asc);
+                qsort(qv_list->values, set_size, sizeof(LVTableQueryValue), is_float ? ordby_f64_asc : ordby_i64_asc);
             }
             else {
-                qsort(qv_list, set_size, sizeof(LVTableQueryValue), is_float ? ordby_f64_desc : ordby_i64_desc);
+                qsort(qv_list->values, set_size, sizeof(LVTableQueryValue), is_float ? ordby_f64_desc : ordby_i64_desc);
 
             }
 
