@@ -222,6 +222,8 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
     if (!result) {
         goto cleanup;
     }
+    result->size = 0;
+    result->results = NULL;
     LVTableQVList* qv_list = create_qv_list();
     if (!qv_list)
     {
@@ -236,7 +238,7 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
     const int is_limit_on = has_option && option->flags & LV_QOPT_LIMIT;
     const int is_range_on = has_option && query_vector && option->flags & LV_QOPT_VECTOR_RANGE;
     const int is_ordby_on = has_option && option->flags & LV_QOPT_ORDER_BY;
-    const int is_ordby_vec = is_ordby_on && query_vector && (strncasecmp(option->order.by, "vector", strlen("vector")));
+    const int is_ordby_vec = is_ordby_on && query_vector && (strncasecmp(option->order.by, "vector", strlen("vector")) == 0);
     const int needs_calc_dis = is_range_on || is_ordby_vec;
 
     uint32_t ordby_field_mask = 0;
@@ -279,11 +281,6 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
             }
         }
         current_node = current_node->levels[0];
-    }
-
-    if (!has_option)
-    {
-        goto cleanup;
     }
 
     if (is_range_on)
@@ -362,7 +359,7 @@ void table_query_apply_range(LVTableQVList* qv_list, const LVVectorType vector_t
 void table_query_apply_ordby(LVTableQVList* qv_list, const LVQueryOption* option, const LVSchema* schema)
 {
     const int is_range_on = option->flags & LV_QOPT_VECTOR_RANGE;
-    const int is_ordby_vec = (strncasecmp(option->order.by, "vector", strlen("vector")));
+    const int is_ordby_vec = (strncasecmp(option->order.by, "vector", strlen("vector")) == 0);
 
     LVSize32_t set_size = qv_list->size;
 
