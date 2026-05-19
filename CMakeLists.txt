@@ -20,7 +20,7 @@ endif()
 
 # Release flags
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
-set(CMAKE_C_FLAGS_DEBUG   "-g -fsanitize=address,undefined")
+set(CMAKE_C_FLAGS_DEBUG   "-g")
 
 # ── Library ──────────────────────────────────────────────────────────
 set(LV_SOURCES
