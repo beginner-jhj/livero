@@ -163,7 +163,7 @@ static void test_create_table(void)
     expect_true(table->head->levels[0] == table->tail,
                 "head->levels[0] points to tail");
 
-    free(table->arena);
+    destroy_arena(table->arena);
     free(table);
 }
 
