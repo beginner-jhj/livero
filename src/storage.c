@@ -310,6 +310,7 @@ LVTableQueryResultSet* table_query(const LVMemTable* table, const LVSchema* sche
         const LVNode* current_node = qv_list->values[i].node;
         results_tmp[i].node_seq = current_node->seq;
         results_tmp[i].vector_id = current_node->vector_id;
+        results_tmp[i].node = current_node;
         results_tmp[i].key = node_access_key(current_node);
         results_tmp[i].key_len = current_node->key_len;
         results_tmp[i].value = node_access_value(current_node);

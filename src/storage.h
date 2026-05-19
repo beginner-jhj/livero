@@ -38,6 +38,7 @@ typedef struct LVTableQVList
 typedef struct LVTableQueryResult {
     LVSeq64_t node_seq;
     LVVectorId64_t vector_id;
+    LVNode* node;
     void* key;
     LVKeyLen32_t key_len;
     void* value;
