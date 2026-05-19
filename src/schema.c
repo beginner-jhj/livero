@@ -7,17 +7,17 @@
 #include "crc.h"
 #include <ctype.h>
 
-LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVCount32_t field_count, const LVMetaFieldDef *field_defs)
+LVSchema* create_schema(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
 {
     int flag = 0;
-    LVSchema *schema = NULL;
+    LVSchema* schema = NULL;
 
     if (vector_dim > LV_MAX_DIMENSION || field_count > LV_MAX_META_FIELDS)
     {
         goto cleanup;
     }
 
-    LVSchema *schema_temp = malloc(sizeof(LVSchema));
+    LVSchema* schema_temp = malloc(sizeof(LVSchema));
     if (!schema_temp)
     {
         flag = 1;
@@ -36,7 +36,7 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
 
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
 
-    static const char *LV_RESERVED_NAMES[] = {
+    static const char* LV_RESERVED_NAMES[] = {
         "VECTOR",
         "AND",
         "OR",
@@ -49,7 +49,7 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
 
     for (int i = 0; i < schema->field_count; ++i)
     {
-        const LVMetaFieldDef *current_def = field_defs + i;
+        const LVMetaFieldDef* current_def = field_defs + i;
 
         if (strlen(current_def->name) > LV_META_NAME_MAX)
         {
@@ -60,7 +60,7 @@ LVSchema *create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
         for (int k = 0; LV_RESERVED_NAMES[k] != NULL; ++k)
         {
             if (strncasecmp(current_def->name, LV_RESERVED_NAMES[k],
-                            strlen(LV_RESERVED_NAMES[k]) + 1) == 0)
+                strlen(LV_RESERVED_NAMES[k]) + 1) == 0)
             {
                 flag = 1;
                 goto cleanup;
@@ -96,21 +96,21 @@ cleanup:
     return schema;
 }
 
-void schema_destroy_field_hashes(LVMetaFieldHash **hashes)
+void schema_destroy_field_hashes(LVMetaFieldHash** hashes)
 {
     for (int i = 0; i < LV_MAX_META_FIELDS; ++i)
     {
-        LVMetaFieldHash *current = hashes[i];
+        LVMetaFieldHash* current = hashes[i];
         if (!current)
         {
             continue;
         }
         else
         {
-            LVMetaFieldHash *current_next = current->next;
+            LVMetaFieldHash* current_next = current->next;
             while (current_next)
             {
-                LVMetaFieldHash *tmp = current_next->next;
+                LVMetaFieldHash* tmp = current_next->next;
                 free(current_next);
                 current_next = tmp;
             }
@@ -119,7 +119,7 @@ void schema_destroy_field_hashes(LVMetaFieldHash **hashes)
     }
 }
 
-void destroy_schema(LVSchema *schema)
+void destroy_schema(LVSchema* schema)
 {
     if (schema)
     {
@@ -128,7 +128,7 @@ void destroy_schema(LVSchema *schema)
     }
 }
 
-LVStatus schema_write(const int fd, const LVSchema *schema)
+LVStatus schema_write(const int fd, const LVSchema* schema)
 {
     LVStatus result = LV_OK;
 
@@ -200,7 +200,7 @@ LVStatus schema_write(const int fd, const LVSchema *schema)
     int count = 0;
     while (count < schema->field_count)
     {
-        const LVMetaFieldDef *current_field = schema->field_defs + count;
+        const LVMetaFieldDef* current_field = schema->field_defs + count;
         if ((result = write_helper(fd, current_field->name, LV_META_NAME_MAX)) != LV_OK)
         {
             goto _return;
@@ -239,7 +239,7 @@ _return:
     return result;
 }
 
-LVStatus schema_read(const int fd, LVSchema *schema)
+LVStatus schema_read(const int fd, LVSchema* schema)
 {
     LVStatus result = LV_OK;
 
@@ -396,7 +396,7 @@ _return:
     return result;
 }
 
-LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_name, const LVMetaType type, const uint32_t mask)
+LVStatus schema_insert_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVMetaType type, const uint32_t mask)
 {
     LVStatus result = LV_OK;
     const LVHash32_t hash = fnv1a_hash(field_name, strlen(field_name));
@@ -405,7 +405,7 @@ LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_na
 
     if (hashes[index] == NULL)
     {
-        LVMetaFieldHash *meta_hash = malloc(sizeof(LVMetaFieldHash));
+        LVMetaFieldHash* meta_hash = malloc(sizeof(LVMetaFieldHash));
         if (!meta_hash)
         {
             result = LV_ERR_OOM;
@@ -424,12 +424,12 @@ LVStatus schema_insert_field_hash(LVMetaFieldHash **hashes, const char *field_na
     }
     else
     {
-        LVMetaFieldHash *current = hashes[index];
+        LVMetaFieldHash* current = hashes[index];
         while (current->next)
         {
             current = current->next;
         }
-        LVMetaFieldHash *meta_hash = malloc(sizeof(LVMetaFieldHash));
+        LVMetaFieldHash* meta_hash = malloc(sizeof(LVMetaFieldHash));
         if (!meta_hash)
         {
             result = LV_ERR_OOM;
@@ -451,7 +451,7 @@ _return:
     return result;
 }
 
-LVMetaFieldHash *schema_search_field_hash(LVMetaFieldHash **hashes, const char *field_name, const LVSize32_t field_len)
+LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVSize32_t field_len)
 {
     const LVHash32_t hash = fnv1a_hash(field_name, field_len);
 
@@ -464,11 +464,11 @@ LVMetaFieldHash *schema_search_field_hash(LVMetaFieldHash **hashes, const char *
 
     else
     {
-        LVMetaFieldHash *current_field_hash = hashes[index];
+        LVMetaFieldHash* current_field_hash = hashes[index];
         while (current_field_hash)
         {
-            if (strcmp(current_field_hash->field_name, field_name) == 0)
-            {
+            if (strncmp(current_field_hash->field_name, field_name, field_len) == 0
+                && current_field_hash->field_name[field_len] == '\0') {
                 return current_field_hash;
             }
             current_field_hash = current_field_hash->next;
