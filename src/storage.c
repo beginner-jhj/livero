@@ -80,7 +80,7 @@ cleanup:
     return table;
 }
 
-LVStatus table_insert(LVMemTable* table, const LVInsertOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField* field_list)
+LVStatus table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField* field_list)
 {
     LVStatus result = LV_OK;
     LVNode* update[LV_SKIPLIST_MAX_LEVEL];
