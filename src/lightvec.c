@@ -98,7 +98,7 @@ LVStatus lv_open(LightVec **db, const LVSchema *schema, const char *path)
 
     else
     {
-        schema_fd = open(schema_path, O_RDONLY | O_CREAT, 0644); // 0644 (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH):  owner can read/write, else only can read
+        schema_fd = open(schema_path, O_RDWR | O_CREAT, 0644); // 0644 (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH):  owner can read/write, else only can read
 
         if ((result = schema_write(schema_fd, schema)) != LV_OK)
         {
