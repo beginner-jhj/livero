@@ -36,6 +36,7 @@ set(LV_SOURCES
     src/node.c
     src/hash.c
     src/query.c
+    src/sst.c
 )
 
 add_library(lightvec STATIC ${LV_SOURCES})
