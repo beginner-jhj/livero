@@ -4,16 +4,17 @@
 
 static char WRITE_BUFFER[WRITE_BUFFER_SIZE];
 static uint32_t write_helper_pos = 0;
+static uint64_t write_helper_current_offset = 0;
 static int write_helper_last_fd = -1;
 
-LVStatus write_helper(const int fd, const void *buf, const uint32_t len)
+LVStatus write_helper(const int fd, const void* buf, const uint32_t len)
 {
     LVStatus result = LV_OK;
 
     if (len > WRITE_BUFFER_SIZE)
     {
-        if (write(fd, buf, len) < (ssize_t)len)
-            return LV_ERR_IO;
+        if (write(fd, buf, len) < (ssize_t)len) return LV_ERR_IO;
+        write_helper_current_offset += len;
         return LV_OK;
     }
 
@@ -30,12 +31,28 @@ LVStatus write_helper(const int fd, const void *buf, const uint32_t len)
         }
     }
 
-    write_helper_last_fd = fd;
-
     memcpy(WRITE_BUFFER + write_helper_pos, buf, len);
     write_helper_pos += len;
 
+    if (write_helper_last_fd == fd || write_helper_last_fd == -1) {
+        write_helper_current_offset += len;
+    }
+    else {
+        write_helper_current_offset = len;
+    }
+
+    write_helper_last_fd = fd;
+
     return LV_OK;
+}
+
+uint64_t write_helper_get_offset(const int fd) {
+    if (fd == write_helper_last_fd) {
+        return write_helper_current_offset;
+    }
+    else {
+        return 0;
+    }
 }
 
 LVStatus write_helper_flush(const int fd, const int sync)
@@ -70,7 +87,7 @@ LVStatus write_helper_flush(const int fd, const int sync)
     return LV_OK;
 }
 
-LVStatus read_helper(const int fd, const void *buf, const uint32_t len)
+LVStatus read_helper(const int fd, const void* buf, const uint32_t len)
 {
     ssize_t _read = read(fd, buf, len);
     if (_read < 0)
@@ -90,14 +107,14 @@ uint32_t xorshift(void)
 {
     static uint32_t state = 0;
     if (state == 0) state = (uint32_t)time(NULL);
-    
+
     state ^= state << 13;
     state ^= state >> 17;
     state ^= state << 5;
     return state;
 }
 
-void safe_free(void **ptr)
+void safe_free(void** ptr)
 {
     if (ptr && *ptr)
     {
