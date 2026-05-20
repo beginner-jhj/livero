@@ -38,7 +38,7 @@ typedef enum
 {
     LV_PUT = 0,
     LV_DELETE = 1,
-} LVInsertOp;
+} LVNodeOp;
 
 /* ── Metadata field type ────────────────────────────────────────────────────
  * Determines how each metadata field is encoded on disk and compared
@@ -148,17 +148,6 @@ typedef enum
 #define LV_DEFAULT_BLOCK_SIZE 4096 // 4kb
 #define LV_DEFAULT_CAPACITY 16
 
-/* ── Bloom filter parameters ────────────────────────────────────────────────
- * Sized for ~25,000 keys per SSTable at ~1% false positive rate.
- * See DESIGN.md for the derivation.
- *
- * BLOOM_M — total number of bits
- * BLOOM_K — number of hash functions
- * BLOOM_SIZE — byte size of the bit array (ceil division)
- */
-#define BLOOM_M 250000
-#define BLOOM_K 7
-#define BLOOM_SIZE ((BLOOM_M + 7) / 8)
 
 /* ── Path sizes ─────────────────────────────────────────────────────────────*/
 #define LV_PATH_MAX 512 /* max length of any file path including null   */
