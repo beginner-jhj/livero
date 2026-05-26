@@ -654,17 +654,21 @@ static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_se
         qvset->values = tmp;
     }
 
-    const void* key_to_save = malloc(sizeof(key_len));
+    const void* key_to_save = malloc(key_len);
     if (!key_to_save) {
         result = LV_ERR_OOM;
         goto _return;
     }
-    const void* value_to_save = malloc(sizeof(value_len));
-    if (!value_len) {
+    memcpy(key_to_save, key, key_len);
+
+    const void* value_to_save = malloc(value_len);
+    if (!value_to_save) {
         free(key_to_save);
         result = LV_ERR_OOM;
         goto _return;
     }
+    memcpy(value_to_save, value, value_len);
+
 
     const int index = qvset->size;
 
