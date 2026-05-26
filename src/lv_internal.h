@@ -24,6 +24,27 @@ typedef uint64_t LVBigCount64_t; /* large counts (e.g. total record count)   */
 typedef uint64_t LVVectorId64_t; /* internal vector identifier               */
 typedef uint32_t LVHash32_t;     /*hash*/
 
+/* ── Status codes ───────────────────────────────────────────────────────────
+ * Returned by all functions except lifecycle constructors.
+ * Constructors return a pointer + write status to an output parameter.
+ */
+typedef enum
+{
+    LV_OK = 2,
+    LV_QFILTER_T = 1,      // query filter true
+    LV_QFILTER_F = 0,      // query filter false
+    LV_ERR_IO = -1,        /* file I/O failure                          */
+    LV_ERR_OOM = -2,       /* out of memory                             */
+    LV_ERR_NOT_FOUND = -3, /* key does not exist                        */
+    LV_ERR_CORRUPT = -4,   /* checksum mismatch or invalid magic        */
+    LV_ERR_INVALID = -5,   /* bad argument (NULL, out-of-range, etc.)   */
+    LV_ERR_FULL = -6,      /* capacity exceeded                         */
+    LV_ERR_DUPLICATE = -7, /* key already exists (if uniqueness required)*/
+    LV_ERR_INVALID_DB = -8,
+    LV_ERR_INVALID_QUERY = -9,
+    LV_ERR_UNSUP_QOP = -10
+} LVStatus;
+
 /* ── Vector type ────────────────────────────────────────────────────────────
  * Fixed at lv_open via the schema. Cannot be changed after creation.
  */
@@ -85,12 +106,74 @@ typedef union LVVectorDisValue
 
 typedef struct LVAstNode LVAstNode;
 typedef struct LVQueryOption LVQueryOption;
-typedef struct LVTableQueryResultSet LVTableQueryResultSet;
+
+typedef enum LVOrdbyType {
+    LV_ORDBY_VEC = 0,
+    LV_ORDBY_FLOAT = 1,
+    LV_ORDBY_INT = 2,
+    LV_ORDBY_NONE = 3,
+} LVOrdbyType;
+
+typedef enum {
+    LV_SCORE_ABOVE, // score >= threshold
+    LV_SCORE_BELOW, // score <= threshold
+} LVScoreBound;
+
+
+typedef union 
+{
+   float score;
+   double f64;
+   int64_t i64;
+} LVOrdbyValue;
+
+typedef struct LVQueryValue
+{
+    LVSeq64_t node_seq;
+    LVVectorId64_t vector_id;
+    void* key;
+    LVKeyLen32_t key_len;
+    void* value;
+    LVValueLen32_t value_len;
+    float vector_score;
+    // void* vector;
+    // LVVectorDisValue vector_dis;
+    // uint32_t ordby_field_mask;
+    // LVOrdbyType ordby_type;
+
+    LVOrdbyValue ordbyvalue;
+} LVQueryValue;
+
+typedef struct LVQVSet
+{
+    LVQueryValue* values;
+    LVSize32_t size;
+    LVSize32_t capacity;
+} LVQVSet;
+
+typedef LVStatus(*LVQVListAppend)(LVQVSet*, const LVSeq64_t, const LVVectorId64_t, const void*, const LVKeyLen32_t, const void*, const LVValueLen32_t, const float, const LVOrdbyValue);
+
+typedef struct LVQueryResult {
+    LVSeq64_t node_seq;
+    LVVectorId64_t vector_id;
+    void* key;
+    LVKeyLen32_t key_len;
+    void* value;
+    LVValueLen32_t value_len;
+    float vector_score;
+} LVQueryResult;
+
+typedef struct LVQueryResultSet {
+    LVSize32_t size;
+    LVQueryResult* results;
+} LVQueryResultSet;
+
+
 
 // i8
-typedef int32_t (*LVI8DistFunc)(const int8_t *, const int8_t *, LVDim32_t);
+typedef int32_t(*LVI8DistFunc)(const int8_t*, const int8_t*, LVDim32_t);
 // f32
-typedef float (*LVF32DistFunc)(const float *, const float *, LVDim32_t);
+typedef float (*LVF32DistFunc)(const float*, const float*, LVDim32_t);
 
 typedef enum LVVectorMetric
 {
@@ -100,27 +183,6 @@ typedef enum LVVectorMetric
 
 #define LV_MAX_DIMENSION 4096      // vector max dimension
 #define LV_NO_VECTOR_ID UINT64_MAX // sentinel: no vector
-
-/* ── Status codes ───────────────────────────────────────────────────────────
- * Returned by all functions except lifecycle constructors.
- * Constructors return a pointer + write status to an output parameter.
- */
-typedef enum
-{
-    LV_OK = 2,
-    LV_QFILTER_T = 1,      // query filter true
-    LV_QFILTER_F = 0,      // query filter false
-    LV_ERR_IO = -1,        /* file I/O failure                          */
-    LV_ERR_OOM = -2,       /* out of memory                             */
-    LV_ERR_NOT_FOUND = -3, /* key does not exist                        */
-    LV_ERR_CORRUPT = -4,   /* checksum mismatch or invalid magic        */
-    LV_ERR_INVALID = -5,   /* bad argument (NULL, out-of-range, etc.)   */
-    LV_ERR_FULL = -6,      /* capacity exceeded                         */
-    LV_ERR_DUPLICATE = -7, /* key already exists (if uniqueness required)*/
-    LV_ERR_INVALID_DB = -8,
-    LV_ERR_INVALID_QUERY = -9,
-    LV_ERR_UNSUP_QOP = -10
-} LVStatus;
 
 /* ── File magic numbers ─────────────────────────────────────────────────────
  * 4-byte ASCII identifiers written at the start of each file.
@@ -134,14 +196,14 @@ typedef enum
 #define LV_MAGIC_HNSW_GRAPH "LVHG"
 #define LV_MAGIC 0x4C564442
 
-/* ── File format version ────────────────────────────────────────────────────
- * Increment when the on-disk format changes in a breaking way.
- */
+ /* ── File format version ────────────────────────────────────────────────────
+  * Increment when the on-disk format changes in a breaking way.
+  */
 #define LV_FORMAT_VERSION 1
 
-/* ── Schema ─────────────────────────────────────────────────────────────────
- * Defined once at lv_open. Stored in schema.lv. All records share one schema.
- */
+  /* ── Schema ─────────────────────────────────────────────────────────────────
+   * Defined once at lv_open. Stored in schema.lv. All records share one schema.
+   */
 #define LV_MAX_META_FIELDS 32
 #define LV_META_NAME_MAX 64 /* includes null terminator */
 
@@ -149,7 +211,9 @@ typedef enum
 #define LV_DEFAULT_CAPACITY 16
 
 
-/* ── Path sizes ─────────────────────────────────────────────────────────────*/
+   /* ── Path sizes ─────────────────────────────────────────────────────────────*/
 #define LV_PATH_MAX 512 /* max length of any file path including null   */
+
+#define LV_FLUSH_THRESHOLD_COUNT 
 
 #endif /* LV_INTERNAL_H */
