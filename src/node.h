@@ -33,6 +33,12 @@ void *node_access_key(const LVNode *node);
 void *node_access_value(const LVNode *node);
 void *node_access_field(const LVNode *node, const int number);
 
-int node_field_number(const LVNode* node, const LVSize32_t mask);
+double node_get_f64_field(const LVNode* node, const LVSize32_t mask);
+int64_t node_get_i64_field(const LVNode* node, const LVSize32_t mask);
+
+
+int node_field_number(const LVNode* node, const LVSize32_t target_mask);
+int node_calculate_field_number(const LVSize32_t total_field_mask, const LVSize32_t total_field_count, const LVSize32_t target_mask);
+
 
 #endif
