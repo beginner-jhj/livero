@@ -20,6 +20,7 @@
 typedef struct LVHnswNode
 {
     LVVectorId64_t id;
+    int flushed;
     LVLevel8_t max_layer;
     LVSize32_t neighbor_counts[]; // store a number of neighbors of each level
     // neighbors ,'neighbors' is a vector id sequence
@@ -127,6 +128,7 @@ static int cmp_i32_entry(const void *a, const void *b)
 }
 
 LVHnsw *create_hnsw(const LVVectorType vector_type, const LVDim32_t dim);
+void destroy_hnsw(LVHnsw* hnsw);
 
 LVStatus vector_write_header(const int fd, const LVVectorType vector_type, const LVDim32_t dim, const int sync);
 LVStatus vector_write_f32_vector(const int fd, const LVDim32_t dim, const float *vector);
@@ -137,15 +139,21 @@ float vector_f32_l2_sq(const float *a, const float *b, const LVDim32_t dim);
 int32_t vector_i8_dot(const int8_t *a, const int8_t *b, const LVDim32_t dim);
 float vector_f32_dot(const float *a, const float *b, const LVDim32_t dim);
 
+float vector_score_f32_l2(const float dist);
+float vector_score_i32_l2(const int32_t dist);
+float vector_score_f32_dot(const float dist);
+float vector_score_i32_dot(const int32_t dist);
+
+
 LVLevel8_t vector_hnsw_layer(const float ml);
 
 LVStatus vector_hnsw_f32_insert(LVHnsw *hnsw, const LVVectorId64_t id, const float *vector, LVF32DistFunc dist_fn);
 LVStatus vector_hnsw_i8_insert(LVHnsw *hnsw, const LVVectorId64_t id, const int8_t *vector, LVI8DistFunc dist_fn);
 
-static inline LVStatus vector_hnsw_insert(LVHnsw *hnsw, const LVVectorId64_t id, const void *vector, const int is_f32, LVF32DistFunc f32_dist_fn, LVI8DistFunc i8_dist_fn);
-static inline LVVectorId64_t vector_hnsw_search_ep(const LVHnsw *hnsw, LVHnswNode *ep, LVVectorId64_t new_node_id, const LVLevel8_t start, const LVLevel8_t end, const int is_f32, LVF32DistFunc f32_dist_fn, LVI8DistFunc i8_dist_fn);
-static inline LVStatus vector_hnsw_search_layer(LVHnsw *hnsw, const LVHnswNode **ep_list, const LVSize32_t ep_list_size, const LVVectorId64_t new_node_id, const LVLevel8_t layer,const LVSize32_t ef, const int is_f32, LVF32DistFunc f32_dist_fn, LVI8DistFunc i8_dist_fn);
-static inline void vector_hnsw_select_neighbors(LVHnsw *hnsw, const LVSize32_t M, const LVLevel8_t layer, LVSize32_t *neighbor_counts, LVVectorId64_t *neighbor_list, LVSize32_t neighbor_update_start, const int is_f32, LVF32DistFunc f32_dist_fn, LVI8DistFunc i8_dist_fn);
+LVStatus vector_hnsw_insert(LVHnsw *hnsw, const LVVectorId64_t id, const void *vector, const int is_f32, LVF32DistFunc f32_dist_fn, LVI8DistFunc i8_dist_fn);
+LVVectorId64_t vector_hnsw_search_ep(const LVHnsw *hnsw, LVHnswNode *ep, LVVectorId64_t new_node_id, const LVLevel8_t start, const LVLevel8_t end, const int is_f32, LVF32DistFunc f32_dist_fn, LVI8DistFunc i8_dist_fn);
+LVStatus vector_hnsw_search_layer(LVHnsw *hnsw, const LVHnswNode **ep_list, const LVSize32_t ep_list_size, const LVVectorId64_t new_node_id, const LVLevel8_t layer,const LVSize32_t ef, const int is_f32, LVF32DistFunc f32_dist_fn, LVI8DistFunc i8_dist_fn);
+void vector_hnsw_select_neighbors(LVHnsw *hnsw, const LVSize32_t M, const LVLevel8_t layer, LVSize32_t *neighbor_counts, LVVectorId64_t *neighbor_list, LVSize32_t neighbor_update_start, const int is_f32, LVF32DistFunc f32_dist_fn, LVI8DistFunc i8_dist_fn);
 
 LVStatus vector_insert_hnsw_node(LVHnsw *hnsw, const LVVectorId64_t id, const LVLevel8_t layer, const LVSize32_t *neighbor_counts, const LVVectorId64_t *neighbor_list, const void *vector);
 
@@ -160,4 +168,6 @@ LVStatus vector_heap_insert(LVHnswHeap *heap, const LVHnswEntry *entry);
 void vector_heap_pop(LVHnswHeap *heap, LVHnswEntry *pop);
 
 LVStatus vector_idmap_append(LVHnswIDMap *map, const LVVectorId64_t id, const void *ptr);
+
+void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t id);
 #endif
