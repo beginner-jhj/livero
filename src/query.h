@@ -35,10 +35,10 @@ typedef enum LVQueryOp
 
 typedef enum LVQueryOptionFlag
 {
-    LV_QOPT_NONE = 1 << 0, // 1
-    LV_QOPT_LIMIT = 1 << 1,        // universal 2
-    LV_QOPT_ORDER_BY = 1 << 2,     // universal (field) / "VECTOR" 4
-    LV_QOPT_VECTOR_RANGE = 1 << 3, // vector only 8
+    LV_QOPT_NONE = 1 << 0, 
+    LV_QOPT_LIMIT = 1 << 1,        // universal 
+    LV_QOPT_ORDER_BY = 1 << 2,     // universal (field) / "VECTOR" 
+    LV_QOPT_SCORE_FILTER = 1 << 3, // vector only 
 } LVQueryOptionFlag;
 
 typedef enum LVQueryOrderDir
@@ -46,9 +46,6 @@ typedef enum LVQueryOrderDir
     LV_ORDER_ASC = 0,
     LV_ORDER_DESC = 1,
 } LVQueryOrderDir;
-
-#define LV_RANGE_NINF -(float)(INFINITY)
-#define LV_RANGE_PINF (float)INFINITY
 
 typedef struct LVQueryOption
 {
@@ -61,9 +58,9 @@ typedef struct LVQueryOption
     } order;
     struct
     {
-        float left_endpoint;
-        float right_endpoint;
-    } vector_range;
+        float score;
+        LVScoreBound bound;
+    } vector_score_filter;
     LVVectorMetric vector_metric;
 } LVQueryOption;
 
@@ -136,16 +133,6 @@ typedef struct LVSQLParser
     LVSQLTokenViewer *current_viewer;
     LVSize32_t cursor;
 } LVSQLParser;
-
-typedef struct LVQueryResult{
-    LVSeq64_t node_seq;
-    LVVectorId64_t vector_id;
-    void* key;
-    LVKeyLen32_t key_len;
-    void* value;
-    LVValueLen32_t value_len;
-    void* vector;
-} LVQueryResult;
 
 int query_is_value_token(const LVQueryToken token);
 int query_is_op_token(const LVQueryToken token);
