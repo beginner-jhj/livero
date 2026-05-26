@@ -584,7 +584,7 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
             lseek(fd, key_len + value_len + field_serialized_size, SEEK_CUR);
         }
 
-        record_read+=1;
+        record_read += 1;
 
     }
 
@@ -653,20 +653,20 @@ LVStatus sst_read_record_tail(const int fd, char* key, const LVKeyLen32_t key_le
         if (type == LV_META_STRING) {
             if ((result = read_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
             LVSize32_t saved_len = get_fixed_32(BUF_32);
-            memcpy(&saved_len, field_ptr, sizeof(uint32_t));
+            memcpy(field_ptr, &saved_len, sizeof(uint32_t));
 
             field_ptr += sizeof(uint32_t);
 
             char string[saved_len];
             if ((result = read_helper(fd, string, saved_len)) != LV_OK) goto _return;
-            memcpy(string, field_ptr, saved_len);
+            memcpy(field_ptr, string, saved_len);
 
             field_ptr += saved_len;
         }
         else {
             if ((result = read_helper(fd, BUF_64, 8)) != LV_OK) goto _return;
             uint64_t saved_value = get_fixed_64(BUF_64);
-            memcpy(&saved_value, field_ptr, sizeof(uint64_t));
+            memcpy(field_ptr, &saved_value, sizeof(uint64_t));
             field_ptr += sizeof(uint64_t);
         }
     }
