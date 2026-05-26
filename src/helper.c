@@ -87,7 +87,7 @@ LVStatus write_helper_flush(const int fd, const int sync)
     return LV_OK;
 }
 
-LVStatus read_helper(const int fd, const void* buf, const uint32_t len)
+LVStatus read_helper(const int fd, void* buf, const uint32_t len)
 {
     ssize_t _read = read(fd, buf, len);
     if (_read < 0)
@@ -95,9 +95,18 @@ LVStatus read_helper(const int fd, const void* buf, const uint32_t len)
         return LV_ERR_IO;
     }
 
-    else if (_read < len)
-    {
-        return LV_ERR_FULL;
+    // else if (_read < len)
+    // {
+    //     return LV_ERR_FULL;
+    // }
+
+    return LV_OK;
+}
+
+LVStatus pread_helper(const int fd, void* buf, const uint32_t len, const uint64_t offset) {
+    ssize_t _read = pread(fd, buf, len, offset);
+    if (_read < 0) {
+        return LV_ERR_IO;
     }
 
     return LV_OK;

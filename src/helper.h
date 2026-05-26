@@ -11,7 +11,8 @@
 LVStatus write_helper(const int fd, const void* buf, const uint32_t len);
 LVStatus write_helper_flush(const int fd, const int sync);
 uint64_t write_helper_get_offset(const int fd);
-LVStatus read_helper(const int fd, const void* buf, const uint32_t len);
+LVStatus read_helper(const int fd, void* buf, const uint32_t len);
+LVStatus pread_helper(const int fd, void* buf, const uint32_t len, const uint64_t offset );
 
 uint32_t xorshift(void);
 
