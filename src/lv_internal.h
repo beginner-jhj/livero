@@ -103,6 +103,7 @@ typedef union LVVectorDisValue
     uint32_t i32;
     float f32;
 } LVVectorDisValue;
+typedef struct LVHnswQueryCtx;
 
 typedef struct LVAstNode LVAstNode;
 typedef struct LVQueryOption LVQueryOption;
@@ -136,11 +137,6 @@ typedef struct LVQueryValue
     void* value;
     LVValueLen32_t value_len;
     float vector_score;
-    // void* vector;
-    // LVVectorDisValue vector_dis;
-    // uint32_t ordby_field_mask;
-    // LVOrdbyType ordby_type;
-
     LVOrdbyValue ordbyvalue;
 } LVQueryValue;
 
@@ -151,7 +147,7 @@ typedef struct LVQVSet
     LVSize32_t capacity;
 } LVQVSet;
 
-typedef LVStatus(*LVQVListAppend)(LVQVSet*, const LVSeq64_t, const LVVectorId64_t, const void*, const LVKeyLen32_t, const void*, const LVValueLen32_t, const float, const LVOrdbyValue);
+typedef LVStatus(*LVQVSetAppendFn)(LVQVSet*, const LVSeq64_t, const LVVectorId64_t, const void*, const LVKeyLen32_t, const void*, const LVValueLen32_t, const float, const LVOrdbyValue);
 
 typedef struct LVQueryResult {
     LVSeq64_t node_seq;
@@ -171,9 +167,9 @@ typedef struct LVQueryResultSet {
 
 
 // i8
-typedef int32_t(*LVI8DistFunc)(const int8_t*, const int8_t*, LVDim32_t);
+typedef int32_t(*LVI8DistFn)(const int8_t*, const int8_t*, LVDim32_t);
 // f32
-typedef float (*LVF32DistFunc)(const float*, const float*, LVDim32_t);
+typedef float (*LVF32DistFn)(const float*, const float*, LVDim32_t);
 
 typedef enum LVVectorMetric
 {
