@@ -436,7 +436,7 @@ LVStatus sst_write_record_with_old_sst(const int new_fd, const int old_fd, const
 LVStatus sst_indexblockset_append(LVSSTIndexBlockSet* index_buffer, const LVKeyLen32_t key_len, const void* key, const LVSeq64_t seq, const LVVectorId64_t vector_id, const uint64_t offset) {
     if (index_buffer->size >= index_buffer->capacity) {
         const LVSize32_t new_capacity = index_buffer->capacity * 2;
-        const uint8_t* tmp = realloc(index_buffer->entries, new_capacity * sizeof(LVSSTIndexBlockEntry));
+        const LVSSTIndexBlockEntry* tmp = realloc(index_buffer->entries, new_capacity * sizeof(LVSSTIndexBlockEntry));
         if (!tmp) {
             return LV_ERR_OOM;
         }
@@ -492,9 +492,10 @@ LVSize32_t sst_node_field_size(const LVNode* node, const uint8_t type_size) {
             field_ptr += 8;
         }
     }
+    return size;
 }
 
-LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask, const LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVListAppend qv_append_func, LVQVSet* qv_set) {
+LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask, const LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set) {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
@@ -548,7 +549,7 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
 
             if ((result = sst_read_record_tail(fd, key, key_len, value, value_len, (char*)(node_access_field(dummy_node, 0)), field_count)) != LV_OK) goto _return;
 
-            if (query_eval_ast(query, dummy_node, schema)) {
+            if (node_eval_query(dummy_node, query, schema)) {
                 float vector_score = 0.0f;
                 LVOrdbyValue ordbyvalue;
                 ordbyvalue.i64 = 0;
@@ -575,7 +576,7 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
                 }
 
 
-                if ((result = qv_append_func(qv_set, dummy_node->seq, vector_id, key, key_len, value, value_len, vector_score, ordbyvalue)) != LV_OK) return result;
+                if ((result = qv_append_fn(qv_set, dummy_node->seq, vector_id, key, key_len, value, value_len, vector_score, ordbyvalue)) != LV_OK) return result;
 
             }
 
@@ -669,6 +670,83 @@ LVStatus sst_read_record_tail(const int fd, char* key, const LVKeyLen32_t key_le
             memcpy(field_ptr, &saved_value, sizeof(uint64_t));
             field_ptr += sizeof(uint64_t);
         }
+    }
+
+_return:
+    return result;
+}
+
+LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const LVVectorId64_t vector_id,const LVSchema* schema, const LVAstNode* query, const LVSSTQueryCtx* query_ctx) {
+    LVStatus result = LV_OK;
+    uint8_t BUF_32[4];
+    uint8_t BUF_64[8];
+
+    if ((result = pread_helper(vector_index_fd, BUF_64, 8, vector_id * 8)) != LV_OK) goto _return;
+
+    const uint64_t record_offset = get_fixed_64(BUF_64);
+
+    lseek(sst_fd, record_offset, SEEK_SET);
+
+    LVSeq64_t seq;
+    LVNodeOp op;
+    LVLevel8_t level;
+    LVKeyLen32_t key_len;
+    LVValueLen32_t value_len;
+    LVVectorId64_t saved_vector_id;
+    LVSize32_t field_mask;
+    LVSize32_t field_count;
+    LVSize32_t field_nonserialized_size;
+    LVSize32_t field_serialized_size;
+
+    if ((result = sst_read_record_head(sst_fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_nonserialized_size, &field_serialized_size)) != LV_OK) goto _return;
+
+    if (field_count > 0 && (query_ctx->query_field_mask & field_mask)) {
+        char node_buf[sizeof(LVNode) + field_nonserialized_size];
+        LVNode* dummy_node = (LVNode*)node_buf;
+        dummy_node->level = 0;
+        dummy_node->key_len = key_len;
+        dummy_node->value_len = value_len;
+        dummy_node->field_mask = field_mask;
+        dummy_node->field_count = field_count;
+
+        char key[key_len];
+        char value[value_len];
+
+        if ((result = sst_read_record_tail(sst_fd, key, key_len, value, value_len, (char*)(node_access_field(dummy_node, 0)), field_count)) != LV_OK) goto _return;
+
+        if (node_eval_query(dummy_node, query, schema)) {
+            LVOrdbyValue ordbyvalue;
+            ordbyvalue.i64 = 0;
+
+            switch (query_ctx->ordbytype)
+            {
+            case LV_ORDBY_FLOAT: {
+                double value = node_get_f64_field(dummy_node, query_ctx->ordby_field_mask);
+                ordbyvalue.f64 = value;
+                break;
+            }
+            case LV_ORDBY_INT: {
+                int64_t value = node_get_i64_field(dummy_node, query_ctx->ordby_field_mask);
+                ordbyvalue.i64 = value;
+                break;
+            }
+            case LV_ORDBY_VEC: {
+                ordbyvalue.score = query_ctx->vector_score;
+                break;
+            }
+
+            default:
+                break;
+            }
+
+
+            if ((result = query_ctx->qvset_append_fn(query_ctx->qvset, dummy_node->seq, vector_id, key, key_len, value, value_len, query_ctx->vector_score, ordbyvalue)) != LV_OK) goto _return;
+
+            result = LV_QFILTER_T;
+        }else{
+            result = LV_QFILTER_F;
+        }
+
     }
 
 _return:
