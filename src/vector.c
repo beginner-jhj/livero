@@ -955,13 +955,13 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
         const LVHnswNode* candidate_node = hnsw->id_node_map->map[candidate.id];
         LVVectorId64_t* neighbors = vector_access_neighbors(candidate_node, 0);
 
-        for (int i = 0; i < candidate_node->neighbor_counts; ++i) {
+        for (int i = 0; i < candidate_node->neighbor_counts[0]; ++i) {
             LVVectorId64_t neighbor_id = neighbors[i];
             LVHnswNode* neighbor = hnsw->id_node_map->map[neighbor_id];
 
             if (neighbor->flushed == 0 && neighbor->memtable_node->op == LV_DELETE) continue;
 
-            if (!(visited[neighbor_id / 64] & (1 << (neighbor_id % 64))))
+            if (!(visited[neighbor_id / 64] & (1ULL << (neighbor_id % 64))))
             {
                 const void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_id]);
                 LVHnswEntry new_entry;
@@ -1046,7 +1046,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                     else {
                         LVSSTQueryCtx ctx = { .ordby_field_mask = query_ctx->ordby_field_mask, .ordbytype = query_ctx->ordbytype,.query_field_mask = query_ctx->query_field_mask,.qvset = query_ctx->sst_qvset,.qvset_append_fn = query_ctx->sst_qvset_append_fn, .vector_score = score };
                         const LVStatus sst_query_result = sst_query_with_hnsw(query_ctx->sst_fd, query_ctx->vector_index_fd, neighbor_id, schema, query, &ctx);
-                        if (sst_query_result != LV_QFILTER_F || sst_query_result != LV_QFILTER_T) {
+                        if (sst_query_result != LV_QFILTER_F && sst_query_result != LV_QFILTER_T) {
                             result = sst_query_result;
                             goto _return;
                         }
@@ -1066,7 +1066,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                 }
             }
 
-            visited[neighbor_id / 64] |= (1 << (neighbor_id % 64));
+            visited[neighbor_id / 64] |= (1ULL << (neighbor_id % 64));
         }
     }
 
