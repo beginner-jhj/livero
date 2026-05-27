@@ -387,6 +387,8 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                     // current '>'
                     query_advance_lexer(&lexer); // move to next
                 }
+
+                parser->complexity_score += 1;
                 break;
             }
 
@@ -412,6 +414,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                     // current '<'
                     query_advance_lexer(&lexer); // move to next
                 }
+                parser->complexity_score += 1;
                 break;
             }
 
@@ -427,6 +430,8 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                     query_advance_lexer(&lexer); // move to '='
                     // current '='
                     query_advance_lexer(&lexer); // move to next
+
+                    parser->complexity_score += 1;
                 }
                 else
                 {
@@ -451,6 +456,8 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                     query_advance_lexer(&lexer); // move to '='
                     // current '='
                     query_advance_lexer(&lexer); // move to next
+
+                    parser->complexity_score += 1;
                 }
                 else
                 {
@@ -612,6 +619,7 @@ LVSQLParser* create_parser() {
     parser->size = 0;
     parser->cursor = 0;
     parser->current_viewer = NULL;
+    parser->complexity_score = 0;
     viewers = malloc(sizeof(LVSQLTokenViewer) * LV_DEFAULT_CAPACITY);
     if (!viewers) {
         flag = 1;
@@ -626,8 +634,8 @@ cleanup:
     return parser;
 }
 
-void destory_parser(LVSQLParser* parser){
-    if(parser){
+void destory_parser(LVSQLParser* parser) {
+    if (parser) {
         free(parser->viewers);
         free(parser);
     }
@@ -827,7 +835,7 @@ int query_parser_match(LVSQLParser* parser, const LVQueryToken expected)
     return match;
 }
 
-uint32_t query_get_fieldmask(const LVAstNode* node, const LVSchema* schema)
+uint32_t query_get_field_mask(const LVAstNode* node, const LVSchema* schema)
 {
     if (node->type == LV_AST_FILTER)
     {
@@ -835,6 +843,6 @@ uint32_t query_get_fieldmask(const LVAstNode* node, const LVSchema* schema)
         LVMetaFieldHash* hash = schema_search_field_hash(schema->field_hashes, field_name, strlen(field_name));
         return hash ? hash->mask : 0;
     }
-    return query_get_fieldmask(node->value.logic.left, schema) | query_get_fieldmask(node->value.logic.right, schema);
+    return query_get_field_mask(node->value.logic.left, schema) | query_get_field_mask(node->value.logic.right, schema);
 }
 

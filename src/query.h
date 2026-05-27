@@ -51,6 +51,7 @@ typedef struct LVQueryOption
 {
     uint32_t flags;
     LVSize32_t limit;
+    LVSize32_t top_k;
     struct
     {
         char by[LV_META_NAME_MAX];
@@ -132,6 +133,7 @@ typedef struct LVSQLParser
     LVSQLTokenViewer *viewers;
     LVSQLTokenViewer *current_viewer;
     LVSize32_t cursor;
+    LVSize32_t complexity_score;
 } LVSQLParser;
 
 int query_is_value_token(const LVQueryToken token);
@@ -170,6 +172,6 @@ void query_advance_parser(LVSQLParser *parser);
 void query_parser_consume(LVSQLParser *parser, const LVQueryToken token);
 int query_parser_match(LVSQLParser *parser, const LVQueryToken expected);
 
-uint32_t query_get_fieldmask(const LVAstNode* node, const LVSchema* schema);
+uint32_t query_get_field_mask(const LVAstNode* node, const LVSchema* schema);
 
 #endif
