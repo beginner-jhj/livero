@@ -577,7 +577,15 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
     }
 
     if (is_limit_on || is_top_k_on) {
-        lv_apply_limit_internal(merged_qvset, is_top_k_on ? option->top_k : option->limit);
+        LVSize32_t limit = option->limit;
+        if(is_top_k_on && is_limit_on){
+            limit = option->top_k < option->limit ? option->top_k:option->limit;
+        }
+        else if(!is_limit_on && is_top_k_on){
+            limit = option->top_k;
+        }
+    
+        lv_apply_limit_internal(merged_qvset, limit);
     }
 
     *outputs = lv_create_query_result_set_internal(merged_qvset);
