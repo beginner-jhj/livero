@@ -87,9 +87,9 @@ void destroy_table(LVMemTable* table) {
     }
 }
 
-LVStatus table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField* field_list)
+LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField* field_list)
 {
-    LVStatus result = LV_OK;
+    LVNode* result = NULL;
     LVNode* update[LV_SKIPLIST_MAX_LEVEL];
     memset(update, 0, sizeof(LVNode*) * LV_SKIPLIST_MAX_LEVEL);
 
@@ -115,7 +115,7 @@ LVStatus table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq,
     LVNode* new_node = create_node(table->arena, LV_NODE_DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_list);
     if (!new_node)
     {
-        result = LV_ERR_OOM;
+        result = NULL;
         goto _return;
     }
 
@@ -135,6 +135,8 @@ LVStatus table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq,
     }
 
     table->node_count += 1;
+
+    result = new_node;
 
 _return:
     return result;
@@ -220,7 +222,7 @@ _return:
     return result;
 }
 
-LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask,  LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVListAppend qv_append_func, LVQVSet* qv_set)
+LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask,  LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set)
 {
     LVStatus result = LV_OK;
     LVNode* current_node = table->head->levels[0];
@@ -257,7 +259,7 @@ LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema
                 }
 
                 //append to qv_set
-                if ((result = qv_append_func(qv_set, current_node->seq, current_node->vector_id, node_access_key(current_node), current_node->key_len, node_access_value(current_node), current_node->value_len, vector_score, ordbyvalue)) != LV_OK) return result;
+                if ((result = qv_append_fn(qv_set, current_node->seq, current_node->vector_id, node_access_key(current_node), current_node->key_len, node_access_value(current_node), current_node->value_len, vector_score, ordbyvalue)) != LV_OK) return result;
 
             }
         }
