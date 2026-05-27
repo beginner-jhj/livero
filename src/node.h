@@ -40,5 +40,7 @@ int64_t node_get_i64_field(const LVNode* node, const LVSize32_t mask);
 int node_field_number(const LVNode* node, const LVSize32_t target_mask);
 int node_calculate_field_number(const LVSize32_t total_field_mask, const LVSize32_t total_field_count, const LVSize32_t target_mask);
 
+int node_eval_query(const LVNode* node, const LVAstNode* query, const LVSchema* schema);
+
 
 #endif

@@ -2,6 +2,7 @@
 #include "schema.h"
 #include "arena.h"
 #include <string.h>
+#include "query.h"
 
 LVNode* create_node(const LVArena* arena, const LVNodeType type, const LVSeq64_t seq, const LVNodeOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void* key, const LVValueLen32_t value_len, const void* value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const LVMetaField* field_list)
 {
@@ -270,4 +271,8 @@ int node_calculate_field_number(const LVSize32_t total_field_mask, const LVSize3
     }
 
     return -1;
+}
+
+int node_eval_query(const LVNode* node, const LVAstNode* query, const LVSchema* schema){
+    return query_eval_ast(query, node, schema);
 }
