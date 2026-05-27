@@ -877,30 +877,24 @@ _return:
 }
 
 static void lv_apply_score_filter_internal(LVQVSet* qvset, const float threshold, const LVScoreBound bound) {
-    LVSize32_t left = 0;
-    LVSize32_t right = qvset->size - 1;
+    LVSize32_t write_idx = 0;
 
-    while (left < right) {
+    for (LVSize32_t i = 0; i < qvset->size; i++) {
+        int keep = 0;
         if (bound == LV_SCORE_ABOVE) {
-            while (left < right && qvset->values[left].vector_score >= threshold) left++;
-            while (left < right && qvset->values[right].vector_score < threshold) right--;
-        }
-        else {
-            while (left < right && qvset->values[left].vector_score <= threshold) left++;
-            while (left < right && qvset->values[right].vector_score > threshold) right--;
+            keep = (qvset->values[i].vector_score >= threshold);
+        } else {
+            keep = (qvset->values[i].vector_score <= threshold);
         }
 
-        if (left < right) {
-            LVQueryValue tmp = qvset->values[left];
-            qvset->values[left] = qvset->values[right];
-            qvset->values[right] = tmp;
-
-            left++;
-            right--;
+        if (keep) {
+            if (write_idx != i) {
+                qvset->values[write_idx] = qvset->values[i];
+            }
+            write_idx++;
         }
     }
-
-    qvset->size = left;
+    qvset->size = write_idx;
 }
 
 
