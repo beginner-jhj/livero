@@ -408,9 +408,17 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
 
     // append to MemTable
 
-    if ((result = table_insert(db->memtable, LV_PUT, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, fields)) != LV_OK)
+    const LVNode* inserted_memtable_node = table_insert(db->memtable, LV_PUT, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, fields);
+
+    if (!inserted_memtable_node)
     {
+        result = LV_ERR_OOM;
         goto _return;
+    }
+
+    if (vector) {
+        LVHnswNode* inserted_hnsw_node = db->hnsw->id_node_map->map[current_vector_id];
+        inserted_hnsw_node->memtable_node = inserted_memtable_node;
     }
 
     db->next_seq += 1;
@@ -427,6 +435,12 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
 {
     LVStatus result = LV_OK;
 
+    LVSQLParser* parser = NULL;
+    LVAstNode* query_tree = NULL;
+    LVQVSet* memtable_qvset = NULL;
+    LVQVSet* sst_qvset = NULL;
+    LVQVSet* merged_qvset = NULL;
+
     // check db is properly initialized
     if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
 
@@ -441,9 +455,10 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
 
 
     const int is_limit_on = has_option && option->flags & LV_QOPT_LIMIT && option->limit > 0;
+    const int is_top_k_on = has_option && option->top_k > 0;
     const int is_score_filter_on = has_option && query_vector && option->flags & LV_QOPT_SCORE_FILTER;
-    const int is_ordby_on = has_option && option->flags & LV_QOPT_ORDER_BY;
-    const int is_ordby_vec = is_ordby_on && query_vector && (strncasecmp(option->order.by, "vector", strlen("vector")) == 0);
+    const int is_ordby_on = (has_option && (option->flags & LV_QOPT_ORDER_BY)) || is_top_k_on;
+    const int is_ordby_vec = is_ordby_on && query_vector && ((strncasecmp(option->order.by, "vector", strlen("vector")) == 0) || is_top_k_on);
     const int needs_calc_dis = is_score_filter_on || is_ordby_vec;
 
     uint32_t ordby_field_mask = 0;
@@ -467,7 +482,6 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         }
     }
 
-    LVSQLParser* parser = NULL;
     parser = create_parser();
     if (!parser) {
         result = LV_ERR_OOM;
@@ -477,44 +491,78 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
     {
         goto _return;
     }
-    const LVAstNode* tree = query_parse(parser, db->schema);
 
-    if (!tree)
+    query_tree = query_parse(parser, db->schema);
+
+    if (!query_tree)
     {
         result = LV_ERR_INVALID_QUERY;
         goto _return;
     }
 
-    const uint32_t query_fieldmask = query_get_fieldmask(tree, db->schema);
-
+    const uint32_t query_field_mask = query_get_field_mask(query_tree, db->schema);
 
     //create qvsets
-    LVQVSet* memtable_qvset = lv_create_qvset_internal();
+    memtable_qvset = lv_create_qvset_internal();
     if (!memtable_qvset) {
         result = LV_ERR_OOM;
         goto _return;
     }
 
 
-    LVQVSet* sst_qvset = lv_create_qvset_internal();
+    sst_qvset = lv_create_qvset_internal();
     if (!sst_qvset) {
         result = LV_ERR_OOM;
         goto _return;
     }
 
 
-    LVQVSet* merged_qvset = lv_create_qvset_internal();
+    merged_qvset = lv_create_qvset_internal();
     if (!merged_qvset) {
         result = LV_ERR_OOM;
         goto _return;
     }
 
     if (needs_calc_dis) {
-        //todo hnsw knn
+        const int is_f32 = db->schema->vector_type == LV_VEC_FLOAT32;
+        LVSize32_t search_ef = HNSW_EF_DEFAULT + parser->complexity_score * 10;
+        if (option->top_k > 0) {
+            search_ef = option->top_k > search_ef ? option->top_k : search_ef;
+        }
+
+        LVF32DistFn f32_dist_fn = NULL;
+        LVI8DistFn i8_dist_fn = NULL;
+
+        if (is_f32) {
+            f32_dist_fn = option->vector_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot;
+        }
+        else {
+            i8_dist_fn = option->vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot;
+        }
+
+        LVHnswQueryCtx hnsw_qctx = {
+            .search_ef = search_ef,
+            .is_f32 = is_f32,
+            .f32_dist_fn = f32_dist_fn,
+            .i8_dist_fn = i8_dist_fn,
+            .vector_metric = option->vector_metric,
+            .ordby_field_mask = ordby_field_mask,
+            .ordbytype = ordbytype,
+            .query_field_mask = query_field_mask,
+            .memtable_qvset = memtable_qvset,
+            .memtable_qvset_append_fn = lv_qvset_light_append_internal,
+            .sst_qvset = sst_qvset,
+            .sst_qvset_append_fn = lv_qvset_append_internal,
+            .sst_fd = db->sst_fd,
+            .vector_index_fd = db->vector_index_fd,
+        };
+
+        if((result = vector_hnsw_query(db->hnsw,db->schema, query_tree,query_vector,&hnsw_qctx)) != LV_OK) goto _return;
+        if((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
     }
     else {
-        if ((result = table_query_filter_scan(db->memtable, db->schema, query, query_fieldmask, ordbytype, ordby_field_mask, lv_qvset_light_append_internal, memtable_qvset)) != LV_OK) goto _return;
-        if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query, query_fieldmask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto _return;
+        if ((result = table_query_filter_scan(db->memtable, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_light_append_internal, memtable_qvset)) != LV_OK) goto _return;
+        if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto _return;
 
         if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
     }
@@ -528,8 +576,8 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         lv_apply_ordby_internal(merged_qvset, ordbytype, option->order.dir);
     }
 
-    if (is_limit_on) {
-        lv_apply_limit_internal(merged_qvset, option->limit);
+    if (is_limit_on || is_top_k_on) {
+        lv_apply_limit_internal(merged_qvset, is_top_k_on ? option->top_k : option->limit);
     }
 
     *outputs = lv_create_query_result_set_internal(merged_qvset);
@@ -539,13 +587,13 @@ _return:
     lv_destory_qvset_internal(sst_qvset);
     lv_light_destory_qvset_internal(merged_qvset);
     destory_parser(parser);
-    destroy_ast(tree);
+    destroy_ast(query_tree);
     return result;
 }
 
-void lv_destroy_query_result_set(LVQueryResultSet* qrset){
-    if(qrset){
-        for(int i=0; i<qrset->size; ++i){
+void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
+    if (qrset) {
+        for (int i = 0; i < qrset->size; ++i) {
             free(qrset->results[i].key);
             free(qrset->results[i].value);
         }
@@ -852,7 +900,7 @@ static void lv_apply_score_filter_internal(LVQVSet* qvset, const float threshold
         }
     }
 
-    qvset->size -= left;
+    qvset->size = left;
 }
 
 
@@ -961,13 +1009,13 @@ static LVQueryResultSet* lv_create_query_result_set_internal(const LVQVSet* resu
         result->results[i].key = NULL;
         result->results[i].value = NULL;
         void* key_copy = malloc(result_qvset->values[i].key_len);
-        if(!key_copy){
+        if (!key_copy) {
             flag = 1;
             goto cleanup;
         }
-        
+
         void* value_copy = malloc(result_qvset->values[i].value_len);
-        if(!value_copy){
+        if (!value_copy) {
             flag = 1;
             goto cleanup;
         }
