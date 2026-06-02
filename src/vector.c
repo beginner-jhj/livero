@@ -8,6 +8,8 @@
 #include "node.h"
 #include "sst.h"
 
+extern long g_shrink_count;
+
 /**
  * ARM NEON SIMD Naming Convention Reference
  * -----------------------------------------
@@ -57,7 +59,7 @@ LVHnsw* create_hnsw(const LVVectorType vector_type, const LVDim32_t dim)
 
     hnsw->current_max_layer = 0;
     hnsw->dim = dim;
-    hnsw->vector_align = 16;
+    hnsw->vector_align = 32;
     hnsw->aligned_dim = (dim + (hnsw->vector_align - 1)) & ~(hnsw->vector_align - 1);
     hnsw->entry_node = NULL;
     hnsw->m_l = 1 / logf(HNSW_M);
@@ -434,62 +436,69 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_id, const voi
     }
     memset(neighbors, 0, vector_node_neighbor_size(new_layer));
 
-    if (hnsw->node_count == 0)
-    {
-        memset(neighbor_counts, 0, sizeof(neighbor_counts));
-        return vector_insert_hnsw_node(hnsw, new_id, new_layer, neighbor_counts, neighbors, vector);
-    }
+    //add vector to id_vector_map first here
+    if ((result = vector_hnsw_append_vector(hnsw, new_id, vector)) != LV_OK) goto _return;
 
-    // get ep
-    LVVectorId64_t ep_id = hnsw->entry_node->id;
-    if (new_layer <= hnsw->current_max_layer)
-    {
-        ep_id = vector_hnsw_search_ep(hnsw, hnsw->entry_node, vector, hnsw->current_max_layer, new_layer, is_f32, f32_dist_fn, i8_dist_fn);
-    }
-
-    LVLevel8_t min_layer = hnsw->current_max_layer < new_layer ? hnsw->current_max_layer : new_layer;
-
-    ep_list[0] = (LVHnswNode*)hnsw->id_node_map->map[ep_id];
-
-    LVSize32_t ep_list_size = 1;
-
-    for (int layer = min_layer; layer > -1; --layer)
-    {
-        if ((result = vector_hnsw_search_layer(hnsw, ep_list, ep_list_size, vector, layer, HNSW_EF_CONSTRUCTION, is_f32, f32_dist_fn, i8_dist_fn)) != LV_OK)
+    if (hnsw->node_count > 0) {
+        // get ep
+        LVVectorId64_t ep_id = hnsw->entry_node->id;
+        if (new_layer <= hnsw->current_max_layer)
         {
-            goto _return;
+            ep_id = vector_hnsw_search_ep(hnsw, hnsw->entry_node, vector, hnsw->current_max_layer, new_layer, is_f32, f32_dist_fn, i8_dist_fn);
         }
 
-        LVSize32_t M = layer == 0 ? HNSW_M0 : HNSW_M;
+        LVLevel8_t min_layer = hnsw->current_max_layer < new_layer ? hnsw->current_max_layer : new_layer;
 
-        LVSize32_t update_start = layer == 0 ? 0 : HNSW_M0 + (layer - 1) * HNSW_M;
+        ep_list[0] = (LVHnswNode*)hnsw->id_node_map->map[ep_id];
 
-        const LVSize32_t neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, hnsw->result_heap->entries, hnsw->result_heap->size, neighbors, update_start, is_f32);
+        LVSize32_t ep_list_size = 1;
 
-        neighbor_counts[layer] = neighbor_count;
-
-        // link neighbors to new node
-        for (int i = 0; i < neighbor_counts[layer]; ++i)
+        for (int layer = min_layer; layer > -1; --layer)
         {
-            LVHnswNode* neighbor_node = (LVHnswNode*)hnsw->id_node_map->map[neighbors[update_start + i]];
+            if ((result = vector_hnsw_search_layer(hnsw, ep_list, ep_list_size, vector, layer, HNSW_EF_CONSTRUCTION, is_f32, f32_dist_fn, i8_dist_fn)) != LV_OK)
+            {
+                goto _return;
+            }
 
-            vector_update_node_neighbor(hnsw, neighbor_node, layer, new_id, vector);
+            LVSize32_t M = layer == 0 ? HNSW_M0 : HNSW_M;
+
+            LVSize32_t update_start = layer == 0 ? 0 : HNSW_M0 + (layer - 1) * HNSW_M;
+
+            const LVSize32_t neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, hnsw->result_heap->entries, hnsw->result_heap->size, neighbors, update_start, is_f32);
+
+            neighbor_counts[layer] = neighbor_count;
+
+            // link neighbors to new node
+            for (int i = 0; i < neighbor_counts[layer]; ++i)
+            {
+                LVHnswNode* neighbor_node = (LVHnswNode*)hnsw->id_node_map->map[neighbors[update_start + i]];
+
+                vector_update_node_neighbor(hnsw, neighbor_node, layer, new_id, vector);
+            }
+
+            // update next ep_list
+            for (int i = 0; i < hnsw->result_heap->size; ++i)
+            {
+                ep_list[i] = (LVHnswNode*)hnsw->id_node_map->map[hnsw->result_heap->entries[i].id];
+            }
+
+            ep_list_size = hnsw->result_heap->size;
+
+            // reset heaps
+            hnsw->frontier_heap->size = 0;
+            hnsw->result_heap->size = 0;
         }
-
-        // update next ep_list
-        for (int i = 0; i < hnsw->result_heap->size; ++i)
-        {
-            ep_list[i] = (LVHnswNode*)hnsw->id_node_map->map[hnsw->result_heap->entries[i].id];
-        }
-
-        ep_list_size = hnsw->result_heap->size;
-
-        // reset heaps
-        hnsw->frontier_heap->size = 0;
-        hnsw->result_heap->size = 0;
     }
 
-    result = vector_insert_hnsw_node(hnsw, new_id, new_layer, neighbor_counts, neighbors, vector);
+    if ((result = vector_hnsw_append_node(hnsw, new_id, new_layer, neighbor_counts, neighbors)) != LV_OK) goto _return;
+
+    if (new_layer > hnsw->current_max_layer || hnsw->entry_node == NULL)
+    {
+        hnsw->current_max_layer = new_layer;
+        hnsw->entry_node = hnsw->id_node_map->map[new_id];
+    }
+
+    hnsw->node_count += 1;
 _return:
     return result;
 }
@@ -720,7 +729,7 @@ LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const 
     return current_result_size;
 }
 
-LVStatus vector_insert_hnsw_node(LVHnsw* hnsw, const LVVectorId64_t id, const LVLevel8_t layer, const LVSize32_t* neighbor_counts, const LVVectorId64_t* neighbor_list, const void* vector)
+LVStatus vector_hnsw_append_node(LVHnsw* hnsw, const LVVectorId64_t id, const LVLevel8_t layer, const LVSize32_t* neighbor_counts, const LVVectorId64_t* neighbor_list)
 {
     LVStatus result = LV_OK;
 
@@ -755,33 +764,34 @@ LVStatus vector_insert_hnsw_node(LVHnsw* hnsw, const LVVectorId64_t id, const LV
 
     memcpy((char*)node->neighbors, neighbor_list, vector_node_neighbor_size(layer));
 
-    void* allocated_vector = arena_allocate(hnsw->vector_arena, hnsw->aligned_dim, hnsw->vector_align);
+
+    if ((result = vector_hnsw_idmap_append(hnsw->id_node_map, id, node)) != LV_OK)
+    {
+        goto _return;
+    }
+
+_return:
+    return result;
+}
+
+LVStatus vector_hnsw_append_vector(LVHnsw* hnsw, const LVVectorId64_t id, const void* vector) {
+    LVStatus result = LV_OK;
+
+    const LVSize32_t vector_size = hnsw->vector_type == LV_VEC_FLOAT32 ? sizeof(float) : sizeof(int8_t);
+    void* allocated_vector = arena_allocate(hnsw->vector_arena, hnsw->aligned_dim * vector_size, hnsw->vector_align);
+    
     if (!allocated_vector)
     {
         result = LV_ERR_OOM;
         goto _return;
     }
-    const LVSize32_t vector_size = hnsw->vector_type == LV_VEC_FLOAT32 ? sizeof(float) : sizeof(int8_t);
     memset(allocated_vector, 0, vector_size * hnsw->aligned_dim);
     memcpy(allocated_vector, vector, vector_size * hnsw->dim);
 
-
-    if ((result = vector_idmap_append(hnsw->id_node_map, id, node)) != LV_OK)
-    {
+    if ((result = vector_hnsw_idmap_append(hnsw->id_vector_map, id, allocated_vector)) != LV_OK) {
         goto _return;
     }
 
-    if ((result = vector_idmap_append(hnsw->id_vector_map, id, allocated_vector)) != LV_OK) {
-        goto _return;
-    }
-
-    if (layer > hnsw->current_max_layer || hnsw->entry_node == NULL)
-    {
-        hnsw->current_max_layer = layer;
-        hnsw->entry_node = node;
-    }
-
-    hnsw->node_count += 1;
 _return:
     return result;
 }
@@ -844,6 +854,10 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
         }
 
         node->neighbor_counts[layer] = new_neighbor_count;
+
+        #ifdef LV_TEST_SHRINK_COUNTER
+            g_shrink_count++;
+        #endif
     }
     else {
         LVSize32_t slot_offset = prev_neighbor_count * sizeof(LVVectorId64_t);
@@ -903,7 +917,7 @@ LVStatus vector_heap_insert(LVHnswHeap* heap, const LVHnswEntry* entry)
 
 void vector_heap_pop(LVHnswHeap* heap, LVHnswEntry* pop)
 {
-    if (heap->size <= 0) // inothing, return
+    if (heap->size <= 0) // nothing, return
     {
         return;
     }
@@ -919,7 +933,6 @@ void vector_heap_pop(LVHnswHeap* heap, LVHnswEntry* pop)
 
     // swap
     heap->entries[0] = last; // last node is a new head
-    heap->entries[heap->size - 1] = popped;
 
     if (heap->size == 1) // two nodes
     {
@@ -971,7 +984,7 @@ pop:
     }
 }
 
-LVStatus vector_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t id, const void* ptr)
+LVStatus vector_hnsw_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t id, const void* ptr)
 {
     if (idmap->size >= idmap->capacity)
     {
