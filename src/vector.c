@@ -354,7 +354,7 @@ int32_t vector_i8_dot(const int8_t* a, const int8_t* b, const LVDim32_t dim)
         sum_dot2 = vmlal_s16(sum_dot2, vget_high_s16(va_2_high), vget_high_s16(vb_2_high));
     }
 
-    return vaddvq_s32(vaddq_s32(sum_dot1, sum_dot2));
+    return -vaddvq_s32(vaddq_s32(sum_dot1, sum_dot2)); //returns negated dot product so that smaller = closer, consistent with L2
 }
 
 float vector_f32_dot(const float* a, const float* b, const LVDim32_t dim)
@@ -373,7 +373,7 @@ float vector_f32_dot(const float* a, const float* b, const LVDim32_t dim)
         sum_dot2 = vfmaq_f32(sum_dot2, va2, vb2);
     }
 
-    return vaddvq_f32(vaddq_f32(sum_dot1, sum_dot2));
+    return -vaddvq_f32(vaddq_f32(sum_dot1, sum_dot2)); //returns negated dot product so that smaller = closer, consistent with L2
 }
 
 float vector_score_f32_l2(const float dist) {
@@ -415,12 +415,24 @@ LVStatus vector_hnsw_i8_insert(LVHnsw* hnsw, const LVVectorId64_t id, const int8
     return vector_hnsw_insert(hnsw, id, vector, 0, NULL, dist_fn);
 }
 
-static inline LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_id, const void* vector, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
+LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_id, const void* vector, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
     LVStatus result = LV_OK;
     const LVLevel8_t new_layer = vector_hnsw_layer(hnsw->m_l);
-    LVSize32_t neighbor_counts[new_layer];
-    LVVectorId64_t neighbors[vector_node_neighbor_size(new_layer)];
+
+    LVSize32_t neighbor_counts[new_layer + 1];
+    memset(neighbor_counts, 0, sizeof(LVSize32_t) * (new_layer + 1));
+
+    LVHnswNode* ep_list[HNSW_EF_CONSTRUCTION];
+    memset(ep_list, 0, sizeof(ep_list));
+
+    LVVectorId64_t* neighbors = arena_allocate(hnsw->node_arena,
+        vector_node_neighbor_size(new_layer), sizeof(LVVectorId64_t));
+    if (!neighbors) {
+        result = LV_ERR_OOM;
+        goto _return;
+    }
+    memset(neighbors, 0, vector_node_neighbor_size(new_layer));
 
     if (hnsw->node_count == 0)
     {
@@ -437,15 +449,13 @@ static inline LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new
 
     LVLevel8_t min_layer = hnsw->current_max_layer < new_layer ? hnsw->current_max_layer : new_layer;
 
-    LVHnswNode* ep_list[hnsw->node_count];
-    memset(ep_list, 0, sizeof(ep_list));
     ep_list[0] = (LVHnswNode*)hnsw->id_node_map->map[ep_id];
 
     LVSize32_t ep_list_size = 1;
 
     for (int layer = min_layer; layer > -1; --layer)
     {
-        if ((result = vector_hnsw_search_layer(hnsw, ep_list, ep_list_size, new_id, layer, HNSW_EF_CONSTRUCTION, is_f32, f32_dist_fn, i8_dist_fn)) != LV_OK)
+        if ((result = vector_hnsw_search_layer(hnsw, ep_list, ep_list_size, vector, layer, HNSW_EF_CONSTRUCTION, is_f32, f32_dist_fn, i8_dist_fn)) != LV_OK)
         {
             goto _return;
         }
@@ -454,14 +464,16 @@ static inline LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new
 
         LVSize32_t update_start = layer == 0 ? 0 : HNSW_M0 + (layer - 1) * HNSW_M;
 
-        vector_hnsw_select_neighbors(hnsw, M, layer, neighbor_counts, neighbors, update_start, is_f32, f32_dist_fn, i8_dist_fn);
+        const LVSize32_t neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, hnsw->result_heap->entries, hnsw->result_heap->size, neighbors, update_start, is_f32);
+
+        neighbor_counts[layer] = neighbor_count;
 
         // link neighbors to new node
         for (int i = 0; i < neighbor_counts[layer]; ++i)
         {
-            LVHnswNode* neighbor_node = (LVHnswNode*)hnsw->id_node_map->map[neighbors[i]];
+            LVHnswNode* neighbor_node = (LVHnswNode*)hnsw->id_node_map->map[neighbors[update_start + i]];
 
-            vector_update_node_neighbor(hnsw->node_arena, neighbor_node, layer, new_id);
+            vector_update_node_neighbor(hnsw, neighbor_node, layer, new_id, vector);
         }
 
         // update next ep_list
@@ -482,7 +494,7 @@ _return:
     return result;
 }
 
-static inline LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const void* new_node_vector, const LVLevel8_t start, const LVLevel8_t end, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
+LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const void* new_node_vector, const LVLevel8_t start, const LVLevel8_t end, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
     LVHnswNode* current_ep = ep;
 
@@ -534,11 +546,10 @@ static inline LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNod
     return best_id;
 }
 
-static inline LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, const LVSize32_t ep_list_size, const LVVectorId64_t new_node_id, const LVLevel8_t layer, const LVSize32_t ef, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
+LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, const LVSize32_t ep_list_size, const void* new_node_vector, const LVLevel8_t layer, const LVSize32_t ef, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
     LVStatus result = LV_OK;
     const LVSize32_t EF = ef > 0 ? ef : HNSW_EF_DEFAULT;
-    const void* new_node_vector = (hnsw->id_vector_map->map[new_node_id]);
 
     uint64_t visited[(hnsw->node_count + 63) / 64];
     memset(visited, 0, sizeof(visited));
@@ -568,6 +579,8 @@ static inline LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode**
         {
             goto _return;
         }
+
+        visited[ep_entry.id / 64] |= (1ULL << (ep_entry.id % 64));
     }
 
     while (hnsw->frontier_heap->size > 0)
@@ -650,80 +663,97 @@ _return:
     return result;
 }
 
-static inline void vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const LVLevel8_t layer, LVSize32_t* neighbor_counts, LVVectorId64_t* neighbor_list, LVSize32_t neighbor_update_start, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
+LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const LVLevel8_t layer, LVHnswEntry* candidates, const LVSize32_t candidates_size, LVVectorId64_t* neighbor_list, LVSize32_t neighbor_update_start, const int is_f32)
 {
 
-    qsort(hnsw->result_heap->entries, hnsw->result_heap->size, sizeof(LVHnswEntry), is_f32 ? cmp_f32_entry : cmp_i32_entry);
+    qsort(candidates, candidates_size, sizeof(LVHnswEntry), is_f32 ? cmp_f32_entry : cmp_i32_entry);
 
     LVHnswEntry result[M];
     LVSize32_t current_result_size = 0;
 
-    for (int i = 0; i < hnsw->result_heap->size; ++i)
+    for (int i = 0; i < candidates_size; ++i)
     {
         if (current_result_size == M)
         {
             break;
         }
 
-        int is_closer = 1;
+        int keep = 1;
         for (int j = 0; j < current_result_size; ++j)
         {
-            void* candidate_vector = (hnsw->id_vector_map->map[hnsw->result_heap->entries[i].id]);
-            void* result_j_vector = hnsw->id_vector_map->map[result[j].id];
+            void* candidate_vector = (hnsw->id_vector_map->map[candidates[i].id]);
+            void* selected_vector = hnsw->id_vector_map->map[result[j].id];
             if (is_f32)
             {
-                float dis_to_result = f32_dist_fn(
+                float dist_candidate_to_neighbor = vector_f32_l2_sq(
                     (float*)(candidate_vector), // candidate
-                    (float*)(result_j_vector),  // result[j]
+                    (float*)(selected_vector),  // result[j]
                     hnsw->aligned_dim);
-                if (hnsw->result_heap->entries[i].dis.f32 >= dis_to_result)
+                if (candidates[i].dis.f32 >= dist_candidate_to_neighbor)
                 {
-                    is_closer = 0;
+                    keep = 0;
                     break;
                 }
             }
             else
             {
-                int32_t dist_to_result = i8_dist_fn((int8_t*)(candidate_vector), (int8_t*)(result_j_vector), hnsw->aligned_dim);
-                if (hnsw->result_heap->entries[i].dis.i32 >= dist_to_result)
+                int32_t dist_candidate_to_neighbor = vector_i8_l2_sq((int8_t*)(candidate_vector), (int8_t*)(selected_vector), hnsw->aligned_dim);
+                if (candidates[i].dis.i32 >= dist_candidate_to_neighbor)
                 {
-                    is_closer = 0;
+                    keep = 0;
                     break;
                 }
             }
         }
-        if (is_closer)
+        if (keep)
         {
-            result[current_result_size] = hnsw->result_heap->entries[i];
+            result[current_result_size] = candidates[i];
             ++current_result_size;
         }
     }
 
-    neighbor_counts[layer] = current_result_size;
     for (int i = 0; i < current_result_size; ++i)
     {
         neighbor_list[neighbor_update_start + i] = result[i].id;
     }
+
+    return current_result_size;
 }
 
 LVStatus vector_insert_hnsw_node(LVHnsw* hnsw, const LVVectorId64_t id, const LVLevel8_t layer, const LVSize32_t* neighbor_counts, const LVVectorId64_t* neighbor_list, const void* vector)
 {
     LVStatus result = LV_OK;
-    const LVSize32_t node_size = sizeof(LVHnswNode) + (layer + 1) * sizeof(LVSize32_t) + vector_node_neighbor_size(layer);
-    LVHnswNode* allocated_node = arena_allocate(hnsw->node_arena, node_size, -1);
-    if (!allocated_node)
+
+    LVHnswNode* node = arena_allocate(hnsw->node_arena, sizeof(LVHnswNode), -1);
+
+    if (!node)
     {
         result = LV_ERR_OOM;
         goto _return;
     }
 
-    allocated_node->id = id;
-    allocated_node->memtable_node = NULL;
-    allocated_node->max_layer = layer;
+    const LVSize32_t neighbor_counts_size = sizeof(LVSize32_t) * (layer + 1);
 
-    memcpy(allocated_node->neighbor_counts, neighbor_counts, sizeof(LVSize32_t) * (layer + 1));
+    node->neighbor_counts = arena_allocate(hnsw->node_arena, neighbor_counts_size, sizeof(LVSize32_t));
 
-    memcpy((char*)allocated_node->neighbor_counts + sizeof(LVSize32_t) * (layer + 1), neighbor_list, vector_node_neighbor_size(layer));
+    if (!node->neighbor_counts) {
+        result = LV_ERR_OOM;
+        goto _return;
+    }
+
+    node->neighbors = arena_allocate(hnsw->node_arena, vector_node_neighbor_size(layer), sizeof(LVVectorId64_t));
+    if (!node->neighbors) {
+        result = LV_ERR_OOM;
+        goto _return;
+    }
+
+    node->id = id;
+    node->memtable_node = NULL;
+    node->max_layer = layer;
+
+    memcpy((char*)node->neighbor_counts, neighbor_counts, neighbor_counts_size);
+
+    memcpy((char*)node->neighbors, neighbor_list, vector_node_neighbor_size(layer));
 
     void* allocated_vector = arena_allocate(hnsw->vector_arena, hnsw->aligned_dim, hnsw->vector_align);
     if (!allocated_vector)
@@ -735,44 +765,99 @@ LVStatus vector_insert_hnsw_node(LVHnsw* hnsw, const LVVectorId64_t id, const LV
     memset(allocated_vector, 0, vector_size * hnsw->aligned_dim);
     memcpy(allocated_vector, vector, vector_size * hnsw->dim);
 
-    if (layer > hnsw->current_max_layer)
-    {
-        hnsw->current_max_layer = layer;
-        hnsw->entry_node = allocated_node;
-    }
-    hnsw->node_count += 1;
 
-    if ((result = vector_idmap_append(hnsw->id_node_map, id, allocated_node)) != LV_OK)
+    if ((result = vector_idmap_append(hnsw->id_node_map, id, node)) != LV_OK)
     {
         goto _return;
     }
-    result = vector_idmap_append(hnsw->id_vector_map, id, allocated_vector);
+
+    if ((result = vector_idmap_append(hnsw->id_vector_map, id, allocated_vector)) != LV_OK) {
+        goto _return;
+    }
+
+    if (layer > hnsw->current_max_layer || hnsw->entry_node == NULL)
+    {
+        hnsw->current_max_layer = layer;
+        hnsw->entry_node = node;
+    }
+
+    hnsw->node_count += 1;
 _return:
     return result;
 }
 
 LVSize32_t vector_node_neighbor_size(const LVLevel8_t layer)
 {
-    return layer == 0 ? HNSW_M0 : HNSW_M0 + layer * HNSW_M;
+    const LVSize32_t count = layer == 0 ? HNSW_M0 : HNSW_M0 + layer * HNSW_M;
+    return count * sizeof(LVVectorId64_t);
 }
 
-void vector_update_node_neighbor(LVArena* node_arena, LVHnswNode* node, const LVLevel8_t layer, const LVVectorId64_t neighbor_id)
+void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_t layer, const LVVectorId64_t neighbor_id, const void* neighbor_vector)
 {
     LVSize32_t prev_neighbor_count = node->neighbor_counts[layer];
-    LVSize32_t offset = layer == 0 ? (node->max_layer + 1) * sizeof(LVSize32_t) + prev_neighbor_count * sizeof(LVVectorId64_t) : (node->max_layer + 1) * sizeof(LVSize32_t) + HNSW_M0 + (layer - 1) * HNSW_M + prev_neighbor_count * sizeof(LVVectorId64_t);
 
-    // copy new neighbor id
-    memcpy((char*)node + offset, &neighbor_id, sizeof(LVVectorId64_t));
 
-    // increase neighbor count
-    node->neighbor_counts[layer] = prev_neighbor_count + 1;
+    // offset from node start to the target neighbor slot
+    LVSize32_t layer_offset = (layer == 0) ? 0 : HNSW_M0 * sizeof(LVVectorId64_t) + (layer - 1) * HNSW_M * sizeof(LVVectorId64_t);
+
+    const LVSize32_t M = layer == 0 ? HNSW_M0 : HNSW_M;
+
+    const int is_f32 = hnsw->vector_type == LV_VEC_FLOAT32;
+
+    if (prev_neighbor_count + 1 > M) {
+        LVHnswEntry candidates[M + 1];
+        LVVectorId64_t new_neighbors[M];
+        void* current_node_vector = hnsw->id_vector_map->map[node->id];
+        LVVectorId64_t* neighbors = vector_access_neighbors(node, layer);
+        for (int i = 0; i < prev_neighbor_count; ++i) {
+            LVVectorId64_t id = neighbors[i];
+            void* candidate_vector = hnsw->id_vector_map->map[id];
+            candidates[i].id = id;
+            if (is_f32) {
+                float dis_candidate_to_current_node = vector_f32_l2_sq((float*)current_node_vector, (float*)candidate_vector, hnsw->aligned_dim);
+                candidates[i].dis.f32 = dis_candidate_to_current_node;
+                candidates[i].dis_type = LV_DIS_F32;
+            }
+            else {
+                int32_t dis_candidate_to_ciurrent_node = vector_i8_l2_sq((int8_t*)current_node_vector, (int8_t*)candidate_vector, hnsw->aligned_dim);
+                candidates[i].dis.i32 = dis_candidate_to_ciurrent_node;
+                candidates[i].dis_type = LV_DIS_I32;
+            }
+
+        }
+        candidates[M].id = neighbor_id;
+        if (is_f32) {
+            float dis = vector_f32_l2_sq((float*)current_node_vector, (float*)neighbor_vector, hnsw->aligned_dim);
+            candidates[M].dis.f32 = dis;
+            candidates[M].dis_type = LV_DIS_F32;
+        }
+        else {
+            int32_t dis = vector_i8_l2_sq((int8_t*)current_node_vector, (int8_t*)neighbor_vector, hnsw->aligned_dim);
+            candidates[M].dis.i32 = dis;
+            candidates[M].dis_type = LV_DIS_I32;
+        }
+
+        const LVSize32_t new_neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, candidates, M + 1, new_neighbors, 0, is_f32);
+
+        for (int i = 0; i < new_neighbor_count; ++i) {
+            neighbors[i] = new_neighbors[i];
+        }
+
+        node->neighbor_counts[layer] = new_neighbor_count;
+    }
+    else {
+        LVSize32_t slot_offset = prev_neighbor_count * sizeof(LVVectorId64_t);
+        memcpy((char*)node->neighbors + layer_offset + slot_offset, &neighbor_id, sizeof(LVVectorId64_t));
+        node->neighbor_counts[layer] = prev_neighbor_count + 1;
+    }
 }
 
 LVVectorId64_t* vector_access_neighbors(const LVHnswNode* node, const LVLevel8_t layer)
 {
-    void* neighbors = (char*)node->neighbor_counts + (node->max_layer + 1) * sizeof(LVSize32_t);
-    uint32_t offset = (layer == 0) ? 0 : HNSW_M0 + (layer - 1) * HNSW_M;
-    return (LVVectorId64_t*)neighbors + offset;
+    // offset within neighbor area for this layer
+    LVSize32_t layer_offset = (layer == 0) ? 0 : HNSW_M0 * sizeof(LVVectorId64_t) + (layer - 1) * HNSW_M * sizeof(LVVectorId64_t);
+
+    return (LVVectorId64_t*)((char*)node->neighbors + layer_offset);
 }
 
 LVStatus vector_heap_insert(LVHnswHeap* heap, const LVHnswEntry* entry)
@@ -942,6 +1027,8 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
     if ((result = vector_heap_insert(hnsw->frontier_heap, &candidate)) != LV_OK) goto _return;
     if ((result = vector_heap_insert(hnsw->result_heap, &candidate)) != LV_OK) goto _return;
 
+    visited[candidate.id / 64] |= (1ULL << (candidate.id % 64));
+
     while (hnsw->frontier_heap->size > 0) {
         vector_heap_pop(hnsw->frontier_heap, &candidate);
 
@@ -965,7 +1052,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
             {
                 const void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_id]);
                 LVHnswEntry new_entry;
-                int needs_heap_insert = 0;
+                int needs_frontier_heap_insert = 0;
                 float score = 0.0f;
                 if (query_ctx->is_f32)
                 {
@@ -973,12 +1060,12 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
 
                     if (hnsw->result_heap->size < EF || dis < hnsw->result_heap->entries[0].dis.f32)
                     {
-                        needs_heap_insert = 1;
+                        needs_frontier_heap_insert = 1;
                         new_entry.id = neighbor_id;
                         new_entry.dis.f32 = dis;
                         new_entry.dis_type = LV_DIS_F32;
 
-                        score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_f32_l2(dis) : vector_score_f32_dot(dis);
+                        score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_f32_l2(dis) : vector_score_f32_dot(-dis);
                     }
                 }
                 else
@@ -986,16 +1073,16 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                     const int32_t dis = query_ctx->i8_dist_fn((int8_t*)query_vector, (int8_t*)neighbor_vector, hnsw->aligned_dim);
                     if (hnsw->result_heap->size < EF || dis < hnsw->result_heap->entries[0].dis.i32)
                     {
-                        needs_heap_insert = 1;
+                        needs_frontier_heap_insert = 1;
                         new_entry.id = neighbor_id;
                         new_entry.dis.i32 = dis;
                         new_entry.dis_type = LV_DIS_I32;
 
-                        score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_i32_l2(dis) : vector_score_i32_dot(dis);
+                        score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_i32_l2(dis) : vector_score_i32_dot(-dis);
                     }
                 }
 
-                if (needs_heap_insert) {
+                if (needs_frontier_heap_insert) {
                     if ((result = vector_heap_insert(hnsw->frontier_heap, &new_entry)) != LV_OK)
                     {
                         goto _return;
