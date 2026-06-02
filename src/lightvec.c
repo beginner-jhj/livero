@@ -557,8 +557,8 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
             .vector_index_fd = db->vector_index_fd,
         };
 
-        if((result = vector_hnsw_query(db->hnsw,db->schema, query_tree,query_vector,&hnsw_qctx)) != LV_OK) goto _return;
-        if((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
+        if ((result = vector_hnsw_query(db->hnsw, db->schema, query_tree, query_vector, &hnsw_qctx)) != LV_OK) goto _return;
+        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
     }
     else {
         if ((result = table_query_filter_scan(db->memtable, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_light_append_internal, memtable_qvset)) != LV_OK) goto _return;
@@ -578,13 +578,13 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
 
     if (is_limit_on || is_top_k_on) {
         LVSize32_t limit = option->limit;
-        if(is_top_k_on && is_limit_on){
-            limit = option->top_k < option->limit ? option->top_k:option->limit;
+        if (is_top_k_on && is_limit_on) {
+            limit = option->top_k < option->limit ? option->top_k : option->limit;
         }
-        else if(!is_limit_on && is_top_k_on){
+        else if (!is_limit_on && is_top_k_on) {
             limit = option->top_k;
         }
-    
+
         lv_apply_limit_internal(merged_qvset, limit);
     }
 
@@ -891,7 +891,8 @@ static void lv_apply_score_filter_internal(LVQVSet* qvset, const float threshold
         int keep = 0;
         if (bound == LV_SCORE_ABOVE) {
             keep = (qvset->values[i].vector_score >= threshold);
-        } else {
+        }
+        else {
             keep = (qvset->values[i].vector_score <= threshold);
         }
 
@@ -1039,4 +1040,25 @@ cleanup:
         result = NULL;
     }
     return result;
+}
+
+LVStatus lv_close(LightVec* db) {
+    if (!db) return LV_ERR_INVALID;
+    if (lv_check_db_corruption_internal(db) != LV_OK) return LV_ERR_CORRUPT;
+
+    if (db->schema_fd >= 0)       close(db->schema_fd);
+    if (db->wal_fd >= 0)          close(db->wal_fd);
+    if (db->sst_fd >= 0)          close(db->sst_fd);
+    if (db->vector_fd >= 0)       close(db->vector_fd);
+    if (db->vector_index_fd >= 0) close(db->vector_index_fd);
+    if (db->hnsw_index_fd >= 0)   close(db->hnsw_index_fd);
+    if (db->hnsw_graph_fd >= 0)   close(db->hnsw_graph_fd);
+
+    destroy_table(db->memtable);
+    destroy_schema(db->schema);
+    destroy_hnsw(db->hnsw);
+    free(db);
+
+    return LV_OK;
+
 }
