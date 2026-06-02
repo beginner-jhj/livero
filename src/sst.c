@@ -83,6 +83,17 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
         LVNode* current_node = node;
         while (has_old_entry && current_node->type != LV_NODE_TAIL) {
             if (current_node->op == LV_DELETE) {
+                if (node_key_equal(node_access_key(current_node), current_node->key_len, old_entry.key, old_entry.key_len) == 0) {
+                    free(old_entry.key);
+                    if (record_read < saved_record_count) {
+                        if ((result = sst_read_next_index_entry(old_fd, &old_entry)) != LV_OK) goto _return;
+                        has_old_entry = 1;
+                    }
+                    else {
+                        has_old_entry = 0;
+                    }
+                }
+
                 current_node = current_node->levels[0];
                 continue;
             }
@@ -676,7 +687,7 @@ _return:
     return result;
 }
 
-LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const LVVectorId64_t vector_id,const LVSchema* schema, const LVAstNode* query, const LVSSTQueryCtx* query_ctx) {
+LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const LVVectorId64_t vector_id, const LVSchema* schema, const LVAstNode* query, const LVSSTQueryCtx* query_ctx) {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
@@ -743,7 +754,8 @@ LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const 
             if ((result = query_ctx->qvset_append_fn(query_ctx->qvset, dummy_node->seq, vector_id, key, key_len, value, value_len, query_ctx->vector_score, ordbyvalue)) != LV_OK) goto _return;
 
             result = LV_QFILTER_T;
-        }else{
+        }
+        else {
             result = LV_QFILTER_F;
         }
 
