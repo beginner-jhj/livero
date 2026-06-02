@@ -103,7 +103,7 @@ typedef union LVVectorDisValue
     uint32_t i32;
     float f32;
 } LVVectorDisValue;
-typedef struct LVHnswQueryCtx;
+typedef struct LVHnswQueryCtx LVHnswQueryCtx;
 
 typedef struct LVAstNode LVAstNode;
 typedef struct LVQueryOption LVQueryOption;
