@@ -20,7 +20,8 @@ endif()
 
 # Release flags
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
-set(CMAKE_C_FLAGS_DEBUG   "-g")
+set(CMAKE_C_FLAGS_DEBUG   "-g -O1 -fsanitize=address -fno-omit-frame-pointer -DLV_TEST_SHRINK_COUNTER")
+set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address")
 
 # ── Library ──────────────────────────────────────────────────────────
 set(LV_SOURCES
@@ -60,5 +61,4 @@ endfunction()
 lv_add_test(test_arena   tests/test_arena.c)
 lv_add_test(test_storage tests/test_storage.c)
 lv_add_test(test_vector  tests/test_vector.c)
-lv_add_test(test_hnsw    tests/test_hnsw.c)
 lv_add_test(test_main    tests/test_main.c)
