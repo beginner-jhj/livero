@@ -518,6 +518,7 @@ LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const v
     {
         while (1)
         {
+
             LVVectorId64_t* neighbors = vector_access_neighbors(current_ep, layer);
             for (int i = 0; i < current_ep->neighbor_counts[layer]; ++i)
             {
@@ -549,6 +550,8 @@ LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const v
                 break;
             }
             current_ep = (LVHnswNode*)hnsw->id_node_map->map[best_id];
+
+
         }
     }
 
@@ -652,14 +655,20 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
                     {
                         goto _return;
                     }
-                    if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
-                    {
-                        goto _return;
+                    const LVHnswNode* neighbor_node = hnsw->id_node_map->map[neighbor_id];
+                    if (!neighbor_node->is_latest || neighbor_node->deleted || neighbor_node->flushed) {
+                        //pass
                     }
+                    else {
+                        if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
+                        {
+                            goto _return;
+                        }
 
-                    if (hnsw->result_heap->size > EF)
-                    {
-                        vector_heap_pop(hnsw->result_heap, NULL);
+                        if (hnsw->result_heap->size > EF)
+                        {
+                            vector_heap_pop(hnsw->result_heap, NULL);
+                        }
                     }
                 }
             }
@@ -759,6 +768,9 @@ LVStatus vector_hnsw_append_node(LVHnsw* hnsw, const LVVectorId64_t id, const LV
     node->id = id;
     node->memtable_node = NULL;
     node->max_layer = layer;
+    node->flushed = 0;
+    node->deleted = 0;
+    node->is_latest = 1;
 
     memcpy((char*)node->neighbor_counts, neighbor_counts, neighbor_counts_size);
 
@@ -779,7 +791,7 @@ LVStatus vector_hnsw_append_vector(LVHnsw* hnsw, const LVVectorId64_t id, const 
 
     const LVSize32_t vector_size = hnsw->vector_type == LV_VEC_FLOAT32 ? sizeof(float) : sizeof(int8_t);
     void* allocated_vector = arena_allocate(hnsw->vector_arena, hnsw->aligned_dim * vector_size, hnsw->vector_align);
-    
+
     if (!allocated_vector)
     {
         result = LV_ERR_OOM;
@@ -855,9 +867,9 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
 
         node->neighbor_counts[layer] = new_neighbor_count;
 
-        #ifdef LV_TEST_SHRINK_COUNTER
-            g_shrink_count++;
-        #endif
+#ifdef LV_TEST_SHRINK_COUNTER
+        g_shrink_count++;
+#endif
     }
     else {
         LVSize32_t slot_offset = prev_neighbor_count * sizeof(LVVectorId64_t);
@@ -1007,6 +1019,16 @@ void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t id) {
     LVHnswNode* flushed_node = hnsw->id_node_map->map[id];
     flushed_node->flushed = 1;
     flushed_node->memtable_node = NULL;
+}
+
+void vector_hnsw_mark_deleted(LVHnsw* hnsw, const LVVectorId64_t id) {
+    LVHnswNode* deleted_node = hnsw->id_node_map->map[id];
+    deleted_node->deleted = 1;
+}
+
+void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_node_id) {
+    LVHnswNode* last_node = hnsw->id_node_map->map[prev_node_id];
+    last_node->is_latest = 0;
 }
 
 LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode* query,

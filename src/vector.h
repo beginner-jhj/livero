@@ -22,6 +22,8 @@ typedef struct LVHnswNode
     LVVectorId64_t id;
     LVNode* memtable_node;
     int flushed;
+    int deleted;
+    int is_latest;
     LVLevel8_t max_layer;
     LVSize32_t* neighbor_counts;
     LVVectorId64_t* neighbors;
@@ -178,6 +180,8 @@ void vector_heap_pop(LVHnswHeap* heap, LVHnswEntry* pop);
 LVStatus vector_hnsw_idmap_append(LVHnswIDMap* map, const LVVectorId64_t id, const void* ptr);
 
 void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t id);
+void vector_hnsw_mark_deleted(LVHnsw* hnsw, const LVVectorId64_t id);
+void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_id);
 
 LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema,
     const LVAstNode* query, const void* query_vector, const LVHnswQueryCtx* query_ctx);
