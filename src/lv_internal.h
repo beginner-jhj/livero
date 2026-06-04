@@ -24,6 +24,9 @@ typedef uint64_t LVBigCount64_t; /* large counts (e.g. total record count)   */
 typedef uint64_t LVVectorId64_t; /* internal vector identifier               */
 typedef uint32_t LVHash32_t;     /*hash*/
 
+#define LV_MAX_KEY_LEN    (1u << 10)   /* 1 KB — keys stay small */
+#define LV_MAX_VALUE_LEN  (1u << 24)   /* 16 MB — generous upper bound for values   */
+
 /* ── Status codes ───────────────────────────────────────────────────────────
  * Returned by all functions except lifecycle constructors.
  * Constructors return a pointer + write status to an output parameter.
@@ -59,6 +62,7 @@ typedef enum
 {
     LV_PUT = 0,
     LV_DELETE = 1,
+    LV_UPDATE = 2
 } LVNodeOp;
 
 /* ── Metadata field type ────────────────────────────────────────────────────
