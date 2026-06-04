@@ -38,6 +38,7 @@ struct LightVec
 };
 
 static LVStatus lv_check_db_corruption_internal(const LightVec* db);
+static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const LVLevel8_t level, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVVectorMetric vector_metric, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const LVMetaField* fields);
 static LVQVSet* lv_create_qvset_internal(void);
 static LVStatus lv_flush_internal(LightVec* db);
 static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue);
@@ -280,7 +281,7 @@ cleanup:
     return result;
 }
 
-LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVCount32_t field_count, const LVMetaField* fields, const LVVectorMetric vecotr_metric)
+LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVVectorMetric vector_metric, const LVCount32_t field_count, const LVMetaField* fields)
 {
     LVStatus result = LV_OK;
 
@@ -297,8 +298,7 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
 
     // check key length and value length are valid
 
-    if (key_len < 0 || value_len < 0)
-    {
+    if (key_len == 0 || key_len > LV_MAX_KEY_LEN || value_len > LV_MAX_VALUE_LEN) {
         result = LV_ERR_INVALID;
         goto _return;
     }
@@ -352,74 +352,241 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
     const LVSeq64_t current_seq = db->next_seq;
     const LVSeq64_t current_vector_id = db->next_vector_id;
 
-    // append to vectors.lv and hnsw
-    if (vector)
-    {
-        if (db->schema->vector_type == LV_VEC_FLOAT32)
-        {
-            const float* f32_vector = (float*)vector;
-            if ((result = vector_write_f32_vector(db->vector_fd, db->schema->vector_dim, f32_vector)) != LV_OK)
-            {
-                goto _return;
-            }
-            if ((result = vector_hnsw_f32_insert(db->hnsw, current_vector_id, f32_vector, vecotr_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot)) != LV_OK)
-            {
-                goto _return;
-            }
-        }
-        else
-        {
-            const int8_t* i8_vector = (int8_t*)vector;
-            if ((result = vector_write_i8_vector(db->vector_fd, db->schema->vector_dim, i8_vector)) != LV_OK)
-            {
-                goto _return;
-            }
-            if ((result = vector_hnsw_i8_insert(db->hnsw, current_vector_id, i8_vector, vecotr_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK)
-            {
-                goto _return;
-            }
-        }
+    result = lv_put_internal(db, LV_PUT, current_seq, current_vector_id, new_level, key, key_len, value, value_len, vector, vector_metric, field_mask, field_count, field_size, fields);
 
-        db->next_vector_id += 1; // increase vector id for next
-    }
+_return:
+    return result;
+}
 
-    void* KEY = key;
-    LVKeyLen32_t KEY_LEN = key_len;
-    void* VALUE = value;
-    LVValueLen32_t VALUE_LEN = value_len;
+LVStatus lv_update_value(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len) {
+    LVStatus result = LV_OK;
 
-    if (KEY == NULL)
-    {
-        KEY = &current_seq;
-        KEY_LEN = sizeof(LVSeq64_t);
-    }
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
 
-    if (VALUE == NULL)
-    {
-        VALUE_LEN = 0;
-    }
+    // check key length and value length are valid
 
-    // append to WAL
-
-    if ((result = wal_append(db->wal_fd, LV_PUT, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, fields)) != LV_OK)
-    {
+    if (key_len == 0 || key_len > LV_MAX_KEY_LEN || value_len > LV_MAX_VALUE_LEN) {
+        result = LV_ERR_INVALID;
         goto _return;
     }
 
-    // append to MemTable
+    LVNode* searched_node = table_search(db->memtable, key, key_len);
 
-    const LVNode* inserted_memtable_node = table_insert(db->memtable, LV_PUT, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, fields);
-
-    if (!inserted_memtable_node)
-    {
-        result = LV_ERR_OOM;
+    if (!searched_node) {
+        result = LV_ERR_NOT_FOUND;
         goto _return;
     }
 
-    if (vector) {
-        LVHnswNode* inserted_hnsw_node = db->hnsw->id_node_map->map[current_vector_id];
-        inserted_hnsw_node->memtable_node = inserted_memtable_node;
+    const LVSeq64_t current_seq = db->next_seq;
+
+    result = lv_put_internal(db, LV_UPDATE, current_seq, searched_node->vector_id, searched_node->level, key, key_len, value, value_len, NULL, LV_METRIC_L2, searched_node->field_mask, searched_node->field_count, node_field_size(searched_node, 0), NULL);
+
+_return:
+    return result;
+}
+
+LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* vector, const LVVectorMetric vector_metric) {
+    LVStatus result = LV_OK;
+
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
+
+    if (key_len == 0 || key_len > LV_MAX_KEY_LEN || !vector) {
+        result = LV_ERR_INVALID;
+        goto _return;
     }
+
+    LVNode* searched_node = table_search(db->memtable, key, key_len);
+
+    if (!searched_node) {
+        result = LV_ERR_NOT_FOUND;
+        goto _return;
+    }
+
+    const LVSeq64_t current_seq = db->next_seq;
+    const LVSeq64_t current_vector_id = db->next_vector_id;
+
+    if ((result = lv_put_internal(db, LV_UPDATE, current_seq, current_vector_id, searched_node->level, key, key_len, node_access_value(searched_node), searched_node->value_len, vector, vector_metric, searched_node->field_mask, searched_node->field_count, node_field_size(searched_node, 0), node_access_field(searched_node,0))) != LV_OK) goto _return;
+
+    if (searched_node->vector_id != LV_NO_VECTOR_ID) {
+        vector_hnsw_mark_updated(db->hnsw, searched_node->vector_id);
+    }
+
+_return:
+    return result;
+}
+
+LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_len, const LVSize32_t field_count, const LVMetaField* fields) {
+    LVStatus result = LV_OK;
+
+    LVSize32_t field_count_to_add = 0;
+    int new_fields_offsets[field_count];
+    uint32_t new_field_masks[field_count];
+    uint32_t field_mask_to_add = 0;
+
+    LVSize32_t field_count_to_update = 0;
+    int update_fields_offsets[field_count];
+    uint32_t field_mask_to_update = 0;
+
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
+
+    if (key_len == 0 || key_len > LV_MAX_KEY_LEN || field_count > db->schema->field_count || (field_count > 0 && fields == NULL)) {
+        result = LV_ERR_INVALID;
+        goto _return;
+    }
+
+
+    LVNode* searched_node = table_search(db->memtable, key, key_len);
+
+    if (!searched_node) {
+        result = LV_ERR_NOT_FOUND;
+        goto _return;
+    }
+
+    LVSize32_t new_field_size = node_field_size(searched_node, 0);
+
+    for (int i = 0; i < field_count; ++i) {
+        const LVMetaField* current_field = fields + i;
+        const LVMetaFieldHash* searched_hash = schema_search_field_hash(db->schema->field_hashes, current_field->name, strlen(current_field->name));
+        if (!searched_hash) {
+            result = LV_ERR_INVALID;
+            goto _return;
+        }
+
+        if (searched_hash->type != current_field->type) {
+            result = LV_ERR_INVALID;
+            goto _return;
+        }
+
+        if (!(searched_node->field_mask & searched_hash->mask)) {
+            new_fields_offsets[field_count_to_add] = i;
+            new_field_masks[field_count_to_add] = searched_hash->mask;
+            field_count_to_add += 1;
+            field_mask_to_add |= searched_hash->mask;
+
+            if (current_field->type == LV_META_STRING) {
+                new_field_size += sizeof(uint32_t) + current_field->value.str.len;
+            }
+            else if (current_field->type == LV_META_FLOAT) {
+                new_field_size += sizeof(double);
+            }
+            else {
+                new_field_size += sizeof(int64_t);
+            }
+        }
+        else {
+            update_fields_offsets[field_count_to_update] = i;
+            field_mask_to_update |= searched_hash->mask;
+            field_count_to_update += 1;
+        }
+    }
+
+    LVNode* reserved_node = node_reserve(db->memtable->arena, searched_node->level, searched_node->key_len, searched_node->value_len, node_field_size(searched_node, 0));
+
+    if (!reserved_node) {
+        result = LV_ERR_FULL;
+        goto _return;
+    }
+
+    reserved_node->type = LV_NODE_DATA;
+    reserved_node->seq = db->next_seq;
+    reserved_node->op = LV_UPDATE;
+    reserved_node->level = searched_node->level;
+    reserved_node->key_len = searched_node->key_len;
+    reserved_node->value_len = searched_node->value_len;
+    reserved_node->field_mask = searched_node->field_mask | field_mask_to_add;
+    reserved_node->field_count = searched_node->field_count + field_count_to_add;
+    reserved_node->vector_id = searched_node->vector_id;
+
+    memcpy(reserved_node->levels, searched_node->levels, searched_node->level * sizeof(LVNode*));
+    memcpy(node_access_key(reserved_node), node_access_key(searched_node), searched_node->key_len);
+    memcpy(node_access_value(reserved_node), node_access_value(searched_node), searched_node->value_len);
+
+    LVSize32_t update_done_count = 0;
+    for (int i = 0; i < searched_node->field_count; ++i) {
+
+        uint32_t current_field_mask = node_field_number_to_mask(searched_node, i);
+
+        if (current_field_mask & field_mask_to_update && update_done_count < field_count_to_update) {
+            LVMetaField* update_field_data = fields + update_fields_offsets[update_done_count];
+            int new_field_number = node_field_number(reserved_node, current_field_mask);
+            char* new_field_ptr = (char*)node_access_field(reserved_node, new_field_number);
+
+            memcpy(new_field_ptr, &update_field_data->type, sizeof(LVMetaType));
+            new_field_ptr += sizeof(LVMetaType);
+
+            if (update_field_data->type == LV_META_STRING) {
+                memcpy(new_field_ptr, &update_field_data->value.str.len, sizeof(uint32_t));
+                new_field_ptr += sizeof(uint32_t);
+                memcpy(new_field_ptr, update_field_data->value.str.string, update_field_data->value.str.len);
+            }
+            else if (update_field_data->type == LV_META_FLOAT) {
+                memcpy(new_field_ptr, &update_field_data->value.f64, sizeof(double));
+            }
+            else {
+                memcpy(new_field_ptr, &update_field_data->value.i64, sizeof(int64_t));
+            }
+
+            update_done_count += 1;
+        }
+        else {
+            int prev_field_number = node_field_number(searched_node, current_field_mask);
+            int new_field_number = node_field_number(reserved_node, current_field_mask);
+
+            LVMetaType type;
+            char* prev_field_ptr = (char*)node_access_field(searched_node, prev_field_number);
+            char* new_field_ptr = (char*)node_access_field(reserved_node, new_field_number);
+
+            memcpy(&type, prev_field_ptr, sizeof(LVMetaType));
+            memcpy(new_field_ptr, &type, sizeof(LVMetaType));
+
+            prev_field_ptr += sizeof(LVMetaType);
+
+            if (type == LV_META_STRING) {
+                uint32_t len = 0;
+                memcpy(&len, prev_field_ptr, sizeof(uint32_t));
+                memcpy(new_field_ptr, &len, sizeof(uint32_t)); //length
+
+                prev_field_ptr += sizeof(uint32_t);
+                new_field_ptr += sizeof(uint32_t);
+
+                memcpy(new_field_ptr, prev_field_ptr, len);
+            }
+            else if (type == LV_META_FLOAT) {
+                memcpy(new_field_ptr, prev_field_ptr, sizeof(double));
+            }
+            else {
+                memcpy(new_field_ptr, prev_field_ptr, sizeof(int64_t));
+            }
+        }
+    }
+
+    for (int i = 0; i < field_count_to_add; ++i) {
+        int field_number = node_field_number(reserved_node, new_field_masks[i]);
+        char* field_ptr = (char*)node_access_field(reserved_node, field_number);
+        LVMetaField* new_field_data = fields + new_fields_offsets[i];
+
+        memcpy(field_ptr, &new_field_data->type, sizeof(LVMetaType));
+        field_ptr += sizeof(LVMetaType);
+
+        if (new_field_data->type == LV_META_STRING) {
+            memcpy(field_ptr, &new_field_data->value.str.len, sizeof(uint32_t));
+            field_ptr += sizeof(uint32_t);
+            memcpy(field_ptr, new_field_data->value.str.string, new_field_data->value.str.len);
+        }
+        else if (new_field_data->type == LV_META_FLOAT) {
+            memcpy(field_ptr, &new_field_data->value.f64, sizeof(double));
+        }
+        else {
+            memcpy(field_ptr, &new_field_data->value.i64, sizeof(int64_t));
+        }
+    }
+
+    if ((result = wal_append(db->wal_fd, LV_UPDATE, reserved_node->seq, reserved_node->level, reserved_node->key_len, node_access_key(reserved_node), reserved_node->value_len, node_access_value(reserved_node), reserved_node->vector_id, reserved_node->field_mask, reserved_node->field_count, new_field_size, fields)) != LV_OK) {
+        //todo: new LV_UPDATE branch is needed for wal_recover
+        goto _return;
+    }
+
+    table_direct_insert(db->memtable, reserved_node);
 
     db->next_seq += 1;
 
@@ -430,6 +597,32 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
 _return:
     return result;
 }
+
+LVStatus lv_delete(LightVec* db, const void* key, const LVKeyLen32_t key_len) {
+    LVStatus result = LV_OK;
+
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
+
+
+    LVNode* search_result = table_search(db->memtable, key, key_len);
+
+    if (!search_result) {
+        result = LV_ERR_NOT_FOUND;
+        goto _return;
+    }
+
+    const LVSeq64_t current_seq = db->next_seq;
+
+    if ((result = lv_put_internal(db, LV_DELETE, current_seq, search_result->vector_id, search_result->level, node_access_key(search_result), search_result->key_len, NULL, 0, NULL, LV_METRIC_L2, 0, 0, 0, NULL)) != LV_OK) goto _return;
+
+
+    if (search_result->vector_id != LV_NO_VECTOR_ID) {
+        vector_hnsw_mark_deleted(db->hnsw, search_result->vector_id);
+    }
+_return:
+    return result;
+}
+
 
 LVStatus lv_query(const LightVec* db, const char* query, const void* query_vector, const LVQueryOption* option, LVQueryResultSet** outputs)
 {
@@ -613,6 +806,90 @@ void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
 static LVStatus lv_check_db_corruption_internal(const LightVec* db) {
     return db->magic == LV_MAGIC ? LV_OK : LV_ERR_CORRUPT;
 }
+
+static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const LVLevel8_t level, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVVectorMetric vector_metric, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const LVMetaField* fields) {
+    LVStatus result = LV_OK;
+
+    // append to vectors.lv and hnsw
+    if (vector)
+    {
+        if (db->schema->vector_type == LV_VEC_FLOAT32)
+        {
+            const float* f32_vector = (float*)vector;
+            if ((result = vector_write_f32_vector(db->vector_fd, db->schema->vector_dim, f32_vector)) != LV_OK)
+            {
+                goto _return;
+            }
+            if ((result = vector_hnsw_f32_insert(db->hnsw, current_vector_id, f32_vector, vector_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot)) != LV_OK)
+            {
+                goto _return;
+            }
+        }
+        else
+        {
+            const int8_t* i8_vector = (int8_t*)vector;
+            if ((result = vector_write_i8_vector(db->vector_fd, db->schema->vector_dim, i8_vector)) != LV_OK)
+            {
+                goto _return;
+            }
+            if ((result = vector_hnsw_i8_insert(db->hnsw, current_vector_id, i8_vector, vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK)
+            {
+                goto _return;
+            }
+        }
+
+        db->next_vector_id += 1; // increase vector id for next
+    }
+
+    void* KEY = key;
+    LVKeyLen32_t KEY_LEN = key_len;
+    void* VALUE = value;
+    LVValueLen32_t VALUE_LEN = value_len;
+
+    if (KEY == NULL)
+    {
+        KEY = &current_seq;
+        KEY_LEN = sizeof(LVSeq64_t);
+    }
+
+    if (VALUE == NULL)
+    {
+        VALUE_LEN = 0;
+    }
+
+    // append to WAL
+
+    if ((result = wal_append(db->wal_fd, op, current_seq, level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, fields)) != LV_OK)
+    {
+        goto _return;
+    }
+
+    // append to MemTable
+
+    const LVNode* inserted_memtable_node = table_insert(db->memtable, op, current_seq, level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, fields);
+
+    if (!inserted_memtable_node)
+    {
+        result = LV_ERR_OOM;
+        goto _return;
+    }
+
+    if (vector) {
+        LVHnswNode* inserted_hnsw_node = db->hnsw->id_node_map->map[current_vector_id];
+        inserted_hnsw_node->memtable_node = inserted_memtable_node;
+    }
+
+    db->next_seq += 1;
+
+    if (db->memtable->node_count >= db->flush_threshold) {
+        result = lv_flush_internal(db);
+    }
+
+_return:
+    return result;
+}
+
+
 
 
 static LVStatus lv_flush_internal(LightVec* db) {
