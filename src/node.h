@@ -18,7 +18,7 @@ typedef struct LVNode
 } LVNode;
 
 LVNode *create_node(const LVArena *arena, const LVNodeType type, const LVSeq64_t seq, const LVNodeOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list);
-void *node_reserve(const LVArena *arena, const LVSize32_t node_size);
+LVNode* node_reserve(const LVArena *arena, const LVLevel8_t level, const LVKeyLen32_t key_len, const LVValueLen32_t value_len, const LVSize32_t field_size);
 
 uint32_t node_key_offset(const LVLevel8_t level);
 
@@ -38,9 +38,11 @@ int64_t node_get_i64_field(const LVNode* node, const LVSize32_t mask);
 
 
 int node_field_number(const LVNode* node, const LVSize32_t target_mask);
-int node_calculate_field_number(const LVSize32_t total_field_mask, const LVSize32_t total_field_count, const LVSize32_t target_mask);
+uint32_t node_field_number_to_mask(const LVNode* node, const int number);
 
 int node_eval_query(const LVNode* node, const LVAstNode* query, const LVSchema* schema);
+
+LVSize32_t node_field_size(const LVNode* node, const int is_serialized);
 
 
 #endif

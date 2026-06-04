@@ -6,7 +6,6 @@
 
 LVNode* create_node(const LVArena* arena, const LVNodeType type, const LVSeq64_t seq, const LVNodeOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void* key, const LVValueLen32_t value_len, const void* value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const LVMetaField* field_list)
 {
-    int flag = 0;
     LVNode* node = NULL;
 
     // LVNode + level*(LVNode ptr) + key + value + field
@@ -46,12 +45,12 @@ LVNode* create_node(const LVArena* arena, const LVNodeType type, const LVSeq64_t
 
     // copy value
 
-    if (node->value_len > 0)
+    if (node->value_len > 0 && op == LV_PUT)
     {
         memcpy((char*)node + node_value_offset(node->level, node->key_len), value, node->value_len);
     }
 
-    if (node->field_count > 0)
+    if (node->field_count > 0 && field_list && op == LV_PUT)
     {
         char* current_ptr = (char*)node + node_field_offset(node->level, node->key_len, node->value_len);
 
@@ -86,13 +85,18 @@ LVNode* create_node(const LVArena* arena, const LVNodeType type, const LVSeq64_t
         }
     }
 
+    else if (node->field_count > 0 && op == LV_UPDATE) {
+        char* field_cpy_ptr = (char*)node + node_field_offset(node->level, node->key_len, node->value_len);
+        memcpy(field_cpy_ptr, field_list, field_size);
+    }
+
 _return:
     return node;
 }
 
-void* node_reserve(const LVArena* arena, const LVSize32_t node_size)
-{
-    return (LVNode*)arena_allocate(arena, node_size, -1);
+LVNode* node_reserve(const LVArena* arena, const LVLevel8_t level, const LVKeyLen32_t key_len, const LVValueLen32_t value_len, const LVSize32_t field_size) {
+    const LVSize32_t size_to_reserve = sizeof(LVNode) + level * sizeof(LVNode*) + key_len + value_len + field_size;
+    return (LVNode*)arena_allocate(arena, size_to_reserve, -1);
 }
 
 uint32_t node_key_offset(const LVLevel8_t level)
@@ -251,21 +255,15 @@ int64_t node_get_i64_field(const LVNode* node, const LVSize32_t mask) {
 int node_field_number(const LVNode* node, const LVSize32_t target_mask)
 {
     if (!(node->field_mask & target_mask) || node->field_count == 0) return -1;
-    return node_calculate_field_number(node->field_mask, node->field_count, target_mask);
-}
 
-int node_calculate_field_number(const LVSize32_t total_field_mask, const LVSize32_t total_field_count, const LVSize32_t target_mask) {
-    if (!(total_field_mask & target_mask) || total_field_count == 0) return -1;
     int number = 0;
-    for (int i = 0; i < LV_MAX_META_FIELDS - 1; ++i)
-    {
-        uint32_t bit = (1 << i);
-        if (bit == target_mask)
-        {
+    for (int i = 0; i < LV_MAX_META_FIELDS - 1; ++i) {
+        uint32_t bit = (1u << i);
+        if (bit == target_mask) {
             return number;
         }
-        if (total_field_mask & bit)
-        {
+
+        if (node->field_mask & bit) {
             ++number;
         }
     }
@@ -273,6 +271,45 @@ int node_calculate_field_number(const LVSize32_t total_field_mask, const LVSize3
     return -1;
 }
 
-int node_eval_query(const LVNode* node, const LVAstNode* query, const LVSchema* schema){
+uint32_t node_field_number_to_mask(const LVNode* node, const int number) {
+    if (number < 0 || number > node->field_count - 1) return 0;
+    uint32_t first_mask = 1;
+    int i = 0;
+    while (!((first_mask = first_mask << i) & node->field_mask) && i < LV_MAX_META_FIELDS) i++;
+    for(int j=0; j<LV_MAX_META_FIELDS - i; ++j){
+        if(node->field_mask & (first_mask << j) && j==number){
+            return first_mask << j;
+        }
+    }
+    return 0;
+}
+
+int node_eval_query(const LVNode* node, const LVAstNode* query, const LVSchema* schema) {
     return query_eval_ast(query, node, schema);
+}
+
+LVSize32_t node_field_size(const LVNode* node, const int is_serialized) {
+    if (node->field_count <= 0) return 0;
+    char* field_ptr = (char*)node_access_field(node, 0);
+    LVSize32_t size = 0;
+    for (int i = 0; i < node->field_count; ++i) {
+        LVMetaType type;
+        memcpy(&type, field_ptr, sizeof(LVMetaType));
+
+        size += is_serialized == 1 ? 1 : sizeof(LVMetaType);
+
+        field_ptr += sizeof(LVMetaType);
+
+        if (type == LV_META_STRING) {
+            uint32_t len = 0;
+            memcpy(&len, field_ptr, sizeof(uint32_t));
+            size += sizeof(uint32_t) + len;
+            field_ptr += sizeof(uint32_t) + len;
+        }
+        else {
+            size += 8;
+            field_ptr += 8;
+        }
+    }
+    return size;
 }
