@@ -243,8 +243,6 @@ LVStatus wal_recover(const int fd, const LVMemTable *table)
     LVSize32_t saved_field_count;
     LVSize32_t saved_field_size;
 
-    LVSize32_t node_size_to_reserve = 0;
-
     while (current_offset < wal_size)
     {
         uint32_t checksum = CRC32_SEED;
@@ -254,9 +252,7 @@ LVStatus wal_recover(const int fd, const LVMemTable *table)
             goto _return;
         }
 
-        node_size_to_reserve = sizeof(LVNode) + saved_level * sizeof(LVNode *) + saved_key_len + saved_value_len + saved_field_size;
-
-        LVNode *reserved_node = node_reserve(table->arena, node_size_to_reserve);
+        LVNode *reserved_node = node_reserve(table->arena, saved_level,saved_key_len, saved_value_len, saved_field_size);
 
         reserved_node->type = LV_NODE_DATA;
         reserved_node->op = (LVNodeOp)saved_op;
