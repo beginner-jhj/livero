@@ -291,12 +291,12 @@ LVStatus sst_write_record_with_node(const int fd, const LVNode* node) {
     if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
 
     //write field size (nonserialized)
-    LVSize32_t field_nonserialized_size = sst_node_field_size(node, sizeof(LVMetaType));
+    LVSize32_t field_nonserialized_size = node_field_size(node, 0);
     put_fixed_32(BUF_32, field_nonserialized_size);
     if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
 
     //write field size (serialized)
-    LVSize32_t field_serialized_size = sst_node_field_size(node, sizeof(uint8_t));
+    LVSize32_t field_serialized_size = node_field_size(node,1);
     put_fixed_32(BUF_32, field_serialized_size);
     if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
 
@@ -480,31 +480,6 @@ void destroy_indexblockset(LVSSTIndexBlockSet* index_block) {
 
 }
 
-LVSize32_t sst_node_field_size(const LVNode* node, const uint8_t type_size) {
-    if (node->field_count <= 0) return 0;
-    char* field_ptr = (char*)node_access_field(node, 0);
-    LVSize32_t size = 0;
-    for (int i = 0; i < node->field_count; ++i) {
-        LVMetaType type;
-        memcpy(&type, field_ptr, sizeof(LVMetaType));
-
-        size += type_size;
-
-        field_ptr += sizeof(LVMetaType);
-
-        if (type == LV_META_STRING) {
-            uint32_t len = 0;
-            memcpy(&len, field_ptr, sizeof(uint32_t));
-            size += sizeof(uint32_t) + len;
-            field_ptr += sizeof(uint32_t) + len;
-        }
-        else {
-            size += 8;
-            field_ptr += 8;
-        }
-    }
-    return size;
-}
 
 LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask, const LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set) {
     LVStatus result = LV_OK;
