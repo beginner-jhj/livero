@@ -20,7 +20,7 @@ typedef struct LVMetaField
         struct
         {
             uint32_t len;
-            const char *string;
+            char *string;
         } str;
     } value;
 } LVMetaField;
