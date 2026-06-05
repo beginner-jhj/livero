@@ -3,64 +3,56 @@
 #include <stdalign.h>
 #include "helper.h"
 
-LVArena *create_arena(const LVSize32_t block_size)
+LVArena *arena_create(const LVSize32_t block_size)
 {
-    int flag = 0;
+    int error_flag = 0;
+    LVArenaBlock *initial_block = NULL;
+    void *block_buffer = NULL;
     LVArena *arena = NULL;
-    LVArenaBlock *block = NULL;
-    void *block_data = NULL;
 
     if(block_size < 0){
         goto cleanup;
     }
 
-    LVArenaBlock *block_temp = malloc(sizeof(LVArenaBlock));
-    if (!block_temp)
-    {
-        flag = 1;
+    initial_block = malloc(sizeof(LVArenaBlock));
+    if (!initial_block) {
+        error_flag = 1;
         goto cleanup;
     }
 
-    block = block_temp;
+    initial_block->buffer = NULL;
+    initial_block->prev = NULL;
+    initial_block->capacity = 0;
 
-    block->data = NULL;
-    block->prev = NULL;
-    block->size = 0;
-
-    block_data = malloc(block_size);
-    if (!block_data)
-    {
-        flag = 1;
+    block_buffer = malloc(block_size);
+    if (!block_buffer) {
+        error_flag = 1;
         goto cleanup;
     }
 
-    block->data = block_data;
+    initial_block->buffer = block_buffer;
 
-    LVArena *arena_temp = malloc(sizeof(LVArena));
-    if (!arena_temp)
-    {
-        flag = 1;
+    arena = malloc(sizeof(LVArena));
+    if (!arena) {
+        error_flag = 1;
         goto cleanup;
     }
 
-    arena = arena_temp;
-
-    arena->current_block = block;
+    arena->current_block = initial_block;
     arena->current_offset = 0;
     arena->block_size = block_size;
 
 cleanup:
-    if (flag)
-    {
-        safe_free(&block_data);
-        safe_free(&block);
+    if (error_flag) {
+        safe_free(&block_buffer);
+        safe_free(&initial_block);
         safe_free(&arena);
     }
 
     return arena;
 }
 
-void destroy_arena(LVArena *arena)
+void arena_destroy(LVArena *arena)
 {
     if (arena)
     {
@@ -68,7 +60,7 @@ void destroy_arena(LVArena *arena)
         while (current)
         {
             LVArenaBlock *prev = current->prev;
-            safe_free(&current->data);
+            safe_free(&current->buffer);
             safe_free(&current);
             current = prev;
         }
@@ -88,68 +80,54 @@ void *arena_allocate(LVArena *arena, const LVSize32_t total, int32_t align)
 
     if (total > arena->block_size)
     {
-        int flag = 0;
+        int error_flag = 0;
+        LVArenaBlock *large_block = NULL;
+        void *large_buffer = NULL;
+        LVArenaBlock *new_block = NULL;
+        void *new_buffer = NULL;
 
-        LVArenaBlock *dedicated_block = NULL;
-        void *dedicated_block_data = NULL;
-        LVArenaBlock *normal_block = NULL;
-        void *normal_block_data = NULL;
-
-        LVArenaBlock *dedicated_block_temp = malloc(sizeof(LVArenaBlock));
-        if (!dedicated_block_temp)
-        {
-            flag = 1;
+        large_block = malloc(sizeof(LVArenaBlock));
+        if (!large_block) {
+            error_flag = 1;
             goto cleanup;
         }
 
-        dedicated_block = dedicated_block_temp;
-
-        dedicated_block->data = NULL;
-        dedicated_block->prev = arena->current_block;
-        dedicated_block->size = total;
-
-        dedicated_block_data = malloc(total);
-        if (!dedicated_block_data)
-        {
-            flag = 1;
+        large_buffer = malloc(total);
+        if (!large_buffer) {
+            error_flag = 1;
             goto cleanup;
         }
 
-        dedicated_block->data = dedicated_block_data;
+        large_block->buffer = large_buffer;
+        large_block->prev = arena->current_block;
+        large_block->capacity = total;
 
-        LVArenaBlock *normal_block_temp = malloc(sizeof(LVArenaBlock));
-        if (!normal_block_temp)
-        {
-            flag = 1;
+        new_block = malloc(sizeof(LVArenaBlock));
+        if (!new_block) {
+            error_flag = 1;
             goto cleanup;
         }
 
-        normal_block = normal_block_temp;
-        normal_block->data = NULL;
-        normal_block->prev = dedicated_block;
-        normal_block->size = arena->block_size;
-
-        normal_block_data = malloc(arena->block_size);
-        if (!normal_block_data)
-        {
-            flag = 1;
+        new_buffer = malloc(arena->block_size);
+        if (!new_buffer) {
+            error_flag = 1;
             goto cleanup;
         }
 
-        normal_block->data = normal_block_data;
+        new_block->buffer = new_buffer;
+        new_block->prev = large_block;
+        new_block->capacity = arena->block_size;
 
-        arena->current_block = normal_block;
+        arena->current_block = new_block;
         arena->current_offset = 0;
-
-        result = dedicated_block->data;
+        result = large_block->buffer;
 
     cleanup:
-        if (flag)
-        {
-            safe_free(&dedicated_block_data);
-            safe_free(&dedicated_block);
-            safe_free(&normal_block_data);
-            safe_free(&normal_block);
+        if (error_flag) {
+            safe_free(&large_buffer);
+            safe_free(&large_block);
+            safe_free(&new_buffer);
+            safe_free(&new_block);
         }
 
         goto _return;
@@ -157,34 +135,31 @@ void *arena_allocate(LVArena *arena, const LVSize32_t total, int32_t align)
 
     if (aligned_offset + total > arena->block_size)
     {
-        LVArenaBlock *new_block = malloc(sizeof(LVArenaBlock));
+        LVArenaBlock *new_block = NULL;
+        void *new_buffer = NULL;
 
-        if (!new_block)
-        {
+        new_block = malloc(sizeof(LVArenaBlock));
+        if (!new_block) {
             goto _return;
         }
 
-        void *temp_data = malloc(arena->block_size);
-
-        if (!temp_data)
-        {
-            safe_free(&new_block);
+        new_buffer = malloc(arena->block_size);
+        if (!new_buffer) {
             goto _return;
         }
 
-        new_block->data = temp_data;
+        new_block->buffer = new_buffer;
         new_block->prev = arena->current_block;
-        new_block->size = arena->block_size;
+        new_block->capacity = arena->block_size;
 
         arena->current_block = new_block;
         arena->current_offset = total;
-
-        result = arena->current_block->data;
+        result = arena->current_block->buffer;
 
         goto _return;
     }
 
-    result = (char *)arena->current_block->data + aligned_offset;
+    result = (char *)arena->current_block->buffer + aligned_offset;
     arena->current_offset = aligned_offset + total;
 _return:
     return result;

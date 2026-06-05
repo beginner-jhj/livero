@@ -4,8 +4,8 @@
 #include "lv_internal.h"
 
 typedef struct LVArenaBlock{
-    void* data;
-    LVSize32_t size;
+    void* buffer;
+    LVSize32_t capacity;
     struct LVArenaBlock* prev;
 } LVArenaBlock;
 
@@ -15,9 +15,9 @@ typedef struct LVArena {
     LVSize32_t block_size;
 } LVArena;
 
-LVArena* create_arena(const LVSize32_t block_size);
+LVArena* arena_create(const LVSize32_t block_size);
 
-void destroy_arena(LVArena* arena);
+void arena_destroy(LVArena* arena);
 
 void* arena_allocate(LVArena* arena,const LVSize32_t total,int32_t align);
 
