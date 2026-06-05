@@ -1,11 +1,11 @@
 #include "crc.h"
 
 static uint32_t CRC_TABLE[256];
-static int TABLE_INITIALIZED = 0;
+static int is_crc_table_initialized = 0;
 
-void create_crc_table(void)
+static void create_crc_table(void)
 {
-    if (TABLE_INITIALIZED)
+    if (is_crc_table_initialized)
         return;
 
     for (int i = 0; i < 256; ++i)
@@ -24,9 +24,11 @@ void create_crc_table(void)
         }
         CRC_TABLE[i] = crc;
     }
+    is_crc_table_initialized = 1;
 }
 
 uint32_t crc_calc(const void* data, const uint32_t size, const uint32_t seed){
+    create_crc_table();
     const uint8_t *p = (const uint8_t*)data;
     uint32_t crc = seed;
 

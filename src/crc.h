@@ -7,7 +7,6 @@
 #define CRC32_SEED       0xFFFFFFFFu
 #define CRC32_POLY       0xEDB88320u
 
-void create_crc_table(void);
 uint32_t crc_calc(const void* data, const uint32_t size, const uint32_t seed);
 
 
