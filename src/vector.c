@@ -66,7 +66,7 @@ LVHnsw* create_hnsw(const LVVectorType vector_type, const LVDim32_t dim)
     hnsw->node_count = 0;
     hnsw->vector_type = vector_type;
 
-    node_arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    node_arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!node_arena)
     {
         flag = 1;
@@ -75,7 +75,7 @@ LVHnsw* create_hnsw(const LVVectorType vector_type, const LVDim32_t dim)
 
     hnsw->node_arena = node_arena;
 
-    vector_arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    vector_arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!vector_arena)
     {
         flag = 1;
@@ -171,8 +171,8 @@ cleanup:
         safe_free(&result_heap);
         safe_free(&id_node_map);
         safe_free(&id_vector_map);
-        destroy_arena(node_arena);
-        destroy_arena(vector_arena);
+        arena_destroy(node_arena);
+        arena_destroy(vector_arena);
         safe_free(&hnsw);
     }
     return hnsw;
@@ -188,8 +188,8 @@ void destroy_hnsw(LVHnsw* hnsw) {
         free(hnsw->id_node_map);
         free(hnsw->id_vector_map->map);
         free(hnsw->id_vector_map);
-        destroy_arena(hnsw->node_arena);
-        destroy_arena(hnsw->vector_arena);
+        arena_destroy(hnsw->node_arena);
+        arena_destroy(hnsw->vector_arena);
         free(hnsw);
     }
 }

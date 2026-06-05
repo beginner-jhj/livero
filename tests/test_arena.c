@@ -37,17 +37,17 @@ static int is_arena_aligned(void *ptr)
 }
 
 /* ============================================================
- * Group 1 — create_arena
+ * Group 1 — arena_create
  * ============================================================ */
 
 static void test_create_arena(void)
 {
     int n = 1;
-    printf("\n=== create_arena ===\n");
+    printf("\n=== arena_create ===\n");
 
-    /* 1-1. create_arena() must return a non-NULL pointer. */
+    /* 1-1. arena_create() must return a non-NULL pointer. */
     TEST_START(n++, "create returns non-null");
-    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     expect_ptr_not_null(arena, "create returns non-null");
 
     if (!arena) {
@@ -71,14 +71,14 @@ static void test_create_arena(void)
     if (arena->current_block) {
         /* 1-4. The block's data buffer must also be non-NULL. */
         TEST_START(n++, "first block data buffer exists");
-        expect_ptr_not_null(arena->current_block->data, "first block data buffer exists");
+        expect_ptr_not_null(arena->current_block->buffer, "first block data buffer exists");
 
         /* 1-5. A fresh arena has no previous block — it's a single-block chain. */
         TEST_START(n++, "no previous block on fresh arena");
         expect_ptr_null(arena->current_block->prev, "no previous block on fresh arena");
     }
 
-    destroy_arena(arena);
+    arena_destroy(arena);
 }
 
 /* ============================================================
@@ -90,7 +90,7 @@ static void test_basic_allocation(void)
     int n = 1;
     printf("\n=== basic allocation ===\n");
 
-    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -120,7 +120,7 @@ static void test_basic_allocation(void)
         expect_true(all_match, "small alloc is writable");
     }
 
-    destroy_arena(arena);
+    arena_destroy(arena);
 }
 
 /* ============================================================
@@ -135,7 +135,7 @@ static void test_no_overlap(void)
     int n = 1;
     printf("\n=== consecutive allocations don't overlap ===\n");
 
-    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -185,7 +185,7 @@ static void test_no_overlap(void)
     }
     expect_false(duplicate_found, "all allocation addresses are distinct");
 
-    destroy_arena(arena);
+    arena_destroy(arena);
 }
 
 /* ============================================================
@@ -201,7 +201,7 @@ static void test_alignment(void)
     int n = 1;
     printf("\n=== alignment ===\n");
 
-    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -230,7 +230,7 @@ static void test_alignment(void)
         expect_aligned(p, align, label);
     }
 
-    destroy_arena(arena);
+    arena_destroy(arena);
 }
 
 /* ============================================================
@@ -245,9 +245,9 @@ static void test_block_overflow(void)
     int n = 1;
     printf("\n=== block overflow ===\n");
 
-    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
-        printf("    (skipping — create_arena failed)\n");
+        printf("    (skipping — arena_create failed)\n");
         return;
     }
 
@@ -285,7 +285,7 @@ static void test_block_overflow(void)
     TEST_START(n++, "overflow allocation is aligned");
     expect_aligned(overflow_ptr, align, "overflow allocation is aligned");
 
-    destroy_arena(arena);
+    arena_destroy(arena);
 }
 
 /* ============================================================
@@ -301,9 +301,9 @@ static void test_dedicated_block(void)
     int n = 1;
     printf("\n=== dedicated block (total > LV_DEFAULT_BLOCK_SIZE) ===\n");
 
-    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
-        printf("    (skipping — create_arena failed)\n");
+        printf("    (skipping — arena_create failed)\n");
         return;
     }
 
@@ -343,7 +343,7 @@ static void test_dedicated_block(void)
         expect_true(ok, "large alloc region is writable");
     }
 
-    destroy_arena(arena);
+    arena_destroy(arena);
 }
 
 /* ============================================================
@@ -362,9 +362,9 @@ static void test_stress(void)
      * for fuzzing, but then failures won't be reproducible. */
     lv_rand_seed(42);
 
-    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
-        printf("    (skipping — create_arena failed)\n");
+        printf("    (skipping — arena_create failed)\n");
         return;
     }
 
@@ -409,7 +409,7 @@ static void test_stress(void)
 
     printf("    %d allocations completed in %.3f ms\n", ITERS, elapsed);
 
-    destroy_arena(arena);
+    arena_destroy(arena);
 }
 
 /* ============================================================
@@ -417,28 +417,28 @@ static void test_stress(void)
  *
  * There's no direct way to assert "no leak" from C code —
  * run under valgrind for that. What we CAN check is that
- * destroy_arena(NULL) doesn't crash (defensive null check).
+ * arena_destroy(NULL) doesn't crash (defensive null check).
  * ============================================================ */
 
 static void test_destroy(void)
 {
     int n = 1;
-    printf("\n=== destroy_arena ===\n");
+    printf("\n=== arena_destroy ===\n");
 
     /* 8-1. destroy_arena(NULL) must not crash. */
-    TEST_START(n++, "destroy_arena(NULL) does not crash");
-    destroy_arena(NULL); /* would segfault if there's no null guard */
-    TEST_SUCCESS("destroy_arena(NULL) does not crash");
+    TEST_START(n++, "arena_destroy(NULL) does not crash");
+    arena_destroy(NULL); /* would segfault if there's no null guard */
+    TEST_SUCCESS("arena_destroy(NULL) does not crash");
 
     /* 8-2. Normal destroy after allocations (valgrind will catch leaks). */
     TEST_START(n++, "destroy after multi-block usage does not crash");
-    LVArena *arena = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (arena) {
         /* Force at least 2 blocks */
         arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1,-1);
         arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1,-1);
         arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE + 1,-1); /* dedicated block */
-        destroy_arena(arena);
+        arena_destroy(arena);
         TEST_SUCCESS("destroy after multi-block usage does not crash");
     }
 }

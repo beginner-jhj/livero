@@ -26,7 +26,7 @@ LVMemTable* create_table(const LVSeq64_t seq)
 
     table = table_temp;
 
-    LVArena* arena_temp = create_arena(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena_temp = arena_create(LV_DEFAULT_BLOCK_SIZE);
 
     if (!arena_temp)
     {
@@ -38,7 +38,7 @@ LVMemTable* create_table(const LVSeq64_t seq)
 
     table->arena = arena;
 
-    LVNode* head_temp = create_node(table->arena, LV_NODE_HEAD, seq, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+    LVNode* head_temp = node_create(table->arena, LV_NODE_HEAD, seq, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
 
     if (!head_temp)
     {
@@ -48,7 +48,7 @@ LVMemTable* create_table(const LVSeq64_t seq)
 
     head = head_temp;
 
-    LVNode* tail_temp = create_node(table->arena, LV_NODE_TAIL, seq, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+    LVNode* tail_temp = node_create(table->arena, LV_NODE_TAIL, seq, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
 
     if (!tail_temp)
     {
@@ -82,7 +82,7 @@ cleanup:
 
 void destroy_table(LVMemTable* table) {
     if (table) {
-        destroy_arena(table->arena);
+        arena_destroy(table->arena);
         free(table);
     }
 }
@@ -112,7 +112,7 @@ LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, 
         current_cmp_node = current_head->levels[current_update_level];
     }
 
-    LVNode* new_node = create_node(table->arena, LV_NODE_DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_list);
+    LVNode* new_node = node_create(table->arena, LV_NODE_DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_list);
     if (!new_node)
     {
         result = NULL;
