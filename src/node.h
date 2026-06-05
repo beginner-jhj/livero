@@ -17,7 +17,7 @@ typedef struct LVNode
     struct LVNode *levels[];
 } LVNode;
 
-LVNode *create_node(const LVArena *arena, const LVNodeType type, const LVSeq64_t seq, const LVNodeOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list);
+LVNode *node_create(const LVArena *arena, const LVNodeType type, const LVSeq64_t seq, const LVNodeOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void *key, const LVValueLen32_t value_len, const void *value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list);
 LVNode* node_reserve(const LVArena *arena, const LVLevel8_t level, const LVKeyLen32_t key_len, const LVValueLen32_t value_len, const LVSize32_t field_size);
 
 uint32_t node_key_offset(const LVLevel8_t level);
