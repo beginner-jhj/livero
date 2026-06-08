@@ -121,7 +121,7 @@ LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, 
 
     if (level > table->current_level)
     {
-        for (int i = table->current_level - 1; i < level; ++i)
+        for (int i = table->current_level; i < level; ++i)
         {
             update[i] = table->head;
         }
@@ -168,7 +168,7 @@ void table_direct_insert(LVMemTable* table, LVNode* node)
 
     if (node->level > table->current_level)
     {
-        for (int i = table->current_level - 1; i < node->level; ++i)
+        for (int i = table->current_level; i < node->level; ++i)
         {
             update[i] = table->head;
         }
@@ -191,6 +191,11 @@ LVNode* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_
     LVLevel8_t current_level = table->current_level - 1;
     LVNode* current_candidate = table->head;
     LVNode* current_cmp_node = current_candidate->levels[current_level];
+
+    LVNode* head_next = table->head->levels[0];
+    printf("    [check] first node key='%.*s' key_len=%u op=%d\n",
+        (int)head_next->key_len, (char*)node_access_key(head_next),
+        head_next->key_len, head_next->op);
 
     while (current_level >= 0)
     {
@@ -222,51 +227,68 @@ _return:
     return result;
 }
 
-LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask,  LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set)
+LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema,
+    const LVAstNode* query, const LVSize32_t query_field_mask,
+    LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask,
+    const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set)
 {
     LVStatus result = LV_OK;
     LVNode* current_node = table->head->levels[0];
 
     while (current_node->type != LV_NODE_TAIL)
     {
-        if ((query_field_mask & current_node->field_mask) && current_node->op != LV_DELETE)
-        {
-            if (query_eval_ast(query, current_node, schema))
-            {
+        if (current_node->op == LV_DELETE) {
+            current_node = table_get_next_node(current_node);
+            continue;
+        }
+
+        if (query_field_mask & current_node->field_mask) {
+            if (query_eval_ast(query, current_node, schema)) {
                 float vector_score = 0.0f;
                 LVOrdbyValue ordbyvalue;
                 ordbyvalue.i64 = 0;
 
-                switch (ordbytype)
-                {
-                case LV_ORDBY_FLOAT: {
-                    double value = node_get_f64_field(current_node, ordby_field_mask);
-                    ordbyvalue.f64 = value;
+                switch (ordbytype) {
+                case LV_ORDBY_FLOAT:
+                    ordbyvalue.f64 = node_get_f64_field(current_node, ordby_field_mask);
                     break;
-                }
-                case LV_ORDBY_INT:{
-                    int64_t value = node_get_i64_field(current_node, ordby_field_mask);
-                    ordbyvalue.i64 = value;
+                case LV_ORDBY_INT:
+                    ordbyvalue.i64 = node_get_i64_field(current_node, ordby_field_mask);
                     break;
-                }
-                case LV_ORDBY_VEC:{
+                case LV_ORDBY_VEC:
                     ordbyvalue.score = 0.0f;
                     break;
-                }
-
                 default:
                     break;
                 }
 
-                //append to qv_set
-                if ((result = qv_append_fn(qv_set, current_node->seq, current_node->vector_id, node_access_key(current_node), current_node->key_len, node_access_value(current_node), current_node->value_len, vector_score, ordbyvalue)) != LV_OK) return result;
-
+                if ((result = qv_append_fn(qv_set, current_node->seq,
+                    current_node->vector_id, node_access_key(current_node), current_node->key_len,
+                    node_access_value(current_node), current_node->value_len,
+                    vector_score, ordbyvalue)) != LV_OK) {
+                    return result;
+                }
             }
         }
-        current_node = current_node->levels[0];
+
+        current_node = table_get_next_node(current_node);
     }
 
     return result;
+}
+
+LVNode* table_get_next_node(const LVNode* current) {
+    if (current->type == LV_NODE_TAIL) return current;
+    else if (current->type == LV_NODE_HEAD) return current->levels[0];
+    const void* key = node_access_key(current);
+    const LVKeyLen32_t key_len = current->key_len;
+
+    LVNode* next = current->levels[0];
+    while (next->type != LV_NODE_TAIL &&
+        node_key_equal(node_access_key(next), next->key_len, key, key_len)) {
+        next = next->levels[0];
+    }
+    return next;
 }
 
 

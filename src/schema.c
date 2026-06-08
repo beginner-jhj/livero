@@ -246,6 +246,8 @@ LVStatus schema_read(const int fd, LVSchema* schema)
     uint8_t BUF_32[4];
     memset(BUF_32, 0, 4);
 
+    memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
+
     uint32_t checksum = 0;
 
     char schema_magic[LV_MAGIC_SIZE];
@@ -477,3 +479,207 @@ LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash** hashes, const char* 
 
     return NULL;
 }
+
+LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount32_t field_count) {
+    if (!fields || field_count <= 0)return 0;
+
+    LVSize32_t size = 0;
+
+    for (int offset = 0; offset < field_count; ++offset) {
+        LVMetaField* current_field = fields + offset;
+
+        size += 1;
+
+        if (current_field->type == LV_META_STRING) {
+            size += sizeof(uint32_t) + current_field->value.str.len;
+        }
+        else if (current_field->type == LV_META_FLOAT) {
+            size += sizeof(double);
+        }
+        else {
+            size += sizeof(int64_t);
+        }
+    }
+}
+
+void schema_serialize_field(void* buffer, const LVMetaField* fields, const LVCount32_t field_count, const is_on_disk) {
+    if (!fields || field_count <= 0 || !buffer) return;
+
+    uint8_t BUF_32[4];
+    uint8_t BUF_64[8];
+
+    for (int offset = 0; offset < field_count; ++offset) {
+        LVMetaField* current_field = fields + offset;
+
+        const uint8_t type = (uint8_t)current_field->type;
+        memcpy(buffer, &type, sizeof(uint8_t));
+
+        buffer += sizeof(uint8_t);
+
+        if (current_field->type == LV_META_STRING) {
+            uint32_t len = current_field->value.str.len;
+            if (is_on_disk == 1) {
+                put_fixed_32(BUF_32, len);
+                memcpy(buffer, BUF_32, 4);
+            }
+            else {
+                memcpy(buffer, &len, sizeof(uint32_t));
+            }
+
+            buffer += 4;
+
+            memcpy(buffer, current_field->value.str.string, len);
+        }
+        else if (current_field->type == LV_META_FLOAT) {
+            double value = current_field->value.f64;
+            if (is_on_disk == 1) {
+                put_fixed_64(BUF_32, value);
+                memcpy(buffer, BUF_64, 8);
+            }
+            else {
+                memcpy(buffer, &value, sizeof(double));
+            }
+
+            buffer += 8;
+        }
+        else { //int64
+            int64_t value = current_field->value.i64;
+            if (is_on_disk == 1) {
+                put_fixed_64(BUF_32, value);
+                memcpy(buffer, BUF_64, 8);
+            }
+            else {
+                memcpy(buffer, &value, sizeof(double));
+            }
+
+            buffer += 8;
+        }
+    }
+}
+
+
+void schema_field_memmory_to_disk(const void* src, const LVSize32_t field_size, void* dest) {
+    if (!src || field_size <= 0 || !dest) return;
+
+    uint8_t BUF_32[4];
+    uint8_t BUF_64[8];
+
+    char* src_ptr = (char*)src;
+    char* dest_ptr = (char*)dest;
+    LVSize32_t current_size = 0;
+
+    while (current_size < field_size) {
+        uint8_t saved_type = 0;
+        memcpy(&saved_type, src_ptr, sizeof(uint8_t));
+        memcpy(dest_ptr, src_ptr, sizeof(uint8_t));
+        src_ptr += sizeof(uint8_t);
+        dest_ptr += sizeof(uint8_t);
+        current_size += sizeof(uint8_t);
+
+        LVMetaType type = (LVMetaType)saved_type;
+
+        if (type == LV_META_STRING) {
+            uint32_t len = 0;
+            memcpy(&len, src_ptr, sizeof(uint32_t));
+
+            put_fixed_32(BUF_32, len);
+            memcpy(dest_ptr, BUF_32, 4);
+
+            src_ptr += 4;
+            dest_ptr += 4;
+
+            memcpy(dest_ptr, src_ptr, len);
+
+            src_ptr += len;
+            dest_ptr += len;
+
+            current_size += 4 + len;
+        }
+        else if (type == LV_META_FLOAT) {
+            double value = 0.0;
+            memcpy(&value, src_ptr, sizeof(double));
+
+            put_fixed_64(BUF_64, value);
+            memcpy(dest_ptr, BUF_64, 8);
+
+            src_ptr += 8;
+            dest_ptr += 8;
+
+            current_size += 8;
+        }
+        else {
+            int64_t value = 0;
+            memcpy(&value, src_ptr, sizeof(int64_t));
+
+            put_fixed_64(BUF_64, value);
+            memcpy(dest_ptr, BUF_64, 8);
+
+            src_ptr += 8;
+            dest_ptr += 8;
+
+            current_size += 8;
+        }
+    }
+}
+
+void schema_field_disk_to_memory(const void* src, const LVSize32_t field_size, void* dest) {
+    if (!src || field_size <= 0 || !dest) return;
+
+    uint8_t BUF_32[4];
+    uint8_t BUF_64[8];
+
+    char* src_ptr = (char*)src;
+    char* dest_ptr = (char*)dest;
+    LVSize32_t current_size = 0;
+
+    while (current_size < field_size) {
+        uint8_t saved_type = 0;
+        memcpy(&saved_type, src_ptr, sizeof(uint8_t));
+        memcpy(dest_ptr, src_ptr, sizeof(uint8_t));
+        src_ptr += sizeof(uint8_t);
+        dest_ptr += sizeof(uint8_t);
+        current_size += sizeof(uint8_t);
+
+        LVMetaType type = (LVMetaType)saved_type;
+
+        if (type == LV_META_STRING) {
+            memcpy(BUF_32, src_ptr, sizeof(uint32_t));
+
+            uint32_t len = get_fixed_32(BUF_32);
+            memcpy(dest_ptr, &len, 4);
+
+            src_ptr += 4;
+            dest_ptr += 4;
+
+            memcpy(dest_ptr, src_ptr, len);
+
+            src_ptr += len;
+            dest_ptr += len;
+
+            current_size += 4 + len;
+        }
+        else if (type == LV_META_FLOAT) {
+            memcpy(BUF_64, src_ptr, sizeof(double));
+
+            uint64_t saved_value = get_fixed_64(BUF_64);
+            memcpy(dest_ptr, &saved_value, 8);
+
+            src_ptr += 8;
+            dest_ptr += 8;
+
+            current_size += 8;
+        }
+        else {
+            memcpy(BUF_64, src_ptr, sizeof(int64_t));
+
+            uint64_t saved_value = get_fixed_64(BUF_64);
+            memcpy(dest_ptr, &saved_value, 8);
+
+            src_ptr += 8;
+            dest_ptr += 8;
+
+            current_size += 8;
+        }
+    }
+}
+

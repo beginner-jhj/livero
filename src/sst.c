@@ -5,6 +5,7 @@
 #include "hash.h"
 #include "vector.h"
 #include "query.h"
+#include "storage.h"
 
 LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd, const LVNode* node) {
     LVStatus result = LV_OK;
@@ -45,20 +46,39 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     //write data
     uint64_t record_count = 0;
     if (old_fd < 0) {
+
+        const void* last_key = NULL;
+        LVKeyLen32_t last_key_len = 0;
+
         LVNode* current_node = node;
         while (current_node->type != LV_NODE_TAIL) {
-            if (current_node->op != LV_DELETE) {
-                const uint64_t record_start_offset = write_helper_get_offset(new_fd);
-                if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
-                if ((result = sst_indexblockset_append(index_set, current_node->key_len, node_access_key(current_node), current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
+            const void* cur_key = node_access_key(current_node);
+            const LVKeyLen32_t cur_key_len = current_node->key_len;
 
-                if (current_node->vector_id != LV_NO_VECTOR_ID) {
-                    uint64_t offset = record_start_offset;
-                    pwrite(vector_index_fd, &offset, 8, current_node->vector_id * 8);
-                }
-
-                record_count += 1;
+            if (last_key && node_key_equal(last_key, last_key_len, cur_key, cur_key_len)) {
+                current_node = current_node->levels[0];
+                continue;
             }
+
+            last_key = cur_key;
+            last_key_len = cur_key_len;
+
+            if (current_node->op == LV_DELETE) {
+                current_node = current_node->levels[0];
+                continue;
+            }
+
+            const uint64_t record_start_offset = write_helper_get_offset(new_fd);
+            if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
+            if ((result = sst_indexblockset_append(index_set, cur_key_len, cur_key,
+                current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
+
+            if (current_node->vector_id != LV_NO_VECTOR_ID) {
+                uint64_t offset = record_start_offset;
+                pwrite(vector_index_fd, &offset, 8, current_node->vector_id * 8);
+            }
+
+            record_count += 1;
             current_node = current_node->levels[0];
         }
     }
@@ -81,9 +101,14 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
         uint64_t record_read = 0;
         LVNode* current_node = node;
+
         while (has_old_entry && current_node->type != LV_NODE_TAIL) {
+            const void* current_key = node_access_key(current_node);
+            const LVKeyLen32_t current_key_len = current_node->key_len;
+
+
             if (current_node->op == LV_DELETE) {
-                if (node_key_equal(node_access_key(current_node), current_node->key_len, old_entry.key, old_entry.key_len) == 0) {
+                if (node_key_equal(current_key, current_key_len, old_entry.key, old_entry.key_len)) {
                     free(old_entry.key);
                     if (record_read < saved_record_count) {
                         if ((result = sst_read_next_index_entry(old_fd, &old_entry)) != LV_OK) goto _return;
@@ -94,11 +119,11 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                     }
                 }
 
-                current_node = current_node->levels[0];
+                current_node = table_get_next_node(current_node);
                 continue;
             }
 
-            const int cmp_result = node_cmp(LV_NODE_DATA, old_entry.key, old_entry.key_len, old_entry.seq, LV_NODE_DATA, node_access_key(current_node), current_node->key_len, current_node->seq);
+            const int cmp_result = node_cmp(LV_NODE_DATA, old_entry.key, old_entry.key_len, old_entry.seq, LV_NODE_DATA, current_key, current_key_len, current_node->seq);
 
             const uint64_t record_start_offset = write_helper_get_offset(new_fd);
 
@@ -126,27 +151,35 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
             }
             else {
                 if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
-                if ((result = sst_indexblockset_append(index_set, current_node->key_len, node_access_key(current_node), current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
+                if ((result = sst_indexblockset_append(index_set, current_key_len, current_key, current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
                 if (current_node->vector_id != LV_NO_VECTOR_ID) {
                     uint64_t offset = record_start_offset;
                     pwrite(vector_index_fd, &offset, 8, current_node->vector_id * 8);
                 }
-                current_node = current_node->levels[0];
+                current_node = table_get_next_node(current_node);
             }
             record_count += 1;
         }
 
         while (current_node->type != LV_NODE_TAIL) {
+            const void* current_key = node_access_key(current_node);
+            const LVKeyLen32_t current_key_len = current_node->key_len;
+
+            if (current_node->op == LV_DELETE) {
+                current_node = table_get_next_node(current_node);
+                continue;
+            }
+
             const uint64_t record_start_offset = write_helper_get_offset(new_fd);
 
             if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
-            if ((result = sst_indexblockset_append(index_set, current_node->key_len, node_access_key(current_node), current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
+            if ((result = sst_indexblockset_append(index_set, current_key_len, current_key, current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
 
             if (current_node->vector_id != LV_NO_VECTOR_ID) {
                 uint64_t offset = record_start_offset;
                 pwrite(vector_index_fd, &offset, 8, current_node->vector_id * 8);
             }
-            current_node = current_node->levels[0];
+            current_node = table_get_next_node(current_node);
         }
 
         while (has_old_entry) {
@@ -296,7 +329,7 @@ LVStatus sst_write_record_with_node(const int fd, const LVNode* node) {
     if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
 
     //write field size (serialized)
-    LVSize32_t field_serialized_size = node_field_size(node,1);
+    LVSize32_t field_serialized_size = node_field_size(node, 1);
     put_fixed_32(BUF_32, field_serialized_size);
     if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
 
@@ -486,6 +519,8 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
 
+    if (fd < 0) goto _return;
+
     lseek(fd, -16, SEEK_END);
 
     //read index block offset
@@ -662,16 +697,18 @@ _return:
     return result;
 }
 
-LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const LVVectorId64_t vector_id, const LVSchema* schema, const LVAstNode* query, const LVSSTQueryCtx* query_ctx) {
+LVStatus sst_query_with_hnsw(const int fd, const int vector_index_fd, const LVVectorId64_t vector_id, const LVSchema* schema, const LVAstNode* query, const LVSSTQueryCtx* query_ctx) {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
+
+    if (fd < 0) goto _return;
 
     if ((result = pread_helper(vector_index_fd, BUF_64, 8, vector_id * 8)) != LV_OK) goto _return;
 
     const uint64_t record_offset = get_fixed_64(BUF_64);
 
-    lseek(sst_fd, record_offset, SEEK_SET);
+    lseek(fd, record_offset, SEEK_SET);
 
     LVSeq64_t seq;
     LVNodeOp op;
@@ -684,7 +721,7 @@ LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const 
     LVSize32_t field_nonserialized_size;
     LVSize32_t field_serialized_size;
 
-    if ((result = sst_read_record_head(sst_fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_nonserialized_size, &field_serialized_size)) != LV_OK) goto _return;
+    if ((result = sst_read_record_head(fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_nonserialized_size, &field_serialized_size)) != LV_OK) goto _return;
 
     if (field_count > 0 && (query_ctx->query_field_mask & field_mask)) {
         char node_buf[sizeof(LVNode) + field_nonserialized_size];
@@ -698,7 +735,7 @@ LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const 
         char key[key_len];
         char value[value_len];
 
-        if ((result = sst_read_record_tail(sst_fd, key, key_len, value, value_len, (char*)(node_access_field(dummy_node, 0)), field_count)) != LV_OK) goto _return;
+        if ((result = sst_read_record_tail(fd, key, key_len, value, value_len, (char*)(node_access_field(dummy_node, 0)), field_count)) != LV_OK) goto _return;
 
         if (node_eval_query(dummy_node, query, schema)) {
             LVOrdbyValue ordbyvalue;

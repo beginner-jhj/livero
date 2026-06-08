@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include "util.h"
 #include "schema.h"
 #include "wal.h"
@@ -79,6 +81,12 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
     if ((result = path_join(LV_DB->path, LV_PATH_MAX, path, "LV")) != LV_OK)
     {
         flag = 1;
+        goto cleanup;
+    }
+
+    if (mkdir(LV_DB->path, 0755) == -1 && errno != EEXIST) {
+        flag = 1;
+        result = LV_ERR_IO;
         goto cleanup;
     }
 
@@ -321,7 +329,7 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
         }
 
         // field type size
-        field_size += 1;
+        field_size += sizeof(LVMetaType);
 
         switch (current_field->type)
         {
@@ -370,7 +378,9 @@ LVStatus lv_update_value(LightVec* db, const void* key, const LVKeyLen32_t key_l
         goto _return;
     }
 
+    printf("    [uv] key='%.*s' key_len=%u\n", (int)key_len, (char*)key, key_len);
     LVNode* searched_node = table_search(db->memtable, key, key_len);
+    printf("    [uv] found=%p\n", (void*)searched_node);
 
     if (!searched_node) {
         result = LV_ERR_NOT_FOUND;
@@ -379,7 +389,7 @@ LVStatus lv_update_value(LightVec* db, const void* key, const LVKeyLen32_t key_l
 
     const LVSeq64_t current_seq = db->next_seq;
 
-    result = lv_put_internal(db, LV_UPDATE, current_seq, searched_node->vector_id, searched_node->level, key, key_len, value, value_len, NULL, LV_METRIC_L2, searched_node->field_mask, searched_node->field_count, node_field_size(searched_node, 0), NULL);
+    result = lv_put_internal(db, LV_UPDATE, current_seq, searched_node->vector_id, searched_node->level, key, key_len, value, value_len, NULL, LV_METRIC_L2, searched_node->field_mask, searched_node->field_count, node_field_size(searched_node, 0), node_access_field(searched_node, 0));
 
 _return:
     return result;
@@ -405,7 +415,7 @@ LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_
     const LVSeq64_t current_seq = db->next_seq;
     const LVSeq64_t current_vector_id = db->next_vector_id;
 
-    if ((result = lv_put_internal(db, LV_UPDATE, current_seq, current_vector_id, searched_node->level, key, key_len, node_access_value(searched_node), searched_node->value_len, vector, vector_metric, searched_node->field_mask, searched_node->field_count, node_field_size(searched_node, 0), node_access_field(searched_node,0))) != LV_OK) goto _return;
+    if ((result = lv_put_internal(db, LV_UPDATE, current_seq, current_vector_id, searched_node->level, key, key_len, node_access_value(searched_node), searched_node->value_len, vector, vector_metric, searched_node->field_mask, searched_node->field_count, node_field_size(searched_node, 0), node_access_field(searched_node, 0))) != LV_OK) goto _return;
 
     if (searched_node->vector_id != LV_NO_VECTOR_ID) {
         vector_hnsw_mark_updated(db->hnsw, searched_node->vector_id);
@@ -502,62 +512,76 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
     memcpy(node_access_value(reserved_node), node_access_value(searched_node), searched_node->value_len);
 
     LVSize32_t update_done_count = 0;
+    LVMetaField new_fields[LV_MAX_META_FIELDS];
     for (int i = 0; i < searched_node->field_count; ++i) {
 
         uint32_t current_field_mask = node_field_number_to_mask(searched_node, i);
+        int prev_field_number = node_field_number(searched_node, current_field_mask);
+        char* prev_field_ptr = (char*)node_access_field(searched_node, prev_field_number);
+
+        int new_field_number = node_field_number(reserved_node, current_field_mask);
+        char* new_field_ptr = (char*)node_access_field(reserved_node, new_field_number);
+
 
         if (current_field_mask & field_mask_to_update && update_done_count < field_count_to_update) {
             LVMetaField* update_field_data = fields + update_fields_offsets[update_done_count];
-            int new_field_number = node_field_number(reserved_node, current_field_mask);
-            char* new_field_ptr = (char*)node_access_field(reserved_node, new_field_number);
 
             memcpy(new_field_ptr, &update_field_data->type, sizeof(LVMetaType));
+            memcpy(&new_fields[new_field_number].type, new_field_ptr, sizeof(LVMetaType));
             new_field_ptr += sizeof(LVMetaType);
+
 
             if (update_field_data->type == LV_META_STRING) {
                 memcpy(new_field_ptr, &update_field_data->value.str.len, sizeof(uint32_t));
+                memcpy(&new_fields[new_field_number].value.str.len, new_field_ptr, sizeof(uint32_t));
                 new_field_ptr += sizeof(uint32_t);
                 memcpy(new_field_ptr, update_field_data->value.str.string, update_field_data->value.str.len);
+                new_fields[new_field_number].value.str.string = new_field_ptr;
             }
             else if (update_field_data->type == LV_META_FLOAT) {
                 memcpy(new_field_ptr, &update_field_data->value.f64, sizeof(double));
+                memcpy(&new_fields[new_field_number].value.f64, new_field_ptr, sizeof(double));
             }
             else {
                 memcpy(new_field_ptr, &update_field_data->value.i64, sizeof(int64_t));
+                memcpy(&new_fields[new_field_number].value.i64, new_field_ptr, sizeof(int64_t));
             }
 
             update_done_count += 1;
         }
         else {
-            int prev_field_number = node_field_number(searched_node, current_field_mask);
-            int new_field_number = node_field_number(reserved_node, current_field_mask);
-
             LVMetaType type;
-            char* prev_field_ptr = (char*)node_access_field(searched_node, prev_field_number);
-            char* new_field_ptr = (char*)node_access_field(reserved_node, new_field_number);
 
             memcpy(&type, prev_field_ptr, sizeof(LVMetaType));
             memcpy(new_field_ptr, &type, sizeof(LVMetaType));
+            memcpy(&new_fields[new_field_number].type, &type, sizeof(LVMetaType));
 
             prev_field_ptr += sizeof(LVMetaType);
+            new_field_ptr += sizeof(LVMetaType);
 
             if (type == LV_META_STRING) {
                 uint32_t len = 0;
                 memcpy(&len, prev_field_ptr, sizeof(uint32_t));
                 memcpy(new_field_ptr, &len, sizeof(uint32_t)); //length
+                memcpy(&new_fields[new_field_number].value.str.len, &len, sizeof(uint32_t));
 
                 prev_field_ptr += sizeof(uint32_t);
                 new_field_ptr += sizeof(uint32_t);
 
                 memcpy(new_field_ptr, prev_field_ptr, len);
+                new_fields[new_field_number].value.str.string = new_field_ptr;
             }
             else if (type == LV_META_FLOAT) {
                 memcpy(new_field_ptr, prev_field_ptr, sizeof(double));
+                memcpy(&new_fields[new_field_number].value.f64, new_field_ptr, sizeof(double));
             }
             else {
                 memcpy(new_field_ptr, prev_field_ptr, sizeof(int64_t));
+                memcpy(&new_fields[new_field_number].value.i64, new_field_ptr, sizeof(int64_t));
             }
         }
+
+
     }
 
     for (int i = 0; i < field_count_to_add; ++i) {
@@ -566,23 +590,27 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
         LVMetaField* new_field_data = fields + new_fields_offsets[i];
 
         memcpy(field_ptr, &new_field_data->type, sizeof(LVMetaType));
+        memcpy(&new_fields[field_number].type, field_ptr, sizeof(LVMetaType));
         field_ptr += sizeof(LVMetaType);
 
         if (new_field_data->type == LV_META_STRING) {
             memcpy(field_ptr, &new_field_data->value.str.len, sizeof(uint32_t));
+            memcpy(&new_fields[field_number].value.str.len, field_ptr, sizeof(uint32_t));
             field_ptr += sizeof(uint32_t);
             memcpy(field_ptr, new_field_data->value.str.string, new_field_data->value.str.len);
+            new_fields[field_number].value.str.string = field_ptr;
         }
         else if (new_field_data->type == LV_META_FLOAT) {
             memcpy(field_ptr, &new_field_data->value.f64, sizeof(double));
+            memcpy(&new_fields[field_number].value.f64, field_ptr, sizeof(double));
         }
         else {
             memcpy(field_ptr, &new_field_data->value.i64, sizeof(int64_t));
+            memcpy(&new_fields[field_number].value.i64, field_ptr, sizeof(int64_t));
         }
     }
 
-    if ((result = wal_append(db->wal_fd, LV_UPDATE, reserved_node->seq, reserved_node->level, reserved_node->key_len, node_access_key(reserved_node), reserved_node->value_len, node_access_value(reserved_node), reserved_node->vector_id, reserved_node->field_mask, reserved_node->field_count, new_field_size, fields)) != LV_OK) {
-        //todo: new LV_UPDATE branch is needed for wal_recover
+    if ((result = wal_append(db->wal_fd, LV_UPDATE, reserved_node->seq, reserved_node->level, reserved_node->key_len, node_access_key(reserved_node), reserved_node->value_len, node_access_value(reserved_node), reserved_node->vector_id, reserved_node->field_mask, reserved_node->field_count, new_field_size, new_fields)) != LV_OK) {
         goto _return;
     }
 
@@ -644,18 +672,19 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         goto _return;
     }
 
-    const int has_option = option != NULL && !(option->flags & LV_QOPT_NONE);
-
-
-    const int is_limit_on = has_option && option->flags & LV_QOPT_LIMIT && option->limit > 0;
-    const int is_top_k_on = has_option && option->top_k > 0;
-    const int is_score_filter_on = has_option && query_vector && option->flags & LV_QOPT_SCORE_FILTER;
-    const int is_ordby_on = (has_option && (option->flags & LV_QOPT_ORDER_BY)) || is_top_k_on;
+    const int is_limit_on = option && (option->flags & LV_QOPT_LIMIT) && option->limit > 0;
+    const int is_top_k_on = option && option->top_k > 0;
+    const int is_score_filter_on = option && query_vector && (option->flags & LV_QOPT_SCORE_FILTER);
+    const int is_ordby_on = (option && (option->flags & LV_QOPT_ORDER_BY));
     const int is_ordby_vec = is_ordby_on && query_vector && ((strncasecmp(option->order.by, "vector", strlen("vector")) == 0) || is_top_k_on);
-    const int needs_calc_dis = is_score_filter_on || is_ordby_vec;
+    const int needs_hnsw = is_score_filter_on || is_ordby_vec || is_top_k_on;
 
     uint32_t ordby_field_mask = 0;
     LVOrdbyType ordbytype = LV_ORDBY_NONE;
+
+    if (is_top_k_on) {
+        ordbytype = LV_ORDBY_VEC;
+    }
 
     if (is_ordby_on) {
         const LVMetaFieldHash* hash = schema_search_field_hash(db->schema->field_hashes, option->order.by, strlen(option->order.by));
@@ -716,7 +745,7 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         goto _return;
     }
 
-    if (needs_calc_dis) {
+    if (needs_hnsw) {
         const int is_f32 = db->schema->vector_type == LV_VEC_FLOAT32;
         LVSize32_t search_ef = HNSW_EF_DEFAULT + parser->complexity_score * 10;
         if (option->top_k > 0) {
@@ -755,8 +784,9 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
     }
     else {
         if ((result = table_query_filter_scan(db->memtable, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_light_append_internal, memtable_qvset)) != LV_OK) goto _return;
-        if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto _return;
-
+        if (db->sst_fd >= 0) {
+            if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto _return;
+        }
         if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
     }
 
@@ -765,8 +795,8 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         lv_apply_score_filter_internal(merged_qvset, option->vector_score_filter.score, option->vector_score_filter.bound);
     }
 
-    if (is_ordby_on) {
-        lv_apply_ordby_internal(merged_qvset, ordbytype, option->order.dir);
+    if (is_ordby_on || is_top_k_on) {
+        lv_apply_ordby_internal(merged_qvset, ordbytype, is_top_k_on ? LV_ORDER_DESC : option->order.dir);
     }
 
     if (is_limit_on || is_top_k_on) {
@@ -1323,6 +1353,7 @@ LVStatus lv_close(LightVec* db) {
     if (!db) return LV_ERR_INVALID;
     if (lv_check_db_corruption_internal(db) != LV_OK) return LV_ERR_CORRUPT;
 
+    write_helper_reset();
     if (db->schema_fd >= 0)       close(db->schema_fd);
     if (db->wal_fd >= 0)          close(db->wal_fd);
     if (db->sst_fd >= 0)          close(db->sst_fd);

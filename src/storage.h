@@ -27,7 +27,7 @@ LVNode* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_
 
 LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask, const LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set);
 
-
+LVNode* table_get_next_node(const LVNode* current);
 
 
 

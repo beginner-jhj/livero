@@ -35,10 +35,10 @@ typedef enum LVQueryOp
 
 typedef enum LVQueryOptionFlag
 {
-    LV_QOPT_NONE = 1 << 0, 
-    LV_QOPT_LIMIT = 1 << 1,        // universal 
-    LV_QOPT_ORDER_BY = 1 << 2,     // universal (field) / "VECTOR" 
-    LV_QOPT_SCORE_FILTER = 1 << 3, // vector only 
+    LV_QOPT_NONE = 0, 
+    LV_QOPT_LIMIT = 1 << 0,        // universal 
+    LV_QOPT_ORDER_BY = 1 << 1,     // universal (field) / "VECTOR" 
+    LV_QOPT_SCORE_FILTER = 1 << 2, // vector only 
 } LVQueryOptionFlag;
 
 typedef enum LVQueryOrderDir

@@ -7,6 +7,7 @@
 #include <time.h>   /* clock_gettime, struct timespec */
 #include <stdlib.h> /* rand, srand */
 #include <float.h>  /* FLT_MAX */
+#include "lv_internal.h"
 
 /* ============================================================
  * Basic test macros
@@ -118,6 +119,37 @@ static void expect_aligned(const void *ptr, size_t align, const char *test_name)
         TEST_FAIL(test_name);
         printf("    pointer %p is not aligned to %zu bytes\n", ptr, align);
     }
+}
+
+/* ============================================================
+ * print_status_code — human-readable LVStatus
+ *
+ * Test output like "status=-4" is hard to read; print the name.
+ * Note LV_OK == 2 (not 0) and the two LV_QFILTER_* are 1/0, so a
+ * truthy check on a status is always wrong — always compare to a
+ * named code. This printer makes a wrong code obvious at a glance.
+ * ============================================================ */
+static void print_status_code(const LVStatus code)
+{
+    const char* name;
+    switch (code)
+    {
+    case LV_OK:                name = "LV_OK";                break;
+    case LV_QFILTER_T:         name = "LV_QFILTER_T";         break;
+    case LV_QFILTER_F:         name = "LV_QFILTER_F";         break;
+    case LV_ERR_IO:            name = "LV_ERR_IO";            break;
+    case LV_ERR_OOM:           name = "LV_ERR_OOM";           break;
+    case LV_ERR_NOT_FOUND:     name = "LV_ERR_NOT_FOUND";     break;
+    case LV_ERR_CORRUPT:       name = "LV_ERR_CORRUPT";       break;
+    case LV_ERR_INVALID:       name = "LV_ERR_INVALID";       break;
+    case LV_ERR_FULL:          name = "LV_ERR_FULL";          break;
+    case LV_ERR_DUPLICATE:     name = "LV_ERR_DUPLICATE";     break;
+    case LV_ERR_INVALID_DB:    name = "LV_ERR_INVALID_DB";    break;
+    case LV_ERR_INVALID_QUERY: name = "LV_ERR_INVALID_QUERY"; break;
+    case LV_ERR_UNSUP_QOP:     name = "LV_ERR_UNSUP_QOP";     break;
+    default:                   name = "LV_UNKNOWN";           break;
+    }
+    printf("%s (%d)", name, (int)code);
 }
 
 /* ============================================================

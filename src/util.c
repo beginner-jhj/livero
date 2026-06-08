@@ -1,6 +1,6 @@
 #include "util.h"
 
-LVStatus path_join(char *buf, uint32_t buf_size, const char *path, const char *dir)
+LVStatus path_join(char* buf, uint32_t buf_size, const char* path, const char* dir)
 {
     LVStatus result = LV_OK;
     size_t path_len = 0;
@@ -36,7 +36,7 @@ _return:
     return result;
 }
 
-void put_fixed_32(uint8_t *buf, uint32_t value)
+void put_fixed_32(uint8_t* buf, uint32_t value)
 {
     buf[0] = (uint8_t)(value & 0xff);
     buf[1] = (uint8_t)((value >> 8) & 0xff);
@@ -44,16 +44,16 @@ void put_fixed_32(uint8_t *buf, uint32_t value)
     buf[3] = (uint8_t)((value >> 24) & 0xff);
 }
 
-uint32_t get_fixed_32(const uint32_t *buf)
+uint32_t get_fixed_32(const uint8_t* buf)
 {
     return (
-        (uint32_t)buf[0] |
-        (uint32_t)(buf[1] << 8) |
-        (uint32_t)(buf[2] << 16) |
-        (uint32_t)(buf[3] << 24));
+        ((uint32_t)buf[0]) |
+        ((uint32_t)(buf[1] << 8)) |
+        ((uint32_t)(buf[2] << 16)) |
+        ((uint32_t)(buf[3] << 24)));
 }
 
-void put_fixed_64(uint8_t *buf, uint64_t value)
+void put_fixed_64(uint8_t* buf, uint64_t value)
 {
     for (int i = 0; i < 8; ++i)
     {
@@ -62,7 +62,7 @@ void put_fixed_64(uint8_t *buf, uint64_t value)
     }
 }
 
-uint64_t get_fixed_64(const uint64_t *buf)
+uint64_t get_fixed_64(const uint8_t* buf)
 {
     uint64_t result = 0x00;
     for (int i = 0; i < 8; ++i)

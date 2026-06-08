@@ -87,6 +87,14 @@ LVStatus write_helper_flush(const int fd, const int sync)
     return LV_OK;
 }
 
+void write_helper_reset(void)
+{
+    write_helper_pos = 0;
+    write_helper_current_offset = 0;
+    write_helper_last_fd = -1;
+}
+
+
 LVStatus read_helper(const int fd, void* buf, const uint32_t len)
 {
     ssize_t _read = read(fd, buf, len);

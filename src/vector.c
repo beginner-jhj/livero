@@ -1101,6 +1101,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                         new_entry.dis_type = LV_DIS_F32;
 
                         score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_f32_l2(dis) : vector_score_f32_dot(-dis);
+
                     }
                 }
                 else
@@ -1114,6 +1115,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                         new_entry.dis_type = LV_DIS_I32;
 
                         score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_i32_l2(dis) : vector_score_i32_dot(-dis);
+
                     }
                 }
 
