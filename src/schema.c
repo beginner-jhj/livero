@@ -500,9 +500,11 @@ LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount
             size += sizeof(int64_t);
         }
     }
+
+    return size;
 }
 
-void schema_serialize_field(void* buffer, const LVMetaField* fields, const LVCount32_t field_count, const is_on_disk) {
+void schema_serialize_field(void* buffer, const LVMetaField* fields, const LVCount32_t field_count, const int is_on_disk) {
     if (!fields || field_count <= 0 || !buffer) return;
 
     uint8_t BUF_32[4];
@@ -529,6 +531,8 @@ void schema_serialize_field(void* buffer, const LVMetaField* fields, const LVCou
             buffer += 4;
 
             memcpy(buffer, current_field->value.str.string, len);
+
+            buffer += len;
         }
         else if (current_field->type == LV_META_FLOAT) {
             double value = current_field->value.f64;
