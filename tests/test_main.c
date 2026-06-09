@@ -687,13 +687,13 @@ int main(void)
 
     lv_rand_seed(20260605);
 
-    // test_open_close();
-    // test_filter_exact();
-    // test_filter_compound();
-    // test_vector_recall();
-    // test_delete_tombstone();
+    test_open_close();
+    test_filter_exact();
+    test_filter_compound();
+    test_vector_recall();
+    test_delete_tombstone();
     test_updates();
-    // test_filter_string();
+    test_filter_string();
 
     printf("\n========================================\n");
     printf("  Done.\n");
