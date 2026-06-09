@@ -6,6 +6,7 @@
 #include "vector.h"
 #include "query.h"
 #include "storage.h"
+#include "schema.h"
 
 LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd, const LVNode* node) {
     LVStatus result = LV_OK;
@@ -47,24 +48,15 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     uint64_t record_count = 0;
     if (old_fd < 0) {
 
-        const void* last_key = NULL;
-        LVKeyLen32_t last_key_len = 0;
 
         LVNode* current_node = node;
         while (current_node->type != LV_NODE_TAIL) {
             const void* cur_key = node_access_key(current_node);
             const LVKeyLen32_t cur_key_len = current_node->key_len;
 
-            if (last_key && node_key_equal(last_key, last_key_len, cur_key, cur_key_len)) {
-                current_node = current_node->levels[0];
-                continue;
-            }
-
-            last_key = cur_key;
-            last_key_len = cur_key_len;
 
             if (current_node->op == LV_DELETE) {
-                current_node = current_node->levels[0];
+                current_node = table_get_next_node(current_node);
                 continue;
             }
 
@@ -79,7 +71,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
             }
 
             record_count += 1;
-            current_node = current_node->levels[0];
+            current_node = table_get_next_node(current_node);
         }
     }
     else {
@@ -292,6 +284,10 @@ LVStatus sst_write_record_with_node(const int fd, const LVNode* node) {
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
 
+    const LVSize32_t field_size = node->field_count > 0 ? node_field_size(node) : 0;
+
+    char disk_field_buffer[field_size];
+
     //write seq
     put_fixed_64(BUF_64, node->seq);
     if ((result = write_helper(fd, BUF_64, 8)) != LV_OK) goto _return;
@@ -323,14 +319,8 @@ LVStatus sst_write_record_with_node(const int fd, const LVNode* node) {
     put_fixed_32(BUF_32, node->field_count);
     if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
 
-    //write field size (nonserialized)
-    LVSize32_t field_nonserialized_size = node_field_size(node, 0);
-    put_fixed_32(BUF_32, field_nonserialized_size);
-    if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
-
-    //write field size (serialized)
-    LVSize32_t field_serialized_size = node_field_size(node, 1);
-    put_fixed_32(BUF_32, field_serialized_size);
+    //write field size
+    put_fixed_32(BUF_32, field_size);
     if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
 
     //write key
@@ -341,48 +331,8 @@ LVStatus sst_write_record_with_node(const int fd, const LVNode* node) {
 
     //write meta fields
     if (node->field_count > 0) {
-        for (int i = 0; i < node->field_count; ++i) {
-            void* field_ptr = node_access_field(node, i);
-            LVMetaType type;
-            memcpy(&type, field_ptr, sizeof(LVMetaType));
-
-            uint8_t type_to_save = (uint8_t)type;
-            if ((result = write_helper(fd, &type_to_save, sizeof(uint8_t))) != LV_OK) goto _return;
-
-            field_ptr = (char*)field_ptr + sizeof(LVMetaType);
-
-            switch (type)
-            {
-            case LV_META_FLOAT: {
-                int64_t value = 0;
-                memcpy(&value, field_ptr, 8);
-                put_fixed_64(BUF_64, value);
-                if ((result = write_helper(fd, BUF_64, 8)) != LV_OK) goto _return;
-                break;
-            }
-            case LV_META_INT: {
-                int64_t value = 0;
-                memcpy(&value, field_ptr, 8);
-                put_fixed_64(BUF_64, value);
-                if ((result = write_helper(fd, BUF_64, 8)) != LV_OK) goto _return;
-
-                break;
-            }
-            case LV_META_STRING: {
-                uint32_t len = 0;
-                memcpy(&len, field_ptr, sizeof(uint32_t));
-                put_fixed_32(BUF_32, len);
-                if ((result = write_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
-
-                field_ptr = (char*)field_ptr + sizeof(uint32_t);
-
-                if ((result = write_helper(fd, field_ptr, len)) != LV_OK) goto _return;
-                break;
-            }
-            default:
-                break;
-            }
-        }
+        schema_field_memmory_to_disk(node_access_field(node, 0), field_size, disk_field_buffer);
+        if ((result = write_helper(fd, disk_field_buffer, field_size)) != LV_OK) goto _return;
     }
 
 _return:
@@ -434,15 +384,11 @@ LVStatus sst_write_record_with_old_sst(const int new_fd, const int old_fd, const
     //field_count
     if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
     if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
-    const LVSize32_t saved_field_count = get_fixed_32(BUF_32);
 
-    //field_size (nonserialized)
+    //field_size
     if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
     if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
-
-    //field_size (serialized)
-    if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
-    if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
+    const LVSize32_t saved_field_size = get_fixed_32(BUF_32);
 
     //key
     char saved_key[saved_key_len];
@@ -454,25 +400,10 @@ LVStatus sst_write_record_with_old_sst(const int new_fd, const int old_fd, const
     if ((result = read_helper(old_fd, saved_value, saved_value_len)) != LV_OK) return result;
     if ((result = write_helper(new_fd, saved_value, saved_value_len)) != LV_OK) return result;
 
-    for (int i = 0; i < saved_field_count; ++i) {
-        uint8_t saved_type;
-        if ((result = read_helper(old_fd, &saved_type, sizeof(uint8_t))) != LV_OK) return result;
-        const LVMetaType type = (LVMetaType)saved_type;
-
-        if (type == LV_META_STRING) {
-            if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
-            if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
-            const LVSize32_t saved_str_len = get_fixed_32(BUF_32);
-
-            char string[saved_str_len];
-            if ((result = read_helper(old_fd, string, saved_str_len)) != LV_OK) return result;
-            if ((result = write_helper(new_fd, string, saved_str_len)) != LV_OK) return result;
-        }
-        else { //int64 or double
-            if ((result = read_helper(old_fd, BUF_64, 8)) != LV_OK) return result;
-            if ((result = write_helper(new_fd, BUF_64, 8)) != LV_OK) return result;
-        }
-    }
+    //fields
+    char saved_field_buffer[saved_field_size];
+    if ((result = read_helper(old_fd, saved_field_buffer, saved_field_size)) != LV_OK) return result;
+    if ((result = write_helper(new_fd, saved_field_buffer, saved_field_size)) != LV_OK) return result;
 
     return result;
 }
@@ -551,13 +482,12 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
         LVVectorId64_t vector_id;
         LVSize32_t field_mask;
         LVSize32_t field_count;
-        LVSize32_t field_nonserialized_size;
-        LVSize32_t field_serialized_size;
+        LVSize32_t field_size;
 
-        if ((result = sst_read_record_head(fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_nonserialized_size, &field_serialized_size)) != LV_OK) goto _return;
+        if ((result = sst_read_record_head(fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_size)) != LV_OK) goto _return;
 
         if (field_count > 0 && (query_field_mask & field_mask)) {
-            char node_buf[sizeof(LVNode) + field_nonserialized_size];
+            char node_buf[sizeof(LVNode) + field_size];
             LVNode* dummy_node = (LVNode*)node_buf;
             dummy_node->level = 0;
             dummy_node->key_len = key_len;
@@ -568,7 +498,7 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
             char key[key_len];
             char value[value_len];
 
-            if ((result = sst_read_record_tail(fd, key, key_len, value, value_len, (char*)(node_access_field(dummy_node, 0)), field_count)) != LV_OK) goto _return;
+            if ((result = sst_read_record_tail(fd, key, key_len, value, value_len, (char*)(node_access_field(dummy_node, 0)), field_size)) != LV_OK) goto _return;
 
             if (node_eval_query(dummy_node, query, schema)) {
                 float vector_score = 0.0f;
@@ -603,7 +533,7 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
 
         }
         else {
-            lseek(fd, key_len + value_len + field_serialized_size, SEEK_CUR);
+            lseek(fd, key_len + value_len + field_size, SEEK_CUR);
         }
 
         record_read += 1;
@@ -614,7 +544,7 @@ _return:
     return result;
 }
 
-LVStatus sst_read_record_head(const int fd, LVSeq64_t* seq, LVNodeOp* op, LVLevel8_t* level, LVKeyLen32_t* key_len, LVValueLen32_t* value_len, LVVectorId64_t* vector_id, LVSize32_t* field_mask, LVSize32_t* field_count, LVSize32_t* field_nonserialized_size, LVSize32_t* field_serialized_size) {
+LVStatus sst_read_record_head(const int fd, LVSeq64_t* seq, LVNodeOp* op, LVLevel8_t* level, LVKeyLen32_t* key_len, LVValueLen32_t* value_len, LVVectorId64_t* vector_id, LVSize32_t* field_mask, LVSize32_t* field_count, LVSize32_t* field_size) {
     LVStatus result = LV_OK;
 
     uint8_t BUF_32[4];
@@ -644,54 +574,25 @@ LVStatus sst_read_record_head(const int fd, LVSeq64_t* seq, LVNodeOp* op, LVLeve
     *field_count = get_fixed_32(BUF_32);
 
     if ((result = read_helper(fd, BUF_32, 4)) != LV_OK)goto _return;
-    *field_nonserialized_size = get_fixed_32(BUF_32);
-
-    if ((result = read_helper(fd, BUF_32, 4)) != LV_OK)goto _return;
-    *field_serialized_size = get_fixed_32(BUF_32);
+    *field_size = get_fixed_32(BUF_32);
 
 _return:
     return result;
 }
 
-LVStatus sst_read_record_tail(const int fd, char* key, const LVKeyLen32_t key_len, char* value, const LVValueLen32_t value_len, char* field, const LVSize32_t field_count) {
+LVStatus sst_read_record_tail(const int fd, char* key, const LVKeyLen32_t key_len, char* value, const LVValueLen32_t value_len, char* field, const LVSize32_t field_size) {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
+    char saved_field_buffer[field_size];
 
     if ((result = read_helper(fd, key, key_len)) != LV_OK) goto _return;
 
     if ((result = read_helper(fd, value, value_len)) != LV_OK) goto _return;
 
+    if ((result = read_helper(fd, saved_field_buffer, field_size) != LV_OK))goto _return;
 
-    char* field_ptr = field;
-    for (int i = 0; i < field_count; ++i) {
-        uint8_t saved_type;
-        if ((result = read_helper(fd, &saved_type, sizeof(uint8_t))) != LV_OK) goto _return;
-        const LVMetaType type = (LVMetaType)saved_type;
-        memcpy(&type, field_ptr, sizeof(LVMetaType));
-
-        field_ptr += sizeof(LVMetaType);
-
-        if (type == LV_META_STRING) {
-            if ((result = read_helper(fd, BUF_32, 4)) != LV_OK) goto _return;
-            LVSize32_t saved_len = get_fixed_32(BUF_32);
-            memcpy(field_ptr, &saved_len, sizeof(uint32_t));
-
-            field_ptr += sizeof(uint32_t);
-
-            char string[saved_len];
-            if ((result = read_helper(fd, string, saved_len)) != LV_OK) goto _return;
-            memcpy(field_ptr, string, saved_len);
-
-            field_ptr += saved_len;
-        }
-        else {
-            if ((result = read_helper(fd, BUF_64, 8)) != LV_OK) goto _return;
-            uint64_t saved_value = get_fixed_64(BUF_64);
-            memcpy(field_ptr, &saved_value, sizeof(uint64_t));
-            field_ptr += sizeof(uint64_t);
-        }
-    }
+    schema_field_disk_to_memory(saved_field_buffer, field_size, field);
 
 _return:
     return result;
@@ -718,13 +619,12 @@ LVStatus sst_query_with_hnsw(const int fd, const int vector_index_fd, const LVVe
     LVVectorId64_t saved_vector_id;
     LVSize32_t field_mask;
     LVSize32_t field_count;
-    LVSize32_t field_nonserialized_size;
-    LVSize32_t field_serialized_size;
+    LVSize32_t field_size;
 
-    if ((result = sst_read_record_head(fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_nonserialized_size, &field_serialized_size)) != LV_OK) goto _return;
+    if ((result = sst_read_record_head(fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_size)) != LV_OK) goto _return;
 
     if (field_count > 0 && (query_ctx->query_field_mask & field_mask)) {
-        char node_buf[sizeof(LVNode) + field_nonserialized_size];
+        char node_buf[sizeof(LVNode) + field_size];
         LVNode* dummy_node = (LVNode*)node_buf;
         dummy_node->level = 0;
         dummy_node->key_len = key_len;
@@ -735,7 +635,7 @@ LVStatus sst_query_with_hnsw(const int fd, const int vector_index_fd, const LVVe
         char key[key_len];
         char value[value_len];
 
-        if ((result = sst_read_record_tail(fd, key, key_len, value, value_len, (char*)(node_access_field(dummy_node, 0)), field_count)) != LV_OK) goto _return;
+        if ((result = sst_read_record_tail(fd, key, key_len, value, value_len, (char*)(node_access_field(dummy_node, 0)), field_size)) != LV_OK) goto _return;
 
         if (node_eval_query(dummy_node, query, schema)) {
             LVOrdbyValue ordbyvalue;
