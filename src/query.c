@@ -128,7 +128,7 @@ LVStatus query_eval_filter(const LVFilter* filter, const LVNode* node, const LVS
     int field_node_index = node_field_number(node, field_hash->mask);
     char* field = (char*)node_access_field(node, field_node_index);
 
-    field += sizeof(LVMetaType);
+    field += sizeof(uint8_t);
 
     switch (field_hash->type)
     {
