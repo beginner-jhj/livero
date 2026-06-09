@@ -479,6 +479,20 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
             update_fields_offsets[field_count_to_update] = offset;
             field_mask_to_update |= searched_hash->mask;
             field_count_to_update += 1;
+
+            // string update may change length; int/float are fixed 8 bytes so no adjustment.
+            if (current_field->type == LV_META_STRING) {
+                // find the old string's length stored in the existing node,
+                // then swap old_len for the new len in new_field_size.
+                int old_number = node_field_number(searched_node, searched_hash->mask);
+                char* old_ptr = (char*)node_access_field(searched_node, old_number);
+                old_ptr += sizeof(uint8_t);            // skip the 1-byte type
+                uint32_t old_len = 0;
+                memcpy(&old_len, old_ptr, sizeof(uint32_t));
+
+                new_field_size -= old_len;             // remove old string bytes
+                new_field_size += current_field->value.str.len;  // add new string bytes
+            }
         }
     }
 
@@ -518,7 +532,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
             LVMetaField* update_field_data = fields + update_fields_offsets[update_done_count];
 
             uint8_t type_to_save = (uint8_t)update_field_data->type;
-            memcpy(new_field_ptr, &type_to_save,sizeof(uint8_t));
+            memcpy(new_field_ptr, &type_to_save, sizeof(uint8_t));
             new_field_ptr += sizeof(uint8_t);
 
 
