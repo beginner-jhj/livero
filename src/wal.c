@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include "helper.h"
 
-LVStatus wal_append(const int fd, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void *key, const LVSize32_t value_len, const void *value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField *field_list)
+LVStatus wal_append(const int fd, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const void* field_buffer)
 {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
@@ -141,82 +141,16 @@ LVStatus wal_append(const int fd, const LVNodeOp op, const LVSeq64_t seq, const 
 
     checksum = crc_calc(value, value_len, checksum);
 
-    // write field values
-    int count = 0;
+    // write fields
 
-    while (count < field_count)
-    {
-        LVMetaField *current_field = field_list + count;
-        uint8_t type_to_save = (uint8_t)(current_field->type);
-        if ((result = write_helper(fd, &type_to_save, 1)) != LV_OK)
-        {
-            goto _return;
-        }
-
-        checksum = crc_calc(&type_to_save, 1, checksum);
-
-        switch (current_field->type)
-        {
-        case LV_META_STRING:
-            put_fixed_32(BUF_32, current_field->value.str.len);
-
-            if ((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
-            {
-                goto _return;
-            }
-
-            checksum = crc_calc(BUF_32, sizeof(uint32_t), checksum);
-
-            if ((result = write_helper(fd, current_field->value.str.string, current_field->value.str.len)) != LV_OK)
-            {
-                goto _return;
-            }
-
-            checksum = crc_calc(current_field->value.str.string, current_field->value.str.len, checksum);
-
-            break;
-
-        case LV_META_FLOAT:
-        {
-
-            uint64_t value;
-            memcpy(&value, &current_field->value.f64, 8);
-
-            put_fixed_64(BUF_64, value);
-
-            if ((result = write_helper(fd, BUF_64, 8)) != LV_OK)
-            {
-                goto _return;
-            }
-
-            checksum = crc_calc(BUF_64, 8, checksum);
-
-            break;
-        }
-
-        case LV_META_INT:
-            put_fixed_64(BUF_64, current_field->value.i64);
-
-            if ((result = write_helper(fd, BUF_64, 8)) != LV_OK)
-            {
-                goto _return;
-            }
-
-            checksum = crc_calc(BUF_64, 8, checksum);
-
-            break;
-        default:
-            break;
-        }
-
-        ++count;
-    }
+    if ((result = write_helper(fd, field_buffer, field_size)) != LV_OK) goto _return;
+    checksum = crc_calc(field_buffer, field_size, checksum);
 
     // write checksum
 
     put_fixed_32(BUF_32, checksum);
 
-    if((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK){
+    if ((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK) {
         goto _return;
     }
 
@@ -226,7 +160,7 @@ _return:
     return result;
 }
 
-LVStatus wal_recover(const int fd, const LVMemTable *table)
+LVStatus wal_recover(const int fd, const LVMemTable* table)
 {
     LVStatus result = LV_OK;
     off_t wal_size = lseek(fd, 0, SEEK_END);
@@ -252,7 +186,7 @@ LVStatus wal_recover(const int fd, const LVMemTable *table)
             goto _return;
         }
 
-        LVNode *reserved_node = node_reserve(table->arena, saved_level,saved_key_len, saved_value_len, saved_field_size);
+        LVNode* reserved_node = node_reserve(table->arena, saved_level, saved_key_len, saved_value_len, saved_field_size);
 
         reserved_node->type = LV_NODE_DATA;
         reserved_node->op = (LVNodeOp)saved_op;
@@ -264,7 +198,7 @@ LVStatus wal_recover(const int fd, const LVMemTable *table)
         reserved_node->field_count = saved_field_count;
         reserved_node->field_mask = saved_field_mask;
 
-        memset(reserved_node->levels, 0, saved_level * sizeof(LVNode *));
+        memset(reserved_node->levels, 0, saved_level * sizeof(LVNode*));
 
         if (reserved_node->op == LV_DELETE)
         {
@@ -306,7 +240,7 @@ _return:
     return result;
 }
 
-LVStatus wal_read_head(const int fd, uint32_t *checksum, uint8_t *op, LVSeq64_t *seq, LVLevel8_t *level, LVKeyLen32_t *key_len, LVValueLen32_t *value_len, LVVectorId64_t *vector_id, LVSize32_t *field_mask, LVSize32_t *field_count, LVSize32_t *field_size)
+LVStatus wal_read_head(const int fd, uint32_t* checksum, uint8_t* op, LVSeq64_t* seq, LVLevel8_t* level, LVKeyLen32_t* key_len, LVValueLen32_t* value_len, LVVectorId64_t* vector_id, LVSize32_t* field_mask, LVSize32_t* field_count, LVSize32_t* field_size)
 {
     LVStatus result = LV_OK;
 
@@ -397,7 +331,7 @@ LVStatus wal_read_head(const int fd, uint32_t *checksum, uint8_t *op, LVSeq64_t 
     *checksum = crc_calc(BUF_32, 4, *checksum);
     *field_count = get_fixed_32(BUF_32);
 
-    // read field total size
+    // read field size
 
     if ((result = read_helper(fd, BUF_32, 4)) != LV_OK)
     {
@@ -411,110 +345,36 @@ _return:
     return result;
 }
 
-LVStatus wal_read_tail(const int fd, uint32_t *checksum, void *ptr, LVKeyLen32_t key_len, LVValueLen32_t value_len, LVSize32_t field_total_size)
+LVStatus wal_read_tail(const int fd, uint32_t* checksum, void* node_tail_ptr, LVKeyLen32_t key_len, LVValueLen32_t value_len, LVSize32_t field_size)
 {
     LVStatus result = LV_OK;
 
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
 
-    if ((result = read_helper(fd, ptr, key_len)) != LV_OK)
+    char field_disk_buffer[field_size];
+
+    if ((result = read_helper(fd, node_tail_ptr, key_len)) != LV_OK)
     {
         goto _return;
     }
 
-    *checksum = crc_calc(ptr, key_len, *checksum);
+    *checksum = crc_calc(node_tail_ptr, key_len, *checksum);
 
-    ptr = (char *)ptr + key_len;
+    node_tail_ptr = (char*)node_tail_ptr + key_len;
 
-    if ((result = read_helper(fd, ptr, value_len)) != LV_OK)
+    if ((result = read_helper(fd, node_tail_ptr, value_len)) != LV_OK)
     {
         goto _return;
     }
 
-    *checksum = crc_calc(ptr, value_len, *checksum);
+    *checksum = crc_calc(node_tail_ptr, value_len, *checksum);
 
-    ptr = (char *)ptr + value_len;
+    node_tail_ptr = (char*)node_tail_ptr + value_len;
 
-    LVSize32_t current_field_read_size = 0;
-
-    while (current_field_read_size < field_total_size)
-    {
-        uint8_t saved_type;
-        if ((result = read_helper(fd, &saved_type, 1)) != LV_OK)
-        {
-            goto _return;
-        }
-
-        LVMetaType type = (LVMetaType)saved_type;
-        memcpy(ptr, &type, sizeof(LVMetaType));
-
-        *checksum = crc_calc(&saved_type, 1, *checksum);
-        current_field_read_size += 1;
-        ptr = (char *)ptr + sizeof(LVMetaType);
-
-        switch (type)
-        {
-        case LV_META_STRING:
-        {
-            if ((result = read_helper(fd, BUF_32, 4)) != LV_OK)
-            {
-                goto _return;
-            }
-            *checksum = crc_calc(BUF_32, 4, *checksum);
-
-            uint32_t saved_string_len = get_fixed_32(BUF_32);
-            memcpy(ptr, &saved_string_len, sizeof(uint32_t));
-
-            current_field_read_size += 4;
-            ptr = (char *)ptr + sizeof(uint32_t);
-
-            if (saved_string_len > 0)
-            {
-                if ((result = read_helper(fd, ptr, saved_string_len)) != LV_OK)
-                {
-                    goto _return;
-                }
-                *checksum = crc_calc(ptr, saved_string_len, *checksum);
-                current_field_read_size += saved_string_len;
-                ptr = (char *)ptr + saved_string_len;
-            }
-
-            break;
-        }
-
-        case LV_META_FLOAT:
-        {
-            if ((result = read_helper(fd, BUF_64, 8)) != LV_OK)
-            {
-                goto _return;
-            }
-            *checksum = crc_calc(BUF_64, 8, *checksum);
-            uint64_t tmp = get_fixed_64(BUF_64);
-            memcpy(ptr, &tmp, sizeof(double));
-
-            current_field_read_size += 8;
-            ptr = (char *)ptr + 8;
-            break;
-        }
-        case LV_META_INT:
-        {
-            if ((result = read_helper(fd, BUF_64, 8)) != LV_OK)
-            {
-                goto _return;
-            }
-            *checksum = crc_calc(BUF_64, 8, *checksum);
-            uint64_t tmp = get_fixed_64(BUF_64);
-            memcpy(ptr, &tmp, sizeof(int64_t));
-
-            current_field_read_size += 8;
-            ptr = (char *)ptr + 8;
-            break;
-        }
-        default:
-            break;
-        }
-    }
+    if((result = read_helper(fd, field_disk_buffer, field_size)) != LV_OK) goto _return;
+    *checksum = crc_calc(field_disk_buffer,field_size, *checksum);
+    schema_field_disk_to_memory(field_disk_buffer, field_size, node_tail_ptr);
 
     if ((result = read_helper(fd, BUF_32, 4)) != LV_OK)
     {
