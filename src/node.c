@@ -4,7 +4,7 @@
 #include <string.h>
 #include "query.h"
 
-LVNode* node_create(const LVArena* arena, const LVNodeType type, const LVSeq64_t seq, const LVNodeOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void* key, const LVValueLen32_t value_len, const void* value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const void* field_list)
+LVNode* node_create(const LVArena* arena, const LVNodeType type, const LVSeq64_t seq, const LVNodeOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void* key, const LVValueLen32_t value_len, const void* value, const LVVectorId64_t vector_id, const LVSize32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const void* field_buffer)
 {
     LVNode* node = NULL;
 
@@ -50,46 +50,10 @@ LVNode* node_create(const LVArena* arena, const LVNodeType type, const LVSeq64_t
         memcpy((char*)node + node_value_offset(node->level, node->key_len), value, node->value_len);
     }
 
-    if (node->field_count > 0 && field_list && op == LV_PUT)
-    {
-        char* write_ptr = (char*)node + node_field_offset(node->level, node->key_len, node->value_len);
-
-        const LVMetaField* fields = (const LVMetaField*)field_list;
-
-        for (int field_idx = 0; field_idx < field_count; ++field_idx)
-        {
-            LVMetaField* current_field = fields + field_idx;
-
-            memcpy(write_ptr, &current_field->type, sizeof(LVMetaType));
-            write_ptr += sizeof(LVMetaType);
-
-            if (current_field->type == LV_META_STRING)
-            {
-                memcpy(write_ptr, &current_field->value.str.len, sizeof(uint32_t));
-                write_ptr += sizeof(uint32_t);
-
-                if (current_field->value.str.len > 0)
-                {
-                    memcpy(write_ptr, current_field->value.str.string, current_field->value.str.len);
-                    write_ptr += current_field->value.str.len;
-                }
-            }
-            else if (current_field->type == LV_META_INT)
-            {
-                memcpy(write_ptr, &current_field->value.i64, sizeof(int64_t));
-                write_ptr += sizeof(int64_t);
-            }
-            else
-            { // FLOAT
-                memcpy(write_ptr, &current_field->value.f64, sizeof(double));
-                write_ptr += sizeof(double);
-            }
-        }
-    }
-
-    else if (node->field_count > 0 && field_list != NULL && op == LV_UPDATE) {
+    //copy field
+    if (node->field_count > 0) {
         char* field_cpy_ptr = (char*)node + node_field_offset(node->level, node->key_len, node->value_len);
-        memcpy(field_cpy_ptr, field_list, field_size);
+        memcpy(field_cpy_ptr, field_buffer, field_size);
     }
 
 _return:
@@ -208,11 +172,13 @@ void* node_access_field(const LVNode* node, const int number)
 {
     if(node->field_count <=0 || number < 0 || number > node->field_count-1) return NULL;
     char* field = (char*)node + node_field_offset(node->level, node->key_len, node->value_len);
-    LVMetaType type;
     for (int i = 0; i < number; ++i)
     {
-        memcpy(&type, field, sizeof(LVMetaType));
-        field += sizeof(LVMetaType);
+        uint8_t saved_type;
+        memcpy(&saved_type, field, sizeof(uint8_t));
+        field += sizeof(uint8_t);
+
+        LVMetaType type = (LVMetaType)saved_type;
 
         switch (type)
         {
@@ -242,7 +208,7 @@ void* node_access_field(const LVNode* node, const int number)
 double node_get_f64_field(const LVNode* node, const LVSize32_t mask) {
     int number = node_field_number(node, mask);
     char* f64_field = (char*)node_access_field(node, number);
-    f64_field += sizeof(LVMetaType);
+    f64_field += sizeof(uint8_t);
     double value = 0.0;
     memcpy(&value, f64_field, sizeof(double));
     return value;
@@ -250,7 +216,7 @@ double node_get_f64_field(const LVNode* node, const LVSize32_t mask) {
 int64_t node_get_i64_field(const LVNode* node, const LVSize32_t mask) {
     int number = node_field_number(node, mask);
     char* i64_field = (char*)node_access_field(node, number);
-    i64_field += sizeof(LVMetaType);
+    i64_field += sizeof(uint8_t);
     int64_t value = 0;
     memcpy(&value, i64_field, sizeof(int64_t));
     return value;
@@ -292,17 +258,19 @@ int node_eval_query(const LVNode* node, const LVAstNode* query, const LVSchema* 
     return query_eval_ast(query, node, schema);
 }
 
-LVSize32_t node_field_size(const LVNode* node, const int is_serialized) {
+LVSize32_t node_field_size(const LVNode* node) {
     if (node->field_count <= 0) return 0;
     char* field_ptr = (char*)node_access_field(node, 0);
     LVSize32_t size = 0;
     for (int i = 0; i < node->field_count; ++i) {
-        LVMetaType type;
-        memcpy(&type, field_ptr, sizeof(LVMetaType));
+        LVMetaType saved_type;
+        memcpy(&saved_type, field_ptr, sizeof(uint8_t));
 
         size += 1;
 
-        field_ptr += sizeof(LVMetaType);
+        field_ptr += sizeof(uint8_t);
+
+        LVMetaType type = (LVMetaType)saved_type;
 
         if (type == LV_META_STRING) {
             uint32_t len = 0;
@@ -316,8 +284,4 @@ LVSize32_t node_field_size(const LVNode* node, const int is_serialized) {
         }
     }
     return size;
-}
-
-void node_field_serialize(const LVMetaField* fields, void* buffer, const LVSize32_t field_size, int is_on_disk){
-    
 }
