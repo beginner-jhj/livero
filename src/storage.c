@@ -87,7 +87,7 @@ void destroy_table(LVMemTable* table) {
     }
 }
 
-LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const LVMetaField* field_list)
+LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const void* field_buffer)
 {
     LVNode* result = NULL;
     LVNode* update[LV_SKIPLIST_MAX_LEVEL];
@@ -112,7 +112,7 @@ LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, 
         current_cmp_node = current_head->levels[current_update_level];
     }
 
-    LVNode* new_node = node_create(table->arena, LV_NODE_DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_list);
+    LVNode* new_node = node_create(table->arena, LV_NODE_DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_buffer);
     if (!new_node)
     {
         result = NULL;
@@ -191,11 +191,6 @@ LVNode* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_
     LVLevel8_t current_level = table->current_level - 1;
     LVNode* current_candidate = table->head;
     LVNode* current_cmp_node = current_candidate->levels[current_level];
-
-    LVNode* head_next = table->head->levels[0];
-    printf("    [check] first node key='%.*s' key_len=%u op=%d\n",
-        (int)head_next->key_len, (char*)node_access_key(head_next),
-        head_next->key_len, head_next->op);
 
     while (current_level >= 0)
     {
