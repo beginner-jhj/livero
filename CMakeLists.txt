@@ -59,6 +59,6 @@ function(lv_add_test name file)
 endfunction()
 
 lv_add_test(test_arena   tests/test_arena.c)
-lv_add_test(test_storage tests/test_storage.c)
 lv_add_test(test_vector  tests/test_vector.c)
-lv_add_test(test_main    tests/test_main.c)
+lv_add_test(test_main    tests/test_table.c)
+lv_add_test(test_flush tests/test_flush.c)
