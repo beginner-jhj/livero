@@ -472,6 +472,8 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
     //goto first record
     lseek(fd, index_entry.offset, SEEK_SET);
 
+    free(index_entry.key);
+
     uint64_t record_read = 0;
     while (record_read < saved_record_count) {
         LVSeq64_t seq;
@@ -556,6 +558,10 @@ LVStatus sst_read_record_head(const int fd, LVSeq64_t* seq, LVNodeOp* op, LVLeve
     uint8_t saved_op;
     if ((result = read_helper(fd, &saved_op, sizeof(uint8_t))) != LV_OK) goto _return;
     *op = (LVNodeOp)saved_op;
+
+    uint8_t saved_level;
+    if((result = read_helper(fd, &saved_level, sizeof(uint8_t))) != LV_OK) goto _return;
+    *level = saved_level;
 
     if ((result = read_helper(fd, BUF_32, 4)) != LV_OK)goto _return;
     *key_len = get_fixed_32(BUF_32);
