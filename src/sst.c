@@ -33,6 +33,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
     //check old sst corruption
     if (old_fd >= 0) {
+        lseek(old_fd, 0, SEEK_SET);
         char sst_magic[LV_MAGIC_SIZE];
         if ((result = read_helper(old_fd, sst_magic, LV_MAGIC_SIZE)) != LV_OK) goto _return;
         if (memcmp(sst_magic, LV_MAGIC_SST, LV_MAGIC_SIZE) != 0) {
@@ -75,20 +76,37 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
         }
     }
     else {
+        off_t end = lseek(old_fd, 0, SEEK_END);
+        fprintf(stderr, "[sst_flush merge] old_fd=%d file_size=%lld\n",
+            old_fd, (long long)end);
+
         lseek(old_fd, -16, SEEK_END);
-        //read index_block_offset
-        if ((result = read_helper(old_fd, BUF_64, 8)) != LV_OK) goto _return;
+        off_t foot = lseek(old_fd, 0, SEEK_CUR);
+        fprintf(stderr, "[sst_flush merge] footer read pos=%lld\n", (long long)foot);
+
+        if ((result = read_helper(old_fd, BUF_64, 8)) != LV_OK) {
+            fprintf(stderr, "[sst_flush merge] index_offset read FAILED\n");
+            goto _return;
+        }
         const uint64_t index_block_offset = get_fixed_64(BUF_64);
+        fprintf(stderr, "[sst_flush merge] index_block_offset=%llu\n",
+            (unsigned long long)index_block_offset);
 
-        //read record_count
-        if ((result = read_helper(old_fd, BUF_64, 8)) != LV_OK) goto _return;
+        if ((result = read_helper(old_fd, BUF_64, 8)) != LV_OK) {
+            fprintf(stderr, "[sst_flush merge] record_count read FAILED\n");
+            goto _return;
+        }
         const uint64_t saved_record_count = get_fixed_64(BUF_64);
+        fprintf(stderr, "[sst_flush merge] saved_record_count=%llu\n",
+            (unsigned long long)saved_record_count);
 
-        //go to index_block
         lseek(old_fd, index_block_offset, SEEK_SET);
 
         LVSSTIndexBlockEntry old_entry;
-        if ((result = sst_read_next_index_entry(old_fd, &old_entry)) != LV_OK) goto _return;
+        if ((result = sst_read_next_index_entry(old_fd, &old_entry)) != LV_OK) {
+            fprintf(stderr, "[sst_flush merge] read_next_index_entry FAILED\n");
+            goto _return;
+        }
         int has_old_entry = 1;
 
         uint64_t record_read = 0;
@@ -343,66 +361,79 @@ LVStatus sst_write_record_with_old_sst(const int new_fd, const int old_fd, const
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
+    uint64_t off = read_offset;
 
-    lseek(old_fd, read_offset, SEEK_SET);
+    // lseek(old_fd, read_offset, SEEK_SET);
 
     //seq
-    if ((result = read_helper(old_fd, BUF_64, 8)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, BUF_64, 8, off)) != LV_OK) return result;
+    off += 8;
     if ((result = write_helper(new_fd, BUF_64, 8)) != LV_OK) return result;
 
 
     //op
     uint8_t saved_op;
-    if ((result = read_helper(old_fd, &saved_op, sizeof(uint8_t))) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, &saved_op, sizeof(uint8_t), off)) != LV_OK) return result;
+    off += sizeof(uint8_t);
     if ((result = write_helper(new_fd, &saved_op, sizeof(uint8_t))) != LV_OK) return result;
 
     //level
     LVLevel8_t saved_level;
-    if ((result = read_helper(old_fd, &saved_level, sizeof(LVLevel8_t))) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, &saved_level, sizeof(LVLevel8_t), off)) != LV_OK) return result;
+    off += sizeof(LVLevel8_t);
     if ((result = write_helper(new_fd, &saved_level, sizeof(LVLevel8_t))) != LV_OK) return result;
 
     //key_len
-    if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, BUF_32, 4, off)) != LV_OK) return result;
+    off += 4;
     if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
     const LVKeyLen32_t saved_key_len = get_fixed_32(BUF_32);
 
 
     //value_len
-    if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, BUF_32, 4, off)) != LV_OK) return result;
+    off += 4;
     if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
     const LVKeyLen32_t saved_value_len = get_fixed_32(BUF_32);
 
 
     //vector_id
-    if ((result = read_helper(old_fd, BUF_64, 8)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, BUF_64, 8, off)) != LV_OK) return result;
+    off += 8;
     if ((result = write_helper(new_fd, BUF_64, 8)) != LV_OK) return result;
 
     //field_mask
-    if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, BUF_32, 4, off)) != LV_OK) return result;
+    off += 4;
     if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
 
     //field_count
-    if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, BUF_32, 4, off)) != LV_OK) return result;
+    off += 4;
     if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
 
     //field_size
-    if ((result = read_helper(old_fd, BUF_32, 4)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, BUF_32, 4, off)) != LV_OK) return result;
+    off += 4;
     if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) return result;
     const LVSize32_t saved_field_size = get_fixed_32(BUF_32);
 
     //key
     char saved_key[saved_key_len];
-    if ((result = read_helper(old_fd, saved_key, saved_key_len)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, saved_key, saved_key_len, off)) != LV_OK) return result;
+    off += saved_key_len;
     if ((result = write_helper(new_fd, saved_key, saved_key_len)) != LV_OK) return result;
 
     //value
     char saved_value[saved_value_len];
-    if ((result = read_helper(old_fd, saved_value, saved_value_len)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, saved_value, saved_value_len, off)) != LV_OK) return result;
+    off += saved_value_len;
     if ((result = write_helper(new_fd, saved_value, saved_value_len)) != LV_OK) return result;
 
     //fields
     char saved_field_buffer[saved_field_size];
-    if ((result = read_helper(old_fd, saved_field_buffer, saved_field_size)) != LV_OK) return result;
+    if ((result = pread_helper(old_fd, saved_field_buffer, saved_field_size, off)) != LV_OK) return result;
+    off += saved_field_size;
     if ((result = write_helper(new_fd, saved_field_buffer, saved_field_size)) != LV_OK) return result;
 
     return result;
@@ -489,7 +520,7 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
         if ((result = sst_read_record_head(fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_size)) != LV_OK) goto _return;
 
         if (field_count > 0 && (query_field_mask & field_mask)) {
-            char node_buf[sizeof(LVNode) + field_size];
+            char node_buf[sizeof(LVNode) + key_len + value_len + field_size];
             LVNode* dummy_node = (LVNode*)node_buf;
             dummy_node->level = 0;
             dummy_node->key_len = key_len;
@@ -560,7 +591,7 @@ LVStatus sst_read_record_head(const int fd, LVSeq64_t* seq, LVNodeOp* op, LVLeve
     *op = (LVNodeOp)saved_op;
 
     uint8_t saved_level;
-    if((result = read_helper(fd, &saved_level, sizeof(uint8_t))) != LV_OK) goto _return;
+    if ((result = read_helper(fd, &saved_level, sizeof(uint8_t))) != LV_OK) goto _return;
     *level = saved_level;
 
     if ((result = read_helper(fd, BUF_32, 4)) != LV_OK)goto _return;
@@ -630,7 +661,7 @@ LVStatus sst_query_with_hnsw(const int fd, const int vector_index_fd, const LVVe
     if ((result = sst_read_record_head(fd, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_size)) != LV_OK) goto _return;
 
     if (field_count > 0 && (query_ctx->query_field_mask & field_mask)) {
-        char node_buf[sizeof(LVNode) + field_size];
+        char node_buf[sizeof(LVNode) + key_len + value_len + field_size];
         LVNode* dummy_node = (LVNode*)node_buf;
         dummy_node->level = 0;
         dummy_node->key_len = key_len;
