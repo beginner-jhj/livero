@@ -125,6 +125,7 @@ static void build_schema(LVSchema* schema)
     memset(schema, 0, sizeof(*schema));
     schema->vector_dim = DIM;
     schema->vector_type = LV_VEC_FLOAT32;
+    schema->vector_metric = LV_METRIC_L2;
     schema->field_count = N_FIELDS;
 
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
@@ -200,7 +201,7 @@ static int populate(LightVec* db)
         LVStatus s = lv_put(db,
             r->key, r->key_len,
             r->key, r->key_len,
-            r->vec, LV_METRIC_L2,
+            r->vec,
             N_FIELDS, fields);
 
         if (s != LV_OK) {
@@ -766,7 +767,7 @@ static void test_field_serialization_order(void)
     fields[2].type = LV_META_INT;
     fields[2].value.i64 = UNIQ_CATEGORY;
 
-    LVStatus sp = lv_put(db, KEY, KLEN, KEY, KLEN, vec, LV_METRIC_L2,
+    LVStatus sp = lv_put(db, KEY, KLEN, KEY, KLEN, vec,
                          N_FIELDS, fields);
     TEST_START(n++, "put with reverse-order fields returns LV_OK");
     print_status_code(sp);
