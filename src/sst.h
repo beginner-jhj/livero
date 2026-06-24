@@ -30,7 +30,7 @@ typedef struct LVSSTQueryCtx{
 
 LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd, const LVNode* node);
 
-LVStatus sst_read_next_index_entry(const int fd, LVSSTIndexBlockEntry* entry);
+LVStatus sst_read_footer(const int fd, uint64_t* indexblock_offset, uint64_t* record_count, LVSeq64_t* next_seq,LVVectorId64_t* next_vector_id);
 LVStatus sst_write_record_with_node(const int fd, const LVNode* node);
 LVStatus sst_write_record_with_old_sst(const int new_fd, const int old_fd, const uint64_t read_offset);
 
@@ -39,9 +39,13 @@ void destroy_indexblockset(LVSSTIndexBlockSet* index_block);
 
 LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask, const LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set);
 
-LVStatus sst_read_record_head(const int fd, LVSeq64_t* seq, LVNodeOp* op, LVLevel8_t* level, LVKeyLen32_t* key_len, LVValueLen32_t* value_len, LVVectorId64_t* vector_id, LVSize32_t* field_mask, LVSize32_t* field_count, LVSize32_t* field_size);
-LVStatus sst_read_record_tail(const int fd, char* key, const LVKeyLen32_t key_len, char* value, const LVValueLen32_t value_len, char* field, const LVSize32_t field_size);
+LVStatus sst_read_record_head(const int fd,const uint64_t read_offset, LVSeq64_t* seq, LVNodeOp* op, LVLevel8_t* level, LVKeyLen32_t* key_len, LVValueLen32_t* value_len, LVVectorId64_t* vector_id, LVSize32_t* field_mask, LVSize32_t* field_count, LVSize32_t* field_size, uint64_t* read_bytes_out);
+LVStatus sst_read_record_tail(const int fd,const uint64_t read_offset, char* key, const LVKeyLen32_t key_len, char* value, const LVValueLen32_t value_len, char* field, const LVSize32_t field_size, uint64_t* read_bytes_out);
 
 LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const LVVectorId64_t vector_id,const LVSchema* schema, const LVAstNode* query,const LVSSTQueryCtx* query_ctx);
+
+LVStatus sst_search_index_block(const int fd, LVSSTIndexBlockEntry* entry, const void* key, const LVKeyLen32_t key_len);
+
+static LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVSSTIndexBlockEntry* entry, uint64_t* next_offset);
 
 #endif
