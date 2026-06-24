@@ -244,6 +244,7 @@ static void test_flush_lifecycle(void)
     TEST_START(n++, "reopen flushed DB returns LV_OK");
     db = NULL;
     s = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
+    print_status_code(s);
     expect_true(s == LV_OK && db != NULL, "reopen flushed DB returns LV_OK");
     if (db) lv_close(db);
 }
@@ -591,6 +592,233 @@ static void test_delete_tombstone_across_flush(void)
 }
 
 /* ===========================================================================
+ * Test 7 — field serialization order independence ACROSS FLUSH  (REGRESSION)
+ *
+ * SIBLING OF test_table.c's test_field_serialization_order().
+ *
+ * Background (the bug):
+ *   schema_serialize_field() used to emit fields in the CALLER'S array order,
+ *   while every reader walks fields assuming ASCENDING MASK-BIT order. They only
+ *   matched because build_fields()/populate() always filled fields[] in
+ *   ascending-mask order, so the two orders never differed and the bug stayed
+ *   invisible. The fix makes schema_serialize_field() drive the loop by mask bit
+ *   (pull the field for bit 0, then bit 1, ...) so output order is correct by
+ *   construction, regardless of input order.
+ *
+ * WHY A SEPARATE FLUSH TEST — even though both paths share one function:
+ *   The MemTable test (test_table.c) only exercises the IN-MEMORY serialization
+ *   (node_create, is_on_disk = 0). The flush path is different in two ways that
+ *   the memtable test cannot reach:
+ *     1. It serializes with is_on_disk = 1 (the put_fixed_32/64 byte-encoded
+ *        branch), a *different* code path inside schema_serialize_field.
+ *     2. The bytes make a full round trip THROUGH DISK: memtable -> SST (and
+ *        SST<->SST merge), and separately WAL -> recovery on reopen.
+ *   So even though the order-fix lives in one function, "the memtable test is
+ *   green" does NOT prove the disk path is green. We must force a flush and a
+ *   reopen and re-read the fields to confirm the on-disk layout is also in mask
+ *   order. This test does exactly that.
+ *
+ * Strategy:
+ *   - Put ONE probe record with fields in REVERSE mask order (tag=bit2,
+ *     score=bit1, category=bit0). Unique values isolate it from populate()'s
+ *     data: category 7 (populate uses 0..4), score 12345.0 (populate < 100),
+ *     tag "zebra" (not in TAGS[]).
+ *   - Then put enough additional records to cross FLUSH_LOW and force the probe
+ *     record OUT of the MemTable and INTO the SST (so the query reads it back
+ *     from disk, through the SST serialization path — not from memory).
+ *   - Query each field; before the fix the disk layout is [tag][score][category]
+ *     but readers expect [category][score][tag], so the int and string probes
+ *     miss. After the fix all three round-trip.
+ *   - Finally CLOSE and REOPEN the db (WAL/SST recovery) and query once more, to
+ *     prove the persisted-and-recovered layout is also mask-ordered.
+ * ===========================================================================*/
+static void test_field_serialization_order_across_flush(void)
+{
+    int n = 1;
+    printf("\n=== field serialization order across flush (regression) ===\n");
+
+    fresh_db_dir();
+    LVSchema schema; build_schema(&schema);
+    LightVec* db = NULL;
+    LVStatus s = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
+    if (s != LV_OK || !db) {
+        print_status_code(s);
+        printf("    (skip — open failed)\n");
+        return;
+    }
+
+    const char*    PKEY    = "zorder_probe";
+    const uint32_t PKLEN   = (uint32_t)strlen(PKEY);
+    const int64_t  UNIQ_CATEGORY = 7;          /* populate() uses only 0..4    */
+    const double   UNIQ_SCORE    = 12345.0;    /* far above populate()'s < 100 */
+    const char*    UNIQ_TAG      = "zebra";    /* not present in TAGS[]        */
+
+    float pvec[DIM];
+    for (int d = 0; d < DIM; ++d) pvec[d] = lv_rand_f32_range(-1.0f, 1.0f);
+
+    /* THE KEY MOVE: fill fields[] in REVERSE mask order [tag, score, category].
+     * Schema mask bits: category=bit0, score=bit1, tag=bit2. A correct
+     * implementation must serialize by mask bit, not by this array order. */
+    LVMetaField fields[N_FIELDS];
+    memset(fields, 0, sizeof(fields));
+
+    strcpy(fields[0].name, "tag");            /* bit 2 */
+    fields[0].type = LV_META_STRING;
+    fields[0].value.str.string = (char*)UNIQ_TAG;
+    fields[0].value.str.len    = (uint32_t)strlen(UNIQ_TAG);
+
+    strcpy(fields[1].name, "score");          /* bit 1 */
+    fields[1].type = LV_META_FLOAT;
+    fields[1].value.f64 = UNIQ_SCORE;
+
+    strcpy(fields[2].name, "category");       /* bit 0 */
+    fields[2].type = LV_META_INT;
+    fields[2].value.i64 = UNIQ_CATEGORY;
+
+    LVStatus sp = lv_put(db, PKEY, PKLEN, PKEY, PKLEN, pvec, LV_METRIC_L2,
+                         N_FIELDS, fields);
+    TEST_START(n++, "probe put (reverse-order fields) returns LV_OK");
+    print_status_code(sp);
+    expect_true(sp == LV_OK, "probe put (reverse-order fields) returns LV_OK");
+    if (sp != LV_OK) { lv_close(db); return; }
+
+    /* Force the probe record from MemTable into the SST: push well past
+     * FLUSH_LOW with filler records (distinct keys, ordinary in-range values so
+     * they never collide with the probe's unique predicates). */
+    int filler = FLUSH_LOW * 3;   /* comfortably crosses the threshold */
+    for (int i = 0; i < filler; ++i) {
+        char fkey[32];
+        uint32_t fklen = (uint32_t)snprintf(fkey, sizeof(fkey), "filler_%04d", i);
+
+        float fvec[DIM];
+        for (int d = 0; d < DIM; ++d) fvec[d] = lv_rand_f32_range(-1.0f, 1.0f);
+
+        char ftag[16];
+        uint32_t ftlen = (uint32_t)snprintf(ftag, sizeof(ftag), "%s", TAGS[i % N_TAGS]);
+
+        /* normal ascending-order fields for filler; value ranges chosen NOT to
+         * satisfy the probe predicates (category 0..4, score 0..100). */
+        LVMetaField ff[N_FIELDS];
+        build_fields(ff, (int64_t)(i % 5), lv_rand_f32_range(0.0f, 100.0f),
+                     ftag, ftlen);
+
+        LVStatus fs = lv_put(db, fkey, fklen, fkey, fklen, fvec, LV_METRIC_L2,
+                             N_FIELDS, ff);
+        if (fs != LV_OK) {
+            print_status_code(fs);
+            printf("    filler put failed at i=%d\n", i);
+            expect_true(0, "filler puts succeed");
+            lv_close(db);
+            return;
+        }
+    }
+
+    LVQueryOption opt; memset(&opt, 0, sizeof(opt));
+    opt.flags = LV_QOPT_NONE;
+
+    /* Helper-style inline checks: each unique predicate must match EXACTLY the
+     * one probe record, proving that field was read back from the SST correctly
+     * despite the reverse input order. */
+
+    /* (a) INT field, read back from SST: category == 7 -> exactly 1 */
+    {
+        LVQueryResultSet* rs = NULL;
+        LVStatus q = lv_query(db, "category == 7", NULL, &opt, &rs);
+        TEST_START(n++, "[SST] reverse-order INT reads back (category==7 -> 1)");
+        if (q == LV_OK && rs) {
+            printf("    expected=1 got=%u\n", rs->size);
+            expect_true(rs->size == 1,
+                "[SST] reverse-order INT reads back (category==7 -> 1)");
+        } else {
+            print_status_code(q);
+            expect_true(0, "[SST] reverse-order INT reads back (category==7 -> 1)");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
+    /* (b) FLOAT field, read back from SST: score > 10000 -> exactly 1 */
+    {
+        LVQueryResultSet* rs = NULL;
+        LVStatus q = lv_query(db, "score > 10000.0", NULL, &opt, &rs);
+        TEST_START(n++, "[SST] reverse-order FLOAT reads back (score>10000 -> 1)");
+        if (q == LV_OK && rs) {
+            printf("    expected=1 got=%u\n", rs->size);
+            expect_true(rs->size == 1,
+                "[SST] reverse-order FLOAT reads back (score>10000 -> 1)");
+        } else {
+            print_status_code(q);
+            expect_true(0, "[SST] reverse-order FLOAT reads back (score>10000 -> 1)");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
+    /* (c) STRING field, read back from SST: tag == 'zebra' -> exactly 1 */
+    {
+        LVQueryResultSet* rs = NULL;
+        LVStatus q = lv_query(db, "tag == 'zebra'", NULL, &opt, &rs);
+        TEST_START(n++, "[SST] reverse-order STRING reads back (tag=='zebra' -> 1)");
+        if (q == LV_OK && rs) {
+            printf("    expected=1 got=%u\n", rs->size);
+            expect_true(rs->size == 1,
+                "[SST] reverse-order STRING reads back (tag=='zebra' -> 1)");
+        } else {
+            print_status_code(q);
+            expect_true(0, "[SST] reverse-order STRING reads back (tag=='zebra' -> 1)");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
+    /* ---- Now close + reopen to exercise the RECOVERY path (WAL/SST read back
+     * on open). This proves the PERSISTED layout — not just the live one — is
+     * mask-ordered. If recovery re-read fields by input order, the probe's int
+     * and string fields would come back misaligned here. ---- */
+    if (lv_close(db) != LV_OK) {
+        expect_true(0, "lv_close before reopen returns LV_OK");
+        return;
+    }
+    db = NULL;
+    LVStatus sr = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
+    TEST_START(n++, "reopen for recovery returns LV_OK");
+    print_status_code(sr);
+    expect_true(sr == LV_OK && db != NULL, "reopen for recovery returns LV_OK");
+    if (sr != LV_OK || !db) return;
+
+    /* (d) after recovery, the int probe must still resolve: category == 7 -> 1 */
+    {
+        LVQueryResultSet* rs = NULL;
+        LVStatus q = lv_query(db, "category == 7", NULL, &opt, &rs);
+        TEST_START(n++, "[recovered] reverse-order INT reads back (category==7 -> 1)");
+        if (q == LV_OK && rs) {
+            printf("    expected=1 got=%u\n", rs->size);
+            expect_true(rs->size == 1,
+                "[recovered] reverse-order INT reads back (category==7 -> 1)");
+        } else {
+            print_status_code(q);
+            expect_true(0, "[recovered] reverse-order INT reads back (category==7 -> 1)");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
+    /* (e) and the string probe likewise: tag == 'zebra' -> 1 */
+    {
+        LVQueryResultSet* rs = NULL;
+        LVStatus q = lv_query(db, "tag == 'zebra'", NULL, &opt, &rs);
+        TEST_START(n++, "[recovered] reverse-order STRING reads back (tag=='zebra' -> 1)");
+        if (q == LV_OK && rs) {
+            printf("    expected=1 got=%u\n", rs->size);
+            expect_true(rs->size == 1,
+                "[recovered] reverse-order STRING reads back (tag=='zebra' -> 1)");
+        } else {
+            print_status_code(q);
+            expect_true(0, "[recovered] reverse-order STRING reads back (tag=='zebra' -> 1)");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
+    lv_close(db);
+}
+
+/* ===========================================================================
  * main
  * ===========================================================================*/
 int main(void)
@@ -607,6 +835,7 @@ int main(void)
     test_filter_string_across_flush();
     test_vector_recall_across_flush();
     test_delete_tombstone_across_flush();
+    test_field_serialization_order_across_flush();
 
     printf("\n========================================\n");
     printf("  Done.\n");

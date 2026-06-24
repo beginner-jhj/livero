@@ -677,6 +677,164 @@ static void test_filter_string(void)
 }
 
 /* ===========================================================================
+ * Test 7 — field serialization order independence  (REGRESSION)
+ *
+ * WHY THIS TEST EXISTS
+ * --------------------
+ * lv_put serialized a record's fields in the CALLER'S array order (the order
+ * fields[] happened to be passed in). But every reader of the field buffer
+ * — node_field_buffer_access, node_field_number_of_mask, node_field_number_to_mask
+ * — walks fields assuming ASCENDING MASK-BIT order: the field for bit 0 first,
+ * then bit 1, then bit 2, ...
+ *
+ * Those two orders are DIFFERENT things. They only ever agreed by luck, because
+ * build_fields()/populate() always filled fields[] in ascending-mask order
+ * (category=bit0, score=bit1, tag=bit2). So "input order" and "mask order" were
+ * never made to differ, and the bug stayed invisible: a reader asking for "the
+ * 0th field" read the 0th SERIALIZED slot, which (by luck) was also the lowest
+ * mask bit.
+ *
+ * This test deliberately breaks that coincidence. It puts ONE record whose
+ * fields[] array is in REVERSE mask order (tag=bit2, score=bit1, category=bit0).
+ * That is the minimal input that separates the two assumptions:
+ *
+ *   - If lv_put serializes in input order (the BUG): the buffer is laid out as
+ *     [tag][score][category], but readers expect [category][score][tag]. So a
+ *     filter on "category == 7" reads the TAG bytes where category should be,
+ *     and either fails to match or matches the wrong thing. Likewise score/tag.
+ *     -> at least one of the three assertions below goes RED.
+ *
+ *   - If lv_put serializes in mask-bit order (the FIX): layout is always
+ *     [category][score][tag] regardless of input order, so all three fields
+ *     read back correctly. -> all GREEN.
+ *
+ * We give this record UNIQUE field values (category 7 — outside populate()'s
+ * 0..4 range; score 12345.0 — far above any random score; tag "zebra" — not in
+ * TAGS[]) so each predicate matches EXACTLY this one record. That makes the
+ * expected count exactly 1 for each, with no confounding from populate()'s data.
+ *
+ * NOTE: this is a MemTable-only test (FLUSH_HIGH), so it isolates the in-memory
+ * serialization path (node_create) from the SST path. If the bug also lives in
+ * the SST write/merge serialization, a flush-variant of this test would catch
+ * that separately.
+ * ===========================================================================*/
+static void test_field_serialization_order(void)
+{
+    int n = 1;
+    printf("\n=== field serialization order independence (regression) ===\n");
+
+    fresh_db_dir();
+    LVSchema schema; build_schema(&schema);
+    LightVec* db = NULL;
+    LVStatus s = lv_open(&db, &schema, DB_DIR, FLUSH_HIGH);
+    if (s != LV_OK || !db) {
+        print_status_code(s);
+        printf("    (skip — open failed)\n");
+        return;
+    }
+
+    /* A single record with UNIQUE values so each predicate isolates it. */
+    const char* KEY     = "order_probe";
+    const uint32_t KLEN = (uint32_t)strlen(KEY);
+    const int64_t  UNIQ_CATEGORY = 7;          /* populate() uses only 0..4   */
+    const double   UNIQ_SCORE    = 12345.0;    /* far above populate()'s <100 */
+    const char*    UNIQ_TAG      = "zebra";    /* not present in TAGS[]       */
+
+    float vec[DIM];
+    for (int d = 0; d < DIM; ++d) vec[d] = lv_rand_f32_range(-1.0f, 1.0f);
+
+    /* THE KEY MOVE: fill fields[] in REVERSE mask order.
+     * Schema mask bits: category=bit0, score=bit1, tag=bit2.
+     * We pass them as [tag, score, category] — i.e. highest bit first. A correct
+     * implementation must serialize by mask bit, not by this array order. */
+    LVMetaField fields[N_FIELDS];
+    memset(fields, 0, sizeof(fields));
+
+    /* fields[0] = tag (bit 2) */
+    strcpy(fields[0].name, "tag");
+    fields[0].type = LV_META_STRING;
+    fields[0].value.str.string = (char*)UNIQ_TAG;
+    fields[0].value.str.len    = (uint32_t)strlen(UNIQ_TAG);
+
+    /* fields[1] = score (bit 1) */
+    strcpy(fields[1].name, "score");
+    fields[1].type = LV_META_FLOAT;
+    fields[1].value.f64 = UNIQ_SCORE;
+
+    /* fields[2] = category (bit 0) */
+    strcpy(fields[2].name, "category");
+    fields[2].type = LV_META_INT;
+    fields[2].value.i64 = UNIQ_CATEGORY;
+
+    LVStatus sp = lv_put(db, KEY, KLEN, KEY, KLEN, vec, LV_METRIC_L2,
+                         N_FIELDS, fields);
+    TEST_START(n++, "put with reverse-order fields returns LV_OK");
+    print_status_code(sp);
+    expect_true(sp == LV_OK, "put with reverse-order fields returns LV_OK");
+
+    if (sp != LV_OK) { lv_close(db); return; }
+
+    LVQueryOption opt; memset(&opt, 0, sizeof(opt));
+    opt.flags = LV_QOPT_NONE;
+
+    /* --- (a) INT field read back correctly: category == 7 -> exactly 1 ------
+     * If serialization used input order, the bytes at the "category slot"
+     * (lowest mask bit, read first) are actually the TAG field, so this
+     * predicate cannot match an int 7 and the count comes back wrong. */
+    {
+        LVQueryResultSet* rs = NULL;
+        LVStatus q = lv_query(db, "category == 7", NULL, &opt, &rs);
+        TEST_START(n++, "reverse-order INT field reads back (category==7 -> 1)");
+        if (q == LV_OK && rs) {
+            printf("    expected=1 got=%u\n", rs->size);
+            expect_true(rs->size == 1,
+                "reverse-order INT field reads back (category==7 -> 1)");
+        } else {
+            print_status_code(q);
+            expect_true(0,
+                "reverse-order INT field reads back (category==7 -> 1)");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
+    /* --- (b) FLOAT field read back correctly: score == 12345.0 -> exactly 1 -- */
+    {
+        LVQueryResultSet* rs = NULL;
+        LVStatus q = lv_query(db, "score > 10000.0", NULL, &opt, &rs);
+        TEST_START(n++, "reverse-order FLOAT field reads back (score>10000 -> 1)");
+        if (q == LV_OK && rs) {
+            printf("    expected=1 got=%u\n", rs->size);
+            expect_true(rs->size == 1,
+                "reverse-order FLOAT field reads back (score>10000 -> 1)");
+        } else {
+            print_status_code(q);
+            expect_true(0,
+                "reverse-order FLOAT field reads back (score>10000 -> 1)");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
+    /* --- (c) STRING field read back correctly: tag == 'zebra' -> exactly 1 --- */
+    {
+        LVQueryResultSet* rs = NULL;
+        LVStatus q = lv_query(db, "tag == 'zebra'", NULL, &opt, &rs);
+        TEST_START(n++, "reverse-order STRING field reads back (tag=='zebra' -> 1)");
+        if (q == LV_OK && rs) {
+            printf("    expected=1 got=%u\n", rs->size);
+            expect_true(rs->size == 1,
+                "reverse-order STRING field reads back (tag=='zebra' -> 1)");
+        } else {
+            print_status_code(q);
+            expect_true(0,
+                "reverse-order STRING field reads back (tag=='zebra' -> 1)");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
+    lv_close(db);
+}
+
+/* ===========================================================================
  * main
  * ===========================================================================*/
 int main(void)
@@ -694,6 +852,7 @@ int main(void)
     test_delete_tombstone();
     test_updates();
     test_filter_string();
+    test_field_serialization_order();
 
     printf("\n========================================\n");
     printf("  Done.\n");
