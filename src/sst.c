@@ -71,7 +71,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
             if (current_node->vector_id != LV_NO_VECTOR_ID) {
                 uint64_t offset = record_start_offset;
-                pwrite(vector_index_fd, &offset, 8, current_node->vector_id * 8);
+                if ((result = pwrite_helper(vector_index_fd, &offset, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
             }
 
             record_count += 1;
@@ -134,7 +134,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                         old_entry.seq, old_entry.vector_id, record_start_offset)) != LV_OK) goto _return;
                     if (old_entry.vector_id != LV_NO_VECTOR_ID) {
                         uint64_t offset = record_start_offset;
-                        pwrite(vector_index_fd, &offset, 8, old_entry.vector_id * 8);
+                        if ((result = pwrite_helper(vector_index_fd, &offset, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
                     }
                     record_read += 1;
                     record_count += 1;
@@ -167,7 +167,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                     current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
                 if (current_node->vector_id != LV_NO_VECTOR_ID) {
                     uint64_t offset = record_start_offset;
-                    pwrite(vector_index_fd, &offset, 8, current_node->vector_id * 8);
+                    if ((result = pwrite_helper(vector_index_fd, &offset, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
                     last_vector_id = current_node->vector_id;
                 }
                 last_seq = current_node->seq;
@@ -193,7 +193,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
                 if (old_entry.vector_id != LV_NO_VECTOR_ID) {
                     uint64_t offset = record_start_offset;
-                    pwrite(vector_index_fd, &offset, 8, old_entry.vector_id * 8);
+                    if ((result = pwrite_helper(vector_index_fd, &offset, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
                 }
 
                 record_read += 1;
@@ -213,7 +213,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 if ((result = sst_indexblockset_append(index_set, current_key_len, current_key, current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
                 if (current_node->vector_id != LV_NO_VECTOR_ID) {
                     uint64_t offset = record_start_offset;
-                    pwrite(vector_index_fd, &offset, 8, current_node->vector_id * 8);
+                    if ((result = pwrite_helper(vector_index_fd, &offset, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
                 }
                 last_seq = current_node->seq;
                 if (current_node->vector_id != LV_NO_VECTOR_ID) {
@@ -242,7 +242,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
             if (current_node->vector_id != LV_NO_VECTOR_ID) {
                 uint64_t offset = record_start_offset;
-                pwrite(vector_index_fd, &offset, 8, current_node->vector_id * 8);
+                if ((result = pwrite_helper(vector_index_fd, &offset, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
             }
             record_count += 1;
             last_seq = current_node->seq;
@@ -260,7 +260,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
             if (old_entry.vector_id != LV_NO_VECTOR_ID) {
                 uint64_t offset = record_start_offset;
-                pwrite(vector_index_fd, &offset, 8, old_entry.vector_id * 8);
+                if ((result = pwrite_helper(vector_index_fd, &offset, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
             }
 
             record_read += 1;
@@ -363,7 +363,7 @@ _return:
     return result;
 }
 
-static LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVSSTIndexBlockEntry* entry, uint64_t* next_offset) {
+LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVSSTIndexBlockEntry* entry, uint64_t* next_offset) {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];

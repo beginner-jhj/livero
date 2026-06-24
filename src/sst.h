@@ -46,6 +46,6 @@ LVStatus sst_query_with_hnsw(const int sst_fd, const int vector_index_fd, const 
 
 LVStatus sst_search_index_block(const int fd, LVSSTIndexBlockEntry* entry, const void* key, const LVKeyLen32_t key_len);
 
-static LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVSSTIndexBlockEntry* entry, uint64_t* next_offset);
+LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVSSTIndexBlockEntry* entry, uint64_t* next_offset);
 
 #endif
