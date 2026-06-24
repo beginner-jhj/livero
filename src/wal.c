@@ -13,7 +13,7 @@ LVStatus wal_append(const int fd, const LVNodeOp op, const LVSeq64_t seq, const 
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
 
-    uint32_t checksum = 0;
+    uint32_t checksum = CRC32_SEED;
 
     // write op
     uint8_t op_to_save = (uint8_t)op;
@@ -160,7 +160,7 @@ _return:
     return result;
 }
 
-LVStatus wal_recover(const int fd, const LVMemTable* table)
+LVStatus wal_recover(const int fd, const LVMemTable* table, LVSeq64_t* next_seq_out, LVVectorId64_t* next_vector_id_out)
 {
     LVStatus result = LV_OK;
     off_t wal_size = lseek(fd, 0, SEEK_END);
@@ -176,6 +176,11 @@ LVStatus wal_recover(const int fd, const LVMemTable* table)
     LVSize32_t saved_field_mask;
     LVSize32_t saved_field_count;
     LVSize32_t saved_field_size;
+
+    LVSeq64_t last_seq = 0;
+    LVVectorId64_t last_vector_id = 0;
+    int saw_any = 0;
+    int saw_vector = 0;
 
     while (current_offset < wal_size)
     {
@@ -234,7 +239,17 @@ LVStatus wal_recover(const int fd, const LVMemTable* table)
         current_offset = lseek(fd, 0, SEEK_CUR);
 
         table_direct_insert(table, reserved_node);
+
+        if (saved_vector_id != LV_NO_VECTOR_ID) {
+            saw_vector = 1;
+            last_vector_id = saved_vector_id;
+        }
+        saw_any = 1;
+        last_seq = saved_seq;
     }
+
+    *next_seq_out = saw_any ? last_seq + 1 : 0;
+    *next_vector_id_out = saw_vector ? last_vector_id + 1 : 0;
 
 _return:
     return result;
@@ -287,7 +302,7 @@ LVStatus wal_read_head(const int fd, uint32_t* checksum, uint8_t* op, LVSeq64_t*
     if (*op == LV_DELETE)
     {
         *value_len = 0;
-        *vector_id = (uint64_t)-1;
+        *vector_id = LV_NO_VECTOR_ID;
         *field_mask = 0;
         *field_count = 0;
         *field_size = 0;
@@ -372,8 +387,8 @@ LVStatus wal_read_tail(const int fd, uint32_t* checksum, void* node_tail_ptr, LV
 
     node_tail_ptr = (char*)node_tail_ptr + value_len;
 
-    if((result = read_helper(fd, field_disk_buffer, field_size)) != LV_OK) goto _return;
-    *checksum = crc_calc(field_disk_buffer,field_size, *checksum);
+    if ((result = read_helper(fd, field_disk_buffer, field_size)) != LV_OK) goto _return;
+    *checksum = crc_calc(field_disk_buffer, field_size, *checksum);
     schema_field_disk_to_memory(field_disk_buffer, field_size, node_tail_ptr);
 
     if ((result = read_helper(fd, BUF_32, 4)) != LV_OK)
