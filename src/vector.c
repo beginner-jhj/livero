@@ -194,71 +194,49 @@ void destroy_hnsw(LVHnsw* hnsw) {
     }
 }
 
-LVStatus vector_write_header(const int fd, const LVVectorType vector_type, const LVDim32_t dim, const int sync)
-{
-    LVStatus result = LV_OK;
-
-    uint8_t BUF_32[4];
-
-    // write magic
-    if ((result = write_helper(fd, LV_MAGIC_VECTORS, LV_MAGIC_SIZE)) != LV_OK)
-    {
-        goto _return;
-    }
-
-    // write version
-    const uint32_t version = (uint32_t)LV_FORMAT_VERSION;
-    put_fixed_32(BUF_32, version);
-
-    if ((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
-    {
-        goto _return;
-    }
-
-    // write dim
-    put_fixed_32(BUF_32, dim);
-    if ((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
-    {
-        goto _return;
-    }
-
-    // write type
-    const uint8_t type = (uint8_t)vector_type;
-    if ((result = write_helper(fd, &type, 1)) != LV_OK)
-    {
-        goto _return;
-    }
-
-    write_helper_flush(fd, sync);
-
-_return:
-    return result;
-}
-
-LVStatus vector_write_f32_vector(const int fd, const LVDim32_t dim, const float* vector)
+LVStatus vector_write_f32_vector(const int fd,const LVVectorId64_t vector_id, const LVDim32_t dim, const float* vector)
 {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
+    uint64_t offset = vector_id*dim*4;
     for (int i = 0; i < dim; ++i)
     {
-        put_fixed_32(BUF_32, vector[i]);
-        if ((result = write_helper(fd, BUF_32, sizeof(float))) != LV_OK)
+        uint32_t bits;
+        memcpy(&bits, &vector[i], sizeof(uint32_t));
+        put_fixed_32(BUF_32, bits);
+        if ((result = pwrite_helper(fd, BUF_32, 4, offset)) != LV_OK)
         {
             return result;
         }
+        offset += 4;
     }
-    write_helper_flush(fd, 1);
+    result = write_helper_flush(fd, 1);
     return result;
 }
 
-LVStatus vector_write_i8_vector(const int fd, const LVDim32_t dim, const int8_t* vector)
+LVStatus vector_read_f32_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, float* vector_out){
+    LVStatus result = LV_OK;
+    uint8_t BUF_32[4];
+    uint64_t offset = vector_id*dim*4;
+    for(int i=0; i<dim; ++i){
+        if((result = pread_helper(fd, BUF_32, 4, offset)) != LV_OK) return result;
+        vector_out[i] = get_fixed_32(BUF_32);
+        offset += 4;
+    }
+    return result;
+}
+
+LVStatus vector_write_i8_vector(const int fd,const LVVectorId64_t vector_id, const LVDim32_t dim, const int8_t* vector)
 {
     LVStatus result = LV_OK;
-    result = write_helper(fd, vector, dim);
-    if (result == LV_OK)
-    {
-        result = write_helper_flush(fd, 1);
-    }
+    if((result = pwrite_helper(fd, vector, dim, vector_id*dim)) != LV_OK) return result;
+    result = write_helper_flush(fd,1);
+    return result;
+}
+
+LVStatus vector_read_i8_vector(const int fd, const LVVectorId64_t vector_id,const LVDim32_t dim, int8_t* vector_out){
+    LVStatus result = LV_OK;
+    result = pread_helper(fd, vector_out, dim, vector_id*dim);
     return result;
 }
 
@@ -1013,6 +991,11 @@ LVStatus vector_hnsw_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t id, c
     idmap->map[id] = ptr;
     idmap->size += 1;
     return LV_OK;
+}
+
+void vector_hnsw_link_memtable_node(LVHnsw* hnsw, const LVVectorId64_t id, const LVNode* memtable_node){
+    LVHnswNode* hnsw_node = hnsw->id_node_map->map[id];
+    hnsw_node->memtable_node = memtable_node;
 }
 
 void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t id) {

@@ -139,9 +139,10 @@ static int cmp_i32_entry(const void* a, const void* b)
 LVHnsw* create_hnsw(const LVVectorType vector_type, const LVDim32_t dim);
 void destroy_hnsw(LVHnsw* hnsw);
 
-LVStatus vector_write_header(const int fd, const LVVectorType vector_type, const LVDim32_t dim, const int sync);
-LVStatus vector_write_f32_vector(const int fd, const LVDim32_t dim, const float* vector);
-LVStatus vector_write_i8_vector(const int fd, const LVDim32_t dim, const int8_t* vector);
+LVStatus vector_write_f32_vector(const int fd,const LVVectorId64_t vector_id, const LVDim32_t dim, const float* vector);
+LVStatus vector_read_f32_vector(const int fd, const LVVectorId64_t vector_id,const LVDim32_t dim, float* vector_out);
+LVStatus vector_write_i8_vector(const int fd,const LVVectorId64_t vector_id, const LVDim32_t dim, const int8_t* vector);
+LVStatus vector_read_i8_vector(const int fd, const LVVectorId64_t vector_id,const LVDim32_t dim, int8_t* vector_out);
 
 int32_t vector_i8_l2_sq(const int8_t* a, const int8_t* b, const LVDim32_t dim);
 float vector_f32_l2_sq(const float* a, const float* b, const LVDim32_t dim);
@@ -179,6 +180,7 @@ void vector_heap_pop(LVHnswHeap* heap, LVHnswEntry* pop);
 
 LVStatus vector_hnsw_idmap_append(LVHnswIDMap* map, const LVVectorId64_t id, const void* ptr);
 
+void vector_hnsw_link_memtable_node(LVHnsw* hnsw, const LVVectorId64_t id, const LVNode* memtable_node);
 void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t id);
 void vector_hnsw_mark_deleted(LVHnsw* hnsw, const LVVectorId64_t id);
 void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_id);
