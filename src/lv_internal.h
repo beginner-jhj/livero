@@ -142,6 +142,7 @@ typedef struct LVQueryValue
     LVValueLen32_t value_len;
     float vector_score;
     LVOrdbyValue ordbyvalue;
+    int is_tombstone;
 } LVQueryValue;
 
 typedef struct LVQVSet
@@ -151,7 +152,7 @@ typedef struct LVQVSet
     LVSize32_t capacity;
 } LVQVSet;
 
-typedef LVStatus(*LVQVSetAppendFn)(LVQVSet*, const LVSeq64_t, const LVVectorId64_t, const void*, const LVKeyLen32_t, const void*, const LVValueLen32_t, const float, const LVOrdbyValue);
+typedef LVStatus(*LVQVSetAppendFn)(LVQVSet*, const LVSeq64_t, const LVVectorId64_t, const void*, const LVKeyLen32_t, const void*, const LVValueLen32_t, const float, const LVOrdbyValue, const int);
 
 typedef struct LVQueryResult {
     LVSeq64_t node_seq;

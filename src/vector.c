@@ -1154,7 +1154,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                                 break;
                             }
 
-                            if ((result = query_ctx->memtable_qvset_append_fn(query_ctx->memtable_qvset, memtable_node->seq, neighbor_id, node_access_key(memtable_node), memtable_node->key_len, node_access_value(memtable_node), memtable_node->value_len, score, ordbyvalue)) != LV_OK) goto _return;
+                            if ((result = query_ctx->memtable_qvset_append_fn(query_ctx->memtable_qvset, memtable_node->seq, neighbor_id, node_access_key(memtable_node), memtable_node->key_len, node_access_value(memtable_node), memtable_node->value_len, score, ordbyvalue, neighbor->deleted)) != LV_OK) goto _return;
 
                             if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
                             {
