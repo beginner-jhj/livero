@@ -40,11 +40,11 @@ struct LightVec
 };
 
 static LVStatus lv_check_db_corruption_internal(const LightVec* db);
-static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const LVLevel8_t level, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVVectorMetric vector_metric, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer);
+static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVVectorMetric vector_metric, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer);
 static LVQVSet* lv_create_qvset_internal(void);
 static LVStatus lv_flush_internal(LightVec* db);
-static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue);
-static LVStatus lv_qvset_light_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue);
+static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone);
+static LVStatus lv_qvset_light_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone);
 static void lv_destory_qvset_internal(LVQVSet* qvset);
 static void lv_light_destory_qvset_internal(LVQVSet* qvset);
 static LVStatus lv_merge_qvsets_internal(LVQVSet* result_qvset, const LVQVSet* memtable_qvset, const LVQVSet* sst_qvset);
@@ -74,8 +74,10 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
     LV_DB->flush_threshold = flush_threshold > 0 ? flush_threshold : 1024;
     LV_DB->magic = LV_MAGIC;
 
-    LV_DB->next_seq = 0;
-    LV_DB->next_vector_id = 0;
+    LVSeq64_t next_seq_from_wal = 0;
+    LVVectorId64_t next_vector_id_from_wal = 0;
+    LVSeq64_t next_seq_from_sst = 0;
+    LVVectorId64_t next_vector_id_from_sst = 0;
 
     // set DB default save path here
     if ((result = path_join(LV_DB->path, LV_PATH_MAX, path, "LV")) != LV_OK)
@@ -113,11 +115,13 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
         if (!LV_SCHEMA)
         {
             flag = 1;
+            result = LV_ERR_OOM;
             goto cleanup;
         }
         // read saved schema
         schema_fd = open(schema_path, O_RDONLY);
-        if ((result = schema_read(schema_fd, LV_SCHEMA)) != LV_OK)
+        result = schema_read(schema_fd, LV_SCHEMA);
+        if (result != LV_OK)
         {
             flag = 1;
             goto cleanup;
@@ -138,6 +142,7 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
         if (!LV_SCHEMA)
         {
             flag = 1;
+            result = LV_ERR_OOM;
             goto cleanup;
         }
     }
@@ -146,10 +151,11 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
     LV_DB->schema = LV_SCHEMA;
 
     // create a Memory Table
-    LV_MTABLE = create_table(LV_DB->next_seq);
+    LV_MTABLE = create_table();
     if (!LV_MTABLE)
     {
         flag = 1;
+        result = LV_ERR_OOM;
         goto cleanup;
     }
 
@@ -171,9 +177,9 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
 
     if (wal_exists)
     {
-        wal_fd = open(wal_path, O_RDWR | O_CREAT);
-
-        if ((result = wal_recover(wal_fd, LV_MTABLE)) != LV_OK)
+        wal_fd = open(wal_path, O_RDWR | O_CREAT, 0644);
+        result = wal_recover(wal_fd, LV_MTABLE, &next_seq_from_wal, &next_vector_id_from_wal);
+        if (result != LV_OK)
         {
             flag = 1;
             goto cleanup;
@@ -198,6 +204,10 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
     const int sst_exist = access(sst_path, F_OK) == 0;
     if (sst_exist) {
         sst_fd = open(sst_path, O_RDONLY);
+        if ((result = sst_read_footer(sst_fd, NULL, NULL, &next_seq_from_sst, &next_vector_id_from_sst)) != LV_OK) {
+            flag = 1;
+            goto cleanup;
+        }
     }
 
     LV_DB->sst_fd = sst_fd;
@@ -262,7 +272,6 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
 
     else
     {
-        vector_fd = open(vectors_path, O_RDWR | O_CREAT, 0644);
         if ((result = vector_write_header(vector_fd, schema->vector_type, schema->vector_dim, 1)) != LV_OK)
         {
             flag = 1;
@@ -274,6 +283,9 @@ LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const 
     LV_DB->vector_index_fd = vector_index_fd;
     LV_DB->hnsw_index_fd = hnsw_index_fd;
     LV_DB->hnsw_graph_fd = hnsw_graph_fd;
+
+    LV_DB->next_seq = next_seq_from_wal > next_seq_from_sst ? next_seq_from_wal : next_seq_from_sst;
+    LV_DB->next_vector_id = next_vector_id_from_wal > next_vector_id_from_sst ? next_vector_id_from_wal : next_vector_id_from_sst;
 
     *db = LV_DB;
 
@@ -293,25 +305,23 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
 {
     LVStatus result = LV_OK;
 
-    LVSize32_t field_size = schema_field_serialized_size(fields, field_count);
-    char memory_field_buffer[field_size];
 
     // check db is properly initialized
-    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) return result;
 
     // check field count is valid
 
     if (field_count > db->schema->field_count)
     {
         result = LV_ERR_INVALID;
-        goto _return;
+        return result;
     }
 
     // check key length and value length are valid
 
     if (key_len == 0 || key_len > LV_MAX_KEY_LEN || value_len > LV_MAX_VALUE_LEN) {
         result = LV_ERR_INVALID;
-        goto _return;
+        return result;
     }
 
     uint32_t field_mask = 0;
@@ -323,7 +333,7 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
         if (!search_result)
         { // check field name exists
             result = LV_ERR_INVALID;
-            goto _return;
+            return result;
         }
         else
         {
@@ -331,21 +341,21 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
         }
     }
 
-    schema_serialize_field(memory_field_buffer, fields, field_count, 0);
-
-    LVLevel8_t new_level = 1;
-
-    while ((xorshift() % 100 <= LV_SKIPLIST_P) && new_level < LV_SKIPLIST_MAX_LEVEL)
-    {
-        ++new_level;
-    }
-
     const LVSeq64_t current_seq = db->next_seq;
     const LVSeq64_t current_vector_id = db->next_vector_id;
 
-    result = lv_put_internal(db, LV_PUT, current_seq, current_vector_id, new_level, key, key_len, value, value_len, vector, vector_metric, field_mask, field_count, field_size, memory_field_buffer);
+    LVSize32_t field_size = schema_field_serialized_size(fields, field_count);
+    if (field_size > 0) {
+        char memory_field_buffer[field_size];
 
-_return:
+        schema_serialize_field(db->schema, memory_field_buffer, fields, field_count, 0);
+
+        result = lv_put_internal(db, LV_PUT, current_seq, current_vector_id, key, key_len, value, value_len, vector, vector_metric, field_mask, field_count, field_size, memory_field_buffer);
+    }
+    else {
+        result = lv_put_internal(db, LV_PUT, current_seq, current_vector_id, key, key_len, value, value_len, vector, vector_metric, 0, 0, 0, NULL);
+    }
+
     return result;
 }
 
@@ -355,31 +365,70 @@ LVStatus lv_update_value(LightVec* db, const void* key, const LVKeyLen32_t key_l
     if ((result = lv_check_db_corruption_internal(db)) != LV_OK) return result;
 
     // check key length and value length are valid
-
     if (key_len == 0 || key_len > LV_MAX_KEY_LEN || value_len > LV_MAX_VALUE_LEN) {
         result = LV_ERR_INVALID;
         return result;
     }
 
-    printf("    [uv] key='%.*s' key_len=%u\n", (int)key_len, (char*)key, key_len);
-    LVNode* searched_node = table_search(db->memtable, key, key_len);
-    printf("    [uv] found=%p\n", (void*)searched_node);
+    LVVectorId64_t found_vector_id = LV_NO_VECTOR_ID;
+    LVCount32_t found_field_mask = 0;
+    LVCount32_t found_field_count = 0;
+    LVSize32_t found_field_size = 0;
 
-    if (!searched_node) {
+    LVNode* mt_node = table_search(db->memtable, key, key_len);
+
+    if (mt_node) {
+        if (mt_node->op == LV_DELETE) {
+            result = LV_ERR_NOT_FOUND;
+            return result;
+        }
+        found_vector_id = mt_node->vector_id;
+        found_field_mask = mt_node->field_mask;
+        found_field_count = mt_node->field_count;
+        found_field_size = node_field_size(mt_node);
+        result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, value, value_len, NULL, LV_METRIC_L2, found_field_mask, found_field_count, found_field_size, node_access_field(mt_node, 0));
+        return result;
+    }
+
+    else if (db->sst_fd < 0) {
         result = LV_ERR_NOT_FOUND;
         return result;
     }
 
-    const LVSeq64_t current_seq = db->next_seq;
-    const LVSize32_t field_size = node_field_size(searched_node);
+    else {
+        LVSSTIndexBlockEntry entry;
+        const LVStatus sst_search_result = sst_search_index_block(db->sst_fd, &entry, key, key_len);
 
-    char disk_field_buffer[field_size];
+        if (sst_search_result == LV_OK) {
+            uint64_t record_head_size = 0;
+            if ((result = sst_read_record_head(db->sst_fd, entry.offset, NULL, NULL, NULL, NULL, NULL, &found_vector_id, &found_field_mask, &found_field_count, &found_field_size, &record_head_size)) != LV_OK) {
+                free(entry.key);
+                return result;
+            };
+            if (found_field_size > 0) {
+                char memory_field_buffer[found_field_size];
+                if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, 0, NULL, 0, memory_field_buffer, found_field_size, NULL)) != LV_OK) {
+                    free(entry.key);
+                    return result;
+                };
 
-    schema_field_memmory_to_disk(node_access_field(searched_node, 0), field_size, disk_field_buffer);
+                result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, value, value_len, NULL, LV_METRIC_L2, found_field_mask, found_field_count, found_field_size, memory_field_buffer);
+            }
+            else {
+                result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, value, value_len, NULL, LV_METRIC_L2, 0, 0, 0, NULL);
+            }
+            free(entry.key);
+            return result;
 
-    result = lv_put_internal(db, LV_UPDATE, current_seq, searched_node->vector_id, searched_node->level, key, key_len, value, value_len, NULL, LV_METRIC_L2, searched_node->field_mask, searched_node->field_count, field_size, node_access_field(searched_node, 0));
+        }
+        else {
+            result = sst_search_result;
+            //no need to free entry key
+            return result;
+        }
+    }
 
-    return result;
+    return LV_ERR_NOT_FOUND;
 }
 
 LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* vector, const LVVectorMetric vector_metric) {
@@ -392,24 +441,71 @@ LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_
         return result;
     }
 
-    LVNode* searched_node = table_search(db->memtable, key, key_len);
+    LVVectorId64_t found_vector_id = LV_NO_VECTOR_ID;
+    LVCount32_t found_field_mask = 0;
+    LVCount32_t found_field_count = 0;
+    LVSize32_t found_field_size = 0;
+    LVValueLen32_t found_value_len = 0;
 
-    if (!searched_node) {
+    LVNode* mt_node = table_search(db->memtable, key, key_len);
+
+    if (mt_node) {
+        if (mt_node->op == LV_DELETE) {
+            result = LV_ERR_NOT_FOUND;
+            return result;
+        }
+
+        found_vector_id = mt_node->vector_id;
+        found_field_mask = mt_node->field_mask;
+        found_field_count = mt_node->field_count;
+        found_field_size = node_field_size(mt_node);
+        found_value_len = mt_node->value_len;
+
+        const LVSeq64_t current_seq = db->next_seq;
+        const LVSeq64_t current_vector_id = db->next_vector_id;
+
+        if ((result = lv_put_internal(db, LV_UPDATE, current_seq, current_vector_id, key, key_len,
+            node_access_value(mt_node), found_value_len, vector, vector_metric,
+            found_field_mask, found_field_count, found_field_size, node_access_field(mt_node, 0))) != LV_OK) return result;
+    }
+    else if (db->sst_fd < 0) {
         result = LV_ERR_NOT_FOUND;
         return result;
     }
+    else {
+        LVSSTIndexBlockEntry entry;
+        const LVStatus sst_search_result = sst_search_index_block(db->sst_fd, &entry, key, key_len);
 
-    const LVSeq64_t current_seq = db->next_seq;
-    const LVSeq64_t current_vector_id = db->next_vector_id;
+        if (sst_search_result != LV_OK) {
+            result = sst_search_result;
+            return result;
+        }
 
-    const LVSize32_t field_size = node_field_size(searched_node);
-    char disk_field_buffer[field_size];
-    schema_field_memmory_to_disk(node_access_field(searched_node, 0), field_size, disk_field_buffer);
+        uint64_t record_head_size = 0;
+        if ((result = sst_read_record_head(db->sst_fd, entry.offset, NULL, NULL, NULL, NULL, &found_value_len, &found_vector_id, &found_field_mask, &found_field_count, &found_field_size, &record_head_size)) != LV_OK) {
+            free(entry.key);
+            return result;
+        }
 
-    if ((result = lv_put_internal(db, LV_UPDATE, current_seq, current_vector_id, searched_node->level, key, key_len, node_access_value(searched_node), searched_node->value_len, vector, vector_metric, searched_node->field_mask, searched_node->field_count, field_size, node_access_field(searched_node, 0))) != LV_OK) return result;
+        char found_value[found_value_len];
+        if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, 0, found_value, found_value_len, NULL, found_field_size, NULL)) != LV_OK) {
+            free(entry.key);
+            return result;
+        }
 
-    if (searched_node->vector_id != LV_NO_VECTOR_ID) {
-        vector_hnsw_mark_updated(db->hnsw, searched_node->vector_id);
+        if ((result = lv_put_internal(db, LV_UPDATE, db->next_seq, db->next_vector_id, key, key_len,
+            found_value, found_value_len, vector, vector_metric,
+            found_field_mask, found_field_count, found_field_size, NULL)) != LV_OK) {
+            free(entry.key);
+            return result;
+        }
+
+        found_vector_id = entry.vector_id;
+        free(entry.key);
+    }
+
+    if (found_vector_id != LV_NO_VECTOR_ID) {
+        vector_hnsw_mark_updated(db->hnsw, found_vector_id);
     }
 
     return result;
@@ -427,37 +523,110 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
     int update_fields_offsets[field_count];
     uint32_t field_mask_to_update = 0;
 
-    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) return result;
+    LVValueLen32_t found_value_len = 0;
+    LVCount32_t found_field_mask = 0;
+    LVCount32_t found_field_count = 0;
+    LVSize32_t found_field_size = 0;
+    LVVectorId64_t found_vector_id = LV_NO_VECTOR_ID;
+
+    void* found_value = NULL;
+    void* found_field = NULL;
+    void* new_field = NULL;
+    LVSize32_t* new_field_accrued_offsets = NULL;
+    LVSize32_t new_field_size = 0;
+    LVCount32_t new_field_mask = 0;
+    LVCount32_t new_field_count = 0;
+
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto cleanup;
 
     if (key_len == 0 || key_len > LV_MAX_KEY_LEN || field_count > db->schema->field_count || (field_count > 0 && fields == NULL)) {
         result = LV_ERR_INVALID;
-        return result;
+        goto cleanup;
     }
 
+    LVNode* mt_node = table_search(db->memtable, key, key_len);
 
-    LVNode* searched_node = table_search(db->memtable, key, key_len);
+    if (mt_node) {
+        if (mt_node->op == LV_DELETE) {
+            result = LV_ERR_NOT_FOUND;
+            goto cleanup;
+        }
 
-    if (!searched_node) {
+        found_value_len = mt_node->value_len;
+        found_field_mask = mt_node->field_mask;
+        found_field_count = mt_node->field_count;
+        found_field_size = node_field_size(mt_node);
+        found_vector_id = mt_node->vector_id;
+
+        found_value = malloc(found_value_len);
+        if (!found_value) {
+            result = LV_ERR_OOM;
+            goto cleanup;
+        }
+        memcpy(found_value, node_access_value(mt_node), found_value_len);
+
+        if (found_field_count > 0) {
+            found_field = malloc(found_field_size);
+            if (!found_field) {
+                result = LV_ERR_OOM;
+                goto cleanup;
+            }
+            memcpy(found_field, node_access_field(mt_node, 0), found_field_size);
+        }
+    }
+
+    else if (db->sst_fd < 0) {
         result = LV_ERR_NOT_FOUND;
-        return result;
+        goto cleanup;
     }
 
-    LVSize32_t new_field_size = node_field_size(searched_node);
+    else {
+        LVSSTIndexBlockEntry entry;
+        LVStatus sst_search_status = sst_search_index_block(db->sst_fd, &entry, key, key_len);
+
+        if (sst_search_status != LV_OK) {
+            result = sst_search_status;
+            goto cleanup;
+        }
+
+        uint64_t record_head_size = 0;
+        if ((result = sst_read_record_head(db->sst_fd, entry.offset, NULL, NULL, NULL, NULL, &found_value_len, &found_vector_id, &found_field_mask, &found_field_count, &found_field_size, &record_head_size)) != LV_OK) goto cleanup;
+
+        found_value = malloc(found_value_len);
+        if (!found_value) {
+            result = LV_ERR_OOM;
+            goto cleanup;
+        }
+
+        if (found_field_count > 0) {
+            found_field = malloc(found_field_size);
+            if (!found_field) {
+                result = LV_ERR_OOM;
+                goto cleanup;
+            }
+        }
+
+        if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, 0, found_value, found_value_len, found_field, found_field_size, NULL)) != LV_OK) goto cleanup;
+    }
+
+    new_field_size = found_field_size;
 
     for (int offset = 0; offset < field_count; ++offset) {
         const LVMetaField* current_field = fields + offset;
+
         const LVMetaFieldHash* searched_hash = schema_search_field_hash(db->schema->field_hashes, current_field->name, strlen(current_field->name));
         if (!searched_hash) {
             result = LV_ERR_INVALID;
-            return result;
+            goto cleanup;
         }
 
         if (searched_hash->type != current_field->type) {
             result = LV_ERR_INVALID;
-            return result;
+            goto cleanup;
         }
 
-        if (!(searched_node->field_mask & searched_hash->mask)) {
+        //new added field
+        if (!(found_field_mask & searched_hash->mask)) {
             new_fields_offsets[field_count_to_add] = offset;
             new_field_masks[field_count_to_add] = searched_hash->mask;
             field_count_to_add += 1;
@@ -482,51 +651,98 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
 
             // string update may change length; int/float are fixed 8 bytes so no adjustment.
             if (current_field->type == LV_META_STRING) {
-                // find the old string's length stored in the existing node,
-                // then swap old_len for the new len in new_field_size.
-                int old_number = node_field_number(searched_node, searched_hash->mask);
-                char* old_ptr = (char*)node_access_field(searched_node, old_number);
-                old_ptr += sizeof(uint8_t);            // skip the 1-byte type
+                int old_number = node_field_number_of_mask(found_field_mask, searched_hash->mask);
+                char* old_field_ptr = (char*)node_field_buffer_access(found_field, old_number);
+                old_field_ptr += sizeof(uint8_t);
                 uint32_t old_len = 0;
-                memcpy(&old_len, old_ptr, sizeof(uint32_t));
+                memcpy(&old_len, old_field_ptr, sizeof(uint32_t));
 
-                new_field_size -= old_len;             // remove old string bytes
-                new_field_size += current_field->value.str.len;  // add new string bytes
+                new_field_size -= old_len;
+                new_field_size += current_field->value.str.len;
+
             }
+
         }
     }
 
-    LVNode* reserved_node = node_reserve(db->memtable->arena, searched_node->level, searched_node->key_len, searched_node->value_len, new_field_size);
-
-    if (!reserved_node) {
-        result = LV_ERR_FULL;
-        return result;
+    new_field = malloc(new_field_size);
+    if (!new_field) {
+        result = LV_ERR_OOM;
+        goto cleanup;
     }
 
-    reserved_node->type = LV_NODE_DATA;
-    reserved_node->seq = db->next_seq;
-    reserved_node->op = LV_UPDATE;
-    reserved_node->level = searched_node->level;
-    reserved_node->key_len = searched_node->key_len;
-    reserved_node->value_len = searched_node->value_len;
-    reserved_node->field_mask = searched_node->field_mask | field_mask_to_add;
-    reserved_node->field_count = searched_node->field_count + field_count_to_add;
-    reserved_node->vector_id = searched_node->vector_id;
+    new_field_mask = found_field_mask | field_mask_to_add;
+    new_field_count = found_field_count + field_count_to_add;
 
-    memcpy(reserved_node->levels, searched_node->levels, searched_node->level * sizeof(LVNode*));
-    memcpy(node_access_key(reserved_node), node_access_key(searched_node), searched_node->key_len);
-    memcpy(node_access_value(reserved_node), node_access_value(searched_node), searched_node->value_len);
+    new_field_accrued_offsets = (LVSize32_t*)malloc(new_field_count * sizeof(LVSize32_t));
+    if (!new_field_accrued_offsets) {
+        result = LV_ERR_OOM;
+        goto cleanup;
+    }
 
-    LVSize32_t update_done_count = 0;
-    for (int i = 0; i < searched_node->field_count; ++i) {
+    LVCount32_t upd_cnt = 0;
+    LVCount32_t new_cnt = 0;
+    LVSize32_t acc_offset = 0;
+    for (int new_field_number = 0; new_field_number < new_field_count; ++new_field_number) {
+        uint32_t current_field_mask = node_field_number_to_mask(new_field_mask, new_field_number); // field mask is always same.
+        LVMetaType current_type = LV_META_FLOAT;
+        uint32_t current_str_len = 0;
 
-        uint32_t current_field_mask = node_field_number_to_mask(searched_node, i);
-        int prev_field_number = node_field_number(searched_node, current_field_mask);
-        char* prev_field_ptr = (char*)node_access_field(searched_node, prev_field_number);
+        if (current_field_mask & field_mask_to_update) {
+            LVMetaField* upd_field = fields + update_fields_offsets[upd_cnt];
 
-        int new_field_number = node_field_number(reserved_node, current_field_mask);
-        char* new_field_ptr = (char*)node_access_field(reserved_node, new_field_number);
+            current_type = upd_field->type;
+            if (current_type == LV_META_STRING) {
+                current_str_len = upd_field->value.str.len;
+            }
+            ++upd_cnt;
+        }
 
+        else if (current_field_mask & field_mask_to_add) {
+            LVMetaField* new_field = fields + new_fields_offsets[new_cnt];
+
+            current_type = new_field->type;
+            if (current_type == LV_META_STRING) {
+                current_str_len = new_field->value.str.len;
+            }
+            ++new_cnt;
+        }
+
+        else {
+            int prev_field_number = node_field_number_of_mask(found_field_mask, current_field_mask);
+            char* prev_field_ptr = node_field_buffer_access(found_field, prev_field_number);
+
+            uint8_t saved_type;
+            memcpy(&saved_type, prev_field_ptr, sizeof(uint8_t));
+            current_type = (LVMetaType)saved_type;
+            prev_field_ptr += sizeof(uint8_t);
+            if (current_type == LV_META_STRING) {
+                memcpy(&current_str_len, prev_field_ptr, sizeof(uint32_t));
+            }
+        }
+
+        new_field_accrued_offsets[new_field_number] = acc_offset;
+
+        if (current_type == LV_META_STRING) {
+            acc_offset += sizeof(uint8_t) + sizeof(uint32_t) + current_str_len;
+        }
+        else if (current_type == LV_META_FLOAT) {
+            acc_offset += sizeof(uint8_t) + sizeof(double);
+        }
+        else {
+            acc_offset += sizeof(uint8_t) + sizeof(int64_t);
+        }
+
+    }
+
+    LVCount32_t update_done_count = 0;
+    for (int i = 0; i < found_field_count; ++i) {
+        uint32_t current_field_mask = node_field_number_to_mask(new_field_mask, i);
+        int prev_field_number = node_field_number_of_mask(found_field_mask, current_field_mask);
+        char* prev_field_ptr = (char*)node_field_buffer_access(found_field, prev_field_number);
+
+        int new_field_number = node_field_number_of_mask(new_field_mask, current_field_mask);
+        char* new_field_ptr = (char*)new_field + new_field_accrued_offsets[new_field_number];
 
         if (current_field_mask & field_mask_to_update && update_done_count < field_count_to_update) {
             LVMetaField* update_field_data = fields + update_fields_offsets[update_done_count];
@@ -578,13 +794,11 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
                 memcpy(new_field_ptr, prev_field_ptr, sizeof(int64_t));
             }
         }
-
-
     }
 
     for (int i = 0; i < field_count_to_add; ++i) {
-        int field_number = node_field_number(reserved_node, new_field_masks[i]);
-        char* field_ptr = (char*)node_access_field(reserved_node, field_number);
+        int field_number = node_field_number_of_mask(new_field_mask, new_field_masks[i]);
+        char* field_ptr = (char*)new_field + new_field_accrued_offsets[field_number];
         LVMetaField* new_field_data = fields + new_fields_offsets[i];
 
         uint8_t type_to_save = (uint8_t)new_field_data->type;
@@ -604,18 +818,13 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
         }
     }
 
-    char disk_field_buffer[new_field_size];
-    schema_field_memmory_to_disk(node_access_field(reserved_node, 0), new_field_size, disk_field_buffer);
+    result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, found_value, found_value_len, NULL, LV_METRIC_L2, new_field_mask, new_field_count, new_field_size, new_field);
 
-    if ((result = wal_append(db->wal_fd, LV_UPDATE, reserved_node->seq, reserved_node->level, reserved_node->key_len, node_access_key(reserved_node), reserved_node->value_len, node_access_value(reserved_node), reserved_node->vector_id, reserved_node->field_mask, reserved_node->field_count, new_field_size, disk_field_buffer)) != LV_OK) return result;
-
-    table_direct_insert(db->memtable, reserved_node);
-
-    db->next_seq += 1;
-
-    if (db->memtable->node_count >= db->flush_threshold) {
-        result = lv_flush_internal(db);
-    }
+cleanup:
+    free(found_value);
+    free(found_field);
+    free(new_field);
+    free(new_field_accrued_offsets);
 
     return result;
 }
@@ -625,21 +834,37 @@ LVStatus lv_delete(LightVec* db, const void* key, const LVKeyLen32_t key_len) {
 
     if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
 
+    LVVectorId64_t found_vector_id = LV_NO_VECTOR_ID;
 
-    LVNode* search_result = table_search(db->memtable, key, key_len);
+    LVNode* mt_node = table_search(db->memtable, key, key_len);
 
-    if (!search_result) {
+    if (mt_node) {
+        found_vector_id = mt_node->vector_id;
+    }
+
+    else if (db->sst_fd < 0) {
         result = LV_ERR_NOT_FOUND;
         goto _return;
     }
 
-    const LVSeq64_t current_seq = db->next_seq;
+    else if (db->sst_fd >= 0) {
+        LVSSTIndexBlockEntry entry;
+        LVStatus sst_search_result = sst_search_index_block(db->sst_fd, &entry, key, key_len);
 
-    if ((result = lv_put_internal(db, LV_DELETE, current_seq, search_result->vector_id, search_result->level, node_access_key(search_result), search_result->key_len, NULL, 0, NULL, LV_METRIC_L2, 0, 0, 0, NULL)) != LV_OK) goto _return;
+        if (sst_search_result == LV_OK) {
+            found_vector_id = entry.vector_id;
+            free(entry.key);
+        }
+        else {
+            result = sst_search_result; //LV_ERR_NOT_FOUND or something else
+            goto _return;
+        }
+    }
 
+    if ((result = lv_put_internal(db, LV_DELETE, db->next_seq, LV_NO_VECTOR_ID, key, key_len, NULL, 0, NULL, LV_METRIC_L2, 0, 0, 0, NULL)) != LV_OK) goto _return;
 
-    if (search_result->vector_id != LV_NO_VECTOR_ID) {
-        vector_hnsw_mark_deleted(db->hnsw, search_result->vector_id);
+    if (found_vector_id != LV_NO_VECTOR_ID) {
+        vector_hnsw_mark_deleted(db->hnsw, found_vector_id);
     }
 _return:
     return result;
@@ -781,6 +1006,7 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         if (db->sst_fd >= 0) {
             if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto _return;
         }
+
         if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
     }
 
@@ -831,11 +1057,8 @@ static LVStatus lv_check_db_corruption_internal(const LightVec* db) {
     return db->magic == LV_MAGIC ? LV_OK : LV_ERR_CORRUPT;
 }
 
-static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const LVLevel8_t level, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVVectorMetric vector_metric, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer) {
+static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVVectorMetric vector_metric, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer) {
     LVStatus result = LV_OK;
-
-    char wal_field_buffer[field_size];
-    schema_field_memmory_to_disk(memory_field_buffer, field_size, wal_field_buffer);
 
     // append to vectors.lv and hnsw
     if (vector)
@@ -845,11 +1068,11 @@ static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t
             const float* f32_vector = (float*)vector;
             if ((result = vector_write_f32_vector(db->vector_fd, db->schema->vector_dim, f32_vector)) != LV_OK)
             {
-                goto _return;
+                return result;
             }
             if ((result = vector_hnsw_f32_insert(db->hnsw, current_vector_id, f32_vector, vector_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot)) != LV_OK)
             {
-                goto _return;
+                return result;
             }
         }
         else
@@ -857,11 +1080,11 @@ static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t
             const int8_t* i8_vector = (int8_t*)vector;
             if ((result = vector_write_i8_vector(db->vector_fd, db->schema->vector_dim, i8_vector)) != LV_OK)
             {
-                goto _return;
+                return result;
             }
             if ((result = vector_hnsw_i8_insert(db->hnsw, current_vector_id, i8_vector, vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK)
             {
-                goto _return;
+                return result;
             }
         }
 
@@ -884,21 +1107,39 @@ static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t
         VALUE_LEN = 0;
     }
 
+    LVLevel8_t new_level = 1;
+
+    while ((xorshift() % 100 <= LV_SKIPLIST_P) && new_level < LV_SKIPLIST_MAX_LEVEL)
+    {
+        ++new_level;
+    }
+
     // append to WAL
 
-    if ((result = wal_append(db->wal_fd, op, current_seq, level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, wal_field_buffer)) != LV_OK)
-    {
-        goto _return;
+    if (field_size > 0) {
+        char wal_field_buffer[field_size];
+        schema_field_memmory_to_disk(memory_field_buffer, field_size, wal_field_buffer);
+
+        if ((result = wal_append(db->wal_fd, op, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, wal_field_buffer)) != LV_OK)
+        {
+            return result;
+        }
+    }
+    else {
+        if ((result = wal_append(db->wal_fd, op, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, 0, 0, 0, NULL)) != LV_OK)
+        {
+            return result;
+        }
     }
 
     // append to MemTable
 
-    const LVNode* inserted_memtable_node = table_insert(db->memtable, op, current_seq, level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, memory_field_buffer);
+    const LVNode* inserted_memtable_node = table_insert(db->memtable, op, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, memory_field_buffer);
 
     if (!inserted_memtable_node)
     {
         result = LV_ERR_OOM;
-        goto _return;
+        return result;
     }
 
     if (vector) {
@@ -912,7 +1153,6 @@ static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t
         result = lv_flush_internal(db);
     }
 
-_return:
     return result;
 }
 
@@ -959,7 +1199,7 @@ static LVStatus lv_flush_internal(LightVec* db) {
     // memtable reset
     destroy_table(db->memtable);
 
-    db->memtable = create_table(db->next_seq);
+    db->memtable = create_table();
     if (!db->memtable) {
         result = LV_ERR_OOM;
         goto _return;
@@ -998,7 +1238,7 @@ cleanup:
     return result;
 }
 
-static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue) {
+static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone) {
     LVStatus result = LV_OK;
 
     if (qvset->size >= qvset->capacity)
@@ -1040,13 +1280,14 @@ static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_se
     qvset->values[index].value_len = value_len;
     qvset->values[index].vector_score = vector_score;
     qvset->values[index].ordbyvalue = ordbyvalue;
+    qvset->values[index].is_tombstone = is_tombstone;
 
     qvset->size += 1;
 _return:
     return result;
 }
 
-static LVStatus lv_qvset_light_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue) {
+static LVStatus lv_qvset_light_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone) {
     LVStatus result = LV_OK;
 
     if (qvset->size >= qvset->capacity)
@@ -1072,6 +1313,7 @@ static LVStatus lv_qvset_light_append_internal(LVQVSet* qvset, const LVSeq64_t n
     qvset->values[index].value_len = value_len;
     qvset->values[index].vector_score = vector_score;
     qvset->values[index].ordbyvalue = ordbyvalue;
+    qvset->values[index].is_tombstone = is_tombstone;
 
     qvset->size += 1;
 _return:
@@ -1099,89 +1341,108 @@ static void lv_light_destory_qvset_internal(LVQVSet* qvset) {
 static LVStatus lv_merge_qvsets_internal(LVQVSet* result_qvset, const LVQVSet* memtable_qvset, const LVQVSet* sst_qvset) {
     LVStatus result = LV_OK;
 
-    LVSize32_t i = 0;
-    LVSize32_t j = 0;
+    LVSize32_t memtable_pointer = 0;
+    LVSize32_t sst_pointer = 0;
 
-    while (i < memtable_qvset->size && j < sst_qvset->size)
+    while (memtable_pointer < memtable_qvset->size && sst_pointer < sst_qvset->size)
     {
-        const void* current_mtable_key = memtable_qvset->values[i].key;
-        const LVKeyLen32_t current_mtable_klen = memtable_qvset->values[i].key_len;
-        const void* current_sst_key = sst_qvset->values[j].key;
-        const LVKeyLen32_t current_sst_klen = sst_qvset->values[j].key_len;
+        const void* current_mtable_key = memtable_qvset->values[memtable_pointer].key;
+        const LVKeyLen32_t current_mtable_klen = memtable_qvset->values[memtable_pointer].key_len;
+        const void* current_sst_key = sst_qvset->values[sst_pointer].key;
+        const LVKeyLen32_t current_sst_klen = sst_qvset->values[sst_pointer].key_len;
 
-        if (node_key_equal(current_mtable_key, current_mtable_klen, current_sst_key, current_sst_klen)) {
-            if ((result = lv_qvset_light_append_internal(result_qvset,
-                memtable_qvset->values[i].node_seq,
-                memtable_qvset->values[i].vector_id,
-                current_mtable_key,
-                current_mtable_klen,
-                memtable_qvset->values[i].value,
-                memtable_qvset->values[i].value_len,
-                memtable_qvset->values[i].vector_score,
-                memtable_qvset->values[i].ordbyvalue
-            )) != LV_OK) goto _return;
-            ++i;
-            ++j;
-        }
-        else {
-            if (node_cmp(LV_NODE_DATA, current_mtable_key, current_mtable_klen, memtable_qvset->values[i].node_seq,
-                LV_NODE_DATA, current_sst_key, current_sst_klen, sst_qvset->values[j].node_seq
-            ) < 0) {
-                if ((result = lv_qvset_light_append_internal(result_qvset,
-                    memtable_qvset->values[i].node_seq,
-                    memtable_qvset->values[i].vector_id,
-                    current_mtable_key,
-                    current_mtable_klen,
-                    memtable_qvset->values[i].value,
-                    memtable_qvset->values[i].value_len,
-                    memtable_qvset->values[i].vector_score,
-                    memtable_qvset->values[i].ordbyvalue
-                )) != LV_OK) goto _return;
-                ++i;
+        if (node_key_equal(current_mtable_key, current_mtable_klen, current_sst_key, current_sst_klen)) { //memtable has the latest node
+            if (memtable_qvset->values[memtable_pointer].is_tombstone == 1) {
+                //drop both
             }
             else {
                 if ((result = lv_qvset_light_append_internal(result_qvset,
-                    sst_qvset->values[j].node_seq,
-                    sst_qvset->values[j].vector_id,
+                    memtable_qvset->values[memtable_pointer].node_seq,
+                    memtable_qvset->values[memtable_pointer].vector_id,
+                    current_mtable_key,
+                    current_mtable_klen,
+                    memtable_qvset->values[memtable_pointer].value,
+                    memtable_qvset->values[memtable_pointer].value_len,
+                    memtable_qvset->values[memtable_pointer].vector_score,
+                    memtable_qvset->values[memtable_pointer].ordbyvalue,
+                    0
+                )) != LV_OK) goto _return;
+            }
+            ++memtable_pointer;
+            ++sst_pointer;
+        }
+        else {
+            if (node_cmp(LV_NODE_DATA, current_mtable_key, current_mtable_klen, memtable_qvset->values[memtable_pointer].node_seq,
+                LV_NODE_DATA, current_sst_key, current_sst_klen, sst_qvset->values[sst_pointer].node_seq
+            ) < 0) {
+                if (memtable_qvset->values[memtable_pointer].is_tombstone == 1) {
+                    //drop
+                }
+                else {
+                    if ((result = lv_qvset_light_append_internal(result_qvset,
+                        memtable_qvset->values[memtable_pointer].node_seq,
+                        memtable_qvset->values[memtable_pointer].vector_id,
+                        current_mtable_key,
+                        current_mtable_klen,
+                        memtable_qvset->values[memtable_pointer].value,
+                        memtable_qvset->values[memtable_pointer].value_len,
+                        memtable_qvset->values[memtable_pointer].vector_score,
+                        memtable_qvset->values[memtable_pointer].ordbyvalue,
+                        0
+                    )) != LV_OK) goto _return;
+                }
+                ++memtable_pointer;
+            }
+            else {
+                if ((result = lv_qvset_light_append_internal(result_qvset,
+                    sst_qvset->values[sst_pointer].node_seq,
+                    sst_qvset->values[sst_pointer].vector_id,
                     current_sst_key,
                     current_sst_klen,
-                    sst_qvset->values[j].value,
-                    sst_qvset->values[j].value_len,
-                    sst_qvset->values[j].vector_score,
-                    sst_qvset->values[j].ordbyvalue
+                    sst_qvset->values[sst_pointer].value,
+                    sst_qvset->values[sst_pointer].value_len,
+                    sst_qvset->values[sst_pointer].vector_score,
+                    sst_qvset->values[sst_pointer].ordbyvalue,
+                    0
                 )) != LV_OK) goto _return;
-                ++j;
+                ++sst_pointer;
             }
         }
+
+
     }
 
 
-    while (i < memtable_qvset->size) {
-        if ((result = lv_qvset_light_append_internal(result_qvset,
-            memtable_qvset->values[i].node_seq,
-            memtable_qvset->values[i].vector_id,
-            memtable_qvset->values[i].key,
-            memtable_qvset->values[i].key_len,
-            memtable_qvset->values[i].value,
-            memtable_qvset->values[i].value_len,
-            memtable_qvset->values[i].vector_score,
-            memtable_qvset->values[i].ordbyvalue
-        )) != LV_OK) goto _return;
-        ++i;
+    while (memtable_pointer < memtable_qvset->size) {
+        if (memtable_qvset->values[memtable_pointer].is_tombstone != 1) {
+            if ((result = lv_qvset_light_append_internal(result_qvset,
+                memtable_qvset->values[memtable_pointer].node_seq,
+                memtable_qvset->values[memtable_pointer].vector_id,
+                memtable_qvset->values[memtable_pointer].key,
+                memtable_qvset->values[memtable_pointer].key_len,
+                memtable_qvset->values[memtable_pointer].value,
+                memtable_qvset->values[memtable_pointer].value_len,
+                memtable_qvset->values[memtable_pointer].vector_score,
+                memtable_qvset->values[memtable_pointer].ordbyvalue,
+                0
+            )) != LV_OK) goto _return;
+        }
+        ++memtable_pointer;
     }
 
-    while (j < sst_qvset->size) {
+    while (sst_pointer < sst_qvset->size) {
         if ((result = lv_qvset_light_append_internal(result_qvset,
-            sst_qvset->values[j].node_seq,
-            sst_qvset->values[j].vector_id,
-            sst_qvset->values[j].key,
-            sst_qvset->values[j].key_len,
-            sst_qvset->values[j].value,
-            sst_qvset->values[j].value_len,
-            sst_qvset->values[j].vector_score,
-            sst_qvset->values[j].ordbyvalue
+            sst_qvset->values[sst_pointer].node_seq,
+            sst_qvset->values[sst_pointer].vector_id,
+            sst_qvset->values[sst_pointer].key,
+            sst_qvset->values[sst_pointer].key_len,
+            sst_qvset->values[sst_pointer].value,
+            sst_qvset->values[sst_pointer].value_len,
+            sst_qvset->values[sst_pointer].vector_score,
+            sst_qvset->values[sst_pointer].ordbyvalue,
+            0
         )) != LV_OK) goto _return;
-        ++j;
+        ++sst_pointer;
     }
 
 _return:
