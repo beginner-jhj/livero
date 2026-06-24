@@ -164,15 +164,20 @@ void* node_access_key(const LVNode* node)
 
 void* node_access_value(const LVNode* node)
 {
-    if(node->value_len <= 0) return NULL;
+    if (node->value_len <= 0) return NULL;
     return (char*)node + node_value_offset(node->level, node->key_len);
 }
 
 void* node_access_field(const LVNode* node, const int number)
 {
-    if(node->field_count <=0 || number < 0 || number > node->field_count-1) return NULL;
+    if (node->field_count <= 0 || number < 0 || number > node->field_count - 1) return NULL;
     char* field = (char*)node + node_field_offset(node->level, node->key_len, node->value_len);
-    for (int i = 0; i < number; ++i)
+    return node_field_buffer_access(field, number);
+}
+
+void* node_field_buffer_access(const void* field_buffer, const int field_number) {
+    char* field = (char*)field_buffer;
+    for (int i = 0; i < field_number; ++i)
     {
         uint8_t saved_type;
         memcpy(&saved_type, field, sizeof(uint8_t));
@@ -206,7 +211,7 @@ void* node_access_field(const LVNode* node, const int number)
 
 
 double node_get_f64_field(const LVNode* node, const LVSize32_t mask) {
-    int number = node_field_number(node, mask);
+    int number = node_field_number_of_mask(node->field_mask, mask);
     char* f64_field = (char*)node_access_field(node, number);
     f64_field += sizeof(uint8_t);
     double value = 0.0;
@@ -214,7 +219,7 @@ double node_get_f64_field(const LVNode* node, const LVSize32_t mask) {
     return value;
 }
 int64_t node_get_i64_field(const LVNode* node, const LVSize32_t mask) {
-    int number = node_field_number(node, mask);
+    int number = node_field_number_of_mask(node->field_mask, mask);
     char* i64_field = (char*)node_access_field(node, number);
     i64_field += sizeof(uint8_t);
     int64_t value = 0;
@@ -222,18 +227,17 @@ int64_t node_get_i64_field(const LVNode* node, const LVSize32_t mask) {
     return value;
 }
 
-int node_field_number(const LVNode* node, const LVSize32_t target_mask)
-{
-    if (!(node->field_mask & target_mask) || node->field_count == 0) return -1;
+int node_field_number_of_mask(const LVCount32_t node_field_mask, const LVCount32_t target_mask){
+    if (!(node_field_mask & target_mask)) return -1;
 
     int number = 0;
-    for (int i = 0; i < LV_MAX_META_FIELDS - 1; ++i) {
-        uint32_t mask = (1u << i);
-        if (mask == target_mask) {
+    for(int i=0; i<LV_MAX_META_FIELDS - 1; ++i){
+        uint32_t mask  = (1u << i);
+        if(mask == target_mask){
             return number;
         }
 
-        if (node->field_mask & mask) {
+        if(node_field_mask & mask){
             ++number;
         }
     }
@@ -241,18 +245,20 @@ int node_field_number(const LVNode* node, const LVSize32_t target_mask)
     return -1;
 }
 
-uint32_t node_field_number_to_mask(const LVNode* node, int number) {
-    if (number < 0 || number >= node->field_count) return 0;
+uint32_t node_field_number_to_mask(const LVCount32_t field_mask, int number) {
+    if (number < 0 ) return 0;
     int count = 0;
     for (int bit = 0; bit < LV_MAX_META_FIELDS; ++bit) {
         uint32_t mask = 1u << bit;
-        if (node->field_mask & mask) {
+        if (field_mask & mask) {
             if (count == number) return mask;
             ++count;
         }
     }
     return 0;
 }
+
+
 
 int node_eval_query(const LVNode* node, const LVAstNode* query, const LVSchema* schema) {
     return query_eval_ast(query, node, schema);

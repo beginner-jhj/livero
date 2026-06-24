@@ -125,7 +125,7 @@ LVStatus query_eval_filter(const LVFilter* filter, const LVNode* node, const LVS
     LVStatus result = LV_QFILTER_F;
     LVMetaFieldHash* field_hash = schema_search_field_hash(schema->field_hashes, filter->field_name, strlen(filter->field_name));
 
-    int field_node_index = node_field_number(node, field_hash->mask);
+    int field_node_index = node_field_number_of_mask(node->field_mask, field_hash->mask);
     char* field = (char*)node_access_field(node, field_node_index);
 
     field += sizeof(uint8_t);
@@ -205,6 +205,7 @@ LVStatus query_eval_filter(const LVFilter* filter, const LVNode* node, const LVS
         default:
             break;
         }
+
         break;
     }
 
