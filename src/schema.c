@@ -7,7 +7,7 @@
 #include "crc.h"
 #include <ctype.h>
 
-LVSchema* create_schema(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
+LVSchema* create_schema(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVVectorMetric vector_metric, const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
 {
     int flag = 0;
     LVSchema* schema = NULL;
@@ -28,6 +28,7 @@ LVSchema* create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
 
     schema->vector_dim = vector_dim;
     schema->vector_type = vector_type;
+    schema->vector_metric = vector_metric;
 
     schema->field_count = field_count;
 
@@ -147,7 +148,7 @@ LVStatus schema_write(const int fd, const LVSchema* schema)
         goto _return;
     }
 
-    uint32_t checksum = 0;
+    uint32_t checksum = CRC32_SEED;
 
     // write magic
     if ((result = write_helper(fd, LV_MAGIC_SCHEMA, LV_MAGIC_SIZE)) != LV_OK)
@@ -182,6 +183,15 @@ LVStatus schema_write(const int fd, const LVSchema* schema)
     checksum = crc_calc(&vtype_to_save, 1, checksum);
 
     if ((result = write_helper(fd, &vtype_to_save, 1)) != LV_OK)
+    {
+        goto _return;
+    }
+
+    // write vector metric
+    uint8_t metric_to_save = (uint8_t)schema->vector_metric;
+    checksum = crc_calc(&metric_to_save, 1, checksum);
+
+    if ((result = write_helper(fd, &metric_to_save, 1)) != LV_OK)
     {
         goto _return;
     }
@@ -248,7 +258,7 @@ LVStatus schema_read(const int fd, LVSchema* schema)
 
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
 
-    uint32_t checksum = 0;
+    uint32_t checksum = CRC32_SEED;
 
     char schema_magic[LV_MAGIC_SIZE];
 
@@ -302,6 +312,17 @@ LVStatus schema_read(const int fd, LVSchema* schema)
     checksum = crc_calc(&saved_vector_type, sizeof(uint8_t), checksum);
 
     schema->vector_type = (LVVectorType)saved_vector_type;
+
+    // read vector metric
+    uint8_t saved_vector_metric = 0;
+    if ((result = read_helper(fd, &saved_vector_metric, 1)) != LV_OK)
+    {
+        goto _return;
+    }
+
+    checksum = crc_calc(&saved_vector_metric, sizeof(uint8_t), checksum);
+
+    schema->vector_metric = (LVVectorMetric)saved_vector_metric;
 
     // read field count
     if ((result = read_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
