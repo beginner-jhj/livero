@@ -8,7 +8,7 @@
 #include "schema.h"
 #include "vector.h"
 
-LVMemTable* create_table(const LVSeq64_t seq)
+LVMemTable* create_table()
 {
     int flag = 0;
     LVNode* head = NULL;
@@ -38,7 +38,7 @@ LVMemTable* create_table(const LVSeq64_t seq)
 
     table->arena = arena;
 
-    LVNode* head_temp = node_create(table->arena, LV_NODE_HEAD, seq, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+    LVNode* head_temp = node_create(table->arena, LV_NODE_HEAD, 0, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
 
     if (!head_temp)
     {
@@ -48,7 +48,7 @@ LVMemTable* create_table(const LVSeq64_t seq)
 
     head = head_temp;
 
-    LVNode* tail_temp = node_create(table->arena, LV_NODE_TAIL, seq, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+    LVNode* tail_temp = node_create(table->arena, LV_NODE_TAIL, 0, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
 
     if (!tail_temp)
     {
@@ -73,7 +73,7 @@ LVMemTable* create_table(const LVSeq64_t seq)
 cleanup:
     if (flag)
     {
-        safe_free(&arena);
+        arena_destroy(arena);
         safe_free(&table);
     }
 
@@ -201,15 +201,17 @@ LVNode* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_
         }
         if (node_key_equal(node_access_key(current_cmp_node), current_cmp_node->key_len, key, key_len))
         {
-            if (current_cmp_node->op != LV_DELETE)
-            {
-                result = current_cmp_node;
-                goto _return;
-            }
-            else
-            {
-                break;
-            }
+            // if (current_cmp_node->op != LV_DELETE)
+            // {
+            //     result = current_cmp_node;
+            //     goto _return;
+            // }
+            // else
+            // {
+            //     break;
+            // }
+            result = current_cmp_node;
+            goto _return;
         }
 
         if (current_level == 0)
@@ -233,10 +235,19 @@ LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema
     while (current_node->type != LV_NODE_TAIL)
     {
         if (current_node->op == LV_DELETE) {
+            LVOrdbyValue ordbyvalue;
+            ordbyvalue.i64 = 0;
+            if ((result = qv_append_fn(qv_set, current_node->seq,
+                LV_NO_VECTOR_ID,
+                node_access_key(current_node), current_node->key_len,
+                NULL, 0,
+                0.0f, ordbyvalue,
+                1)) != LV_OK) {
+                return result;
+            }
             current_node = table_get_next_node(current_node);
             continue;
         }
-
         if (query_field_mask & current_node->field_mask) {
             if (query_eval_ast(query, current_node, schema)) {
                 float vector_score = 0.0f;
@@ -260,7 +271,7 @@ LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema
                 if ((result = qv_append_fn(qv_set, current_node->seq,
                     current_node->vector_id, node_access_key(current_node), current_node->key_len,
                     node_access_value(current_node), current_node->value_len,
-                    vector_score, ordbyvalue)) != LV_OK) {
+                    vector_score, ordbyvalue, 0)) != LV_OK) {
                     return result;
                 }
             }
