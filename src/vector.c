@@ -1081,8 +1081,6 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
             LVVectorId64_t neighbor_id = neighbors[i];
             LVHnswNode* neighbor = hnsw->id_node_map->map[neighbor_id];
 
-            if (neighbor->flushed == 0 && neighbor->memtable_node->op == LV_DELETE) continue;
-
             if (!(visited[neighbor_id / 64] & (1ULL << (neighbor_id % 64))))
             {
                 const void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_id]);
@@ -1125,65 +1123,67 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                         goto _return;
                     }
 
-                    if (!neighbor->flushed) {
-                        if (node_eval_query(neighbor->memtable_node, query, schema)) {
-                            const LVNode* memtable_node = neighbor->memtable_node;
+                    if (!neighbor->deleted && neighbor->is_latest) {
+                        if (!neighbor->flushed) {
+                            if (node_eval_query(neighbor->memtable_node, query, schema)) {
+                                const LVNode* memtable_node = neighbor->memtable_node;
 
-                            LVOrdbyValue ordbyvalue;
+                                LVOrdbyValue ordbyvalue;
 
-                            ordbyvalue.i64 = 0;
+                                ordbyvalue.i64 = 0;
 
-                            switch (query_ctx->ordbytype)
-                            {
-                            case LV_ORDBY_FLOAT: {
-                                double value = node_get_f64_field(memtable_node, query_ctx->ordby_field_mask);
-                                ordbyvalue.f64 = value;
-                                break;
+                                switch (query_ctx->ordbytype)
+                                {
+                                case LV_ORDBY_FLOAT: {
+                                    double value = node_get_f64_field(memtable_node, query_ctx->ordby_field_mask);
+                                    ordbyvalue.f64 = value;
+                                    break;
+                                }
+                                case LV_ORDBY_INT: {
+                                    int64_t value = node_get_i64_field(memtable_node, query_ctx->ordby_field_mask);
+                                    ordbyvalue.i64 = value;
+                                    break;
+                                }
+                                case LV_ORDBY_VEC: {
+                                    ordbyvalue.score = score;
+                                    break;
+                                }
+
+                                default:
+                                    break;
+                                }
+
+                                if ((result = query_ctx->memtable_qvset_append_fn(query_ctx->memtable_qvset, memtable_node->seq, neighbor_id, node_access_key(memtable_node), memtable_node->key_len, node_access_value(memtable_node), memtable_node->value_len, score, ordbyvalue, neighbor->deleted)) != LV_OK) goto _return;
+
+                                if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
+                                {
+                                    goto _return;
+                                }
+
+                                if (hnsw->result_heap->size > EF)
+                                {
+                                    vector_heap_pop(hnsw->result_heap, NULL);
+                                }
                             }
-                            case LV_ORDBY_INT: {
-                                int64_t value = node_get_i64_field(memtable_node, query_ctx->ordby_field_mask);
-                                ordbyvalue.i64 = value;
-                                break;
-                            }
-                            case LV_ORDBY_VEC: {
-                                ordbyvalue.score = score;
-                                break;
-                            }
-
-                            default:
-                                break;
-                            }
-
-                            if ((result = query_ctx->memtable_qvset_append_fn(query_ctx->memtable_qvset, memtable_node->seq, neighbor_id, node_access_key(memtable_node), memtable_node->key_len, node_access_value(memtable_node), memtable_node->value_len, score, ordbyvalue, neighbor->deleted)) != LV_OK) goto _return;
-
-                            if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
-                            {
+                        }
+                        else {
+                            LVSSTQueryCtx ctx = { .ordby_field_mask = query_ctx->ordby_field_mask, .ordbytype = query_ctx->ordbytype,.query_field_mask = query_ctx->query_field_mask,.qvset = query_ctx->sst_qvset,.qvset_append_fn = query_ctx->sst_qvset_append_fn, .vector_score = score };
+                            const LVStatus sst_query_result = sst_query_with_hnsw(query_ctx->sst_fd, query_ctx->vector_index_fd, neighbor_id, schema, query, &ctx);
+                            if (sst_query_result != LV_QFILTER_F && sst_query_result != LV_QFILTER_T) {
+                                result = sst_query_result;
                                 goto _return;
                             }
 
-                            if (hnsw->result_heap->size > EF)
-                            {
-                                vector_heap_pop(hnsw->result_heap, NULL);
-                            }
-                        }
-                    }
-                    else {
-                        LVSSTQueryCtx ctx = { .ordby_field_mask = query_ctx->ordby_field_mask, .ordbytype = query_ctx->ordbytype,.query_field_mask = query_ctx->query_field_mask,.qvset = query_ctx->sst_qvset,.qvset_append_fn = query_ctx->sst_qvset_append_fn, .vector_score = score };
-                        const LVStatus sst_query_result = sst_query_with_hnsw(query_ctx->sst_fd, query_ctx->vector_index_fd, neighbor_id, schema, query, &ctx);
-                        if (sst_query_result != LV_QFILTER_F && sst_query_result != LV_QFILTER_T) {
-                            result = sst_query_result;
-                            goto _return;
-                        }
+                            if (sst_query_result == LV_QFILTER_T) {
+                                if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
+                                {
+                                    goto _return;
+                                }
 
-                        if (sst_query_result == LV_QFILTER_T) {
-                            if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
-                            {
-                                goto _return;
-                            }
-
-                            if (hnsw->result_heap->size > EF)
-                            {
-                                vector_heap_pop(hnsw->result_heap, NULL);
+                                if (hnsw->result_heap->size > EF)
+                                {
+                                    vector_heap_pop(hnsw->result_heap, NULL);
+                                }
                             }
                         }
                     }
