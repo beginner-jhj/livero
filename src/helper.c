@@ -131,6 +131,20 @@ LVStatus pread_helper(const int fd, void* buf, const uint32_t len, const uint64_
     return LV_OK;
 }
 
+LVStatus pwrite_helper(const int fd, const void* buf, const uint32_t len, const uint64_t offset) {
+    ssize_t _written = pwrite(fd, buf, len, offset);
+    if (_written < 0) {
+        return LV_ERR_IO;
+    }
+
+    if ((uint32_t)_written < len)
+    {
+        return LV_ERR_FULL;
+    }
+
+    return LV_OK;
+}
+
 uint32_t xorshift(void)
 {
     static uint32_t state = 0;
