@@ -323,8 +323,8 @@ LVStatus schema_read(const int fd, LVSchema* schema)
 
     int count = 0;
 
-    uint32_t next_filed_mask = 1;
-    uint32_t total_filed_mask = 0;
+    uint32_t next_field_mask = 1;
+    uint32_t total_field_mask = 0;
 
     char saved_field_name[LV_META_NAME_MAX];
     memset(saved_field_name, 0, LV_META_NAME_MAX);
@@ -367,19 +367,19 @@ LVStatus schema_read(const int fd, LVSchema* schema)
 
         checksum = crc_calc(BUF_32, sizeof(uint32_t), checksum);
 
-        if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, saved_field_type, next_filed_mask)) != LV_OK)
+        if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, saved_field_type, next_field_mask)) != LV_OK)
         {
             goto _return;
         }
 
-        total_filed_mask |= next_filed_mask;
-        next_filed_mask <<= 1;
+        total_field_mask |= next_field_mask;
+        next_field_mask <<= 1;
 
         ++count;
     }
 
-    schema->total_field_mask = total_filed_mask;
-    schema->next_field_mask = next_filed_mask;
+    schema->total_field_mask = total_field_mask;
+    schema->next_field_mask = next_field_mask;
 
     // read checksum
     if ((result = read_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
@@ -504,18 +504,31 @@ LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount
     return size;
 }
 
-void schema_serialize_field(void* buffer, const LVMetaField* fields, const LVCount32_t field_count, const int is_on_disk) {
-    if (!fields || field_count <= 0 || !buffer) return;
+void schema_serialize_field(const LVSchema* schema, void* buffer,
+    const LVMetaField* fields,
+    const LVCount32_t field_count, const int is_on_disk) {
+    if (!fields || field_count <= 0 || !buffer || !schema) return;
 
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
 
-    for (int offset = 0; offset < field_count; ++offset) {
-        LVMetaField* current_field = fields + offset;
+    for (int bit = 0; bit < LV_MAX_META_FIELDS; ++bit) {
+        const uint32_t target_mask = (1u << bit);
+
+        const LVMetaField* current_field = NULL;
+        for (int i = 0; i < field_count; ++i) {
+            const LVMetaFieldHash* h = schema_search_field_hash(
+                schema->field_hashes, fields[i].name, strlen(fields[i].name));
+            if (h && h->mask == target_mask) {
+                current_field = &fields[i];
+                break;
+            }
+        }
+
+        if (!current_field) continue;
 
         const uint8_t type = (uint8_t)current_field->type;
         memcpy(buffer, &type, sizeof(uint8_t));
-
         buffer += sizeof(uint8_t);
 
         if (current_field->type == LV_META_STRING) {
@@ -527,35 +540,32 @@ void schema_serialize_field(void* buffer, const LVMetaField* fields, const LVCou
             else {
                 memcpy(buffer, &len, sizeof(uint32_t));
             }
-
             buffer += 4;
-
             memcpy(buffer, current_field->value.str.string, len);
-
             buffer += len;
         }
         else if (current_field->type == LV_META_FLOAT) {
             double value = current_field->value.f64;
             if (is_on_disk == 1) {
-                put_fixed_64(BUF_32, value);
+                uint64_t bits;
+                memcpy(&bits, &value, sizeof(bits));   // reinterpret double's bytes 
+                put_fixed_64(BUF_64, bits);
                 memcpy(buffer, BUF_64, 8);
             }
             else {
                 memcpy(buffer, &value, sizeof(double));
             }
-
             buffer += 8;
         }
-        else { //int64
+        else { /* int64 */
             int64_t value = current_field->value.i64;
             if (is_on_disk == 1) {
-                put_fixed_64(BUF_32, value);
+                put_fixed_64(BUF_64, value);
                 memcpy(buffer, BUF_64, 8);
             }
             else {
-                memcpy(buffer, &value, sizeof(double));
+                memcpy(buffer, &value, sizeof(int64_t));
             }
-
             buffer += 8;
         }
     }
@@ -603,7 +613,10 @@ void schema_field_memmory_to_disk(const void* src, const LVSize32_t field_size, 
             double value = 0.0;
             memcpy(&value, src_ptr, sizeof(double));
 
-            put_fixed_64(BUF_64, value);
+            uint64_t bits;
+            memcpy(&bits, &value, sizeof(bits));
+            put_fixed_64(BUF_64, bits);
+
             memcpy(dest_ptr, BUF_64, 8);
 
             src_ptr += 8;

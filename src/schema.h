@@ -60,7 +60,7 @@ LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash** hashes, const char* 
 
 LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount32_t field_count);
 
-void schema_serialize_field(void* buffer, const LVMetaField* fields, const LVCount32_t field_count, const int is_on_disk);
+void schema_serialize_field(const LVSchema* schema,void* buffer, const LVMetaField* fields, const LVCount32_t field_count, const int is_on_disk);
 
 void schema_field_memmory_to_disk(const void* src, const LVSize32_t field_size, void* dest);
 void schema_field_disk_to_memory(const void* src,const LVSize32_t field_size, void* dest );
