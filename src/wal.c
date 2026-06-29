@@ -200,6 +200,7 @@ LVStatus wal_recover(const int fd, const LVMemTable* table, LVSeq64_t* next_seq_
         reserved_node->key_len = saved_key_len;
         reserved_node->value_len = saved_value_len;
         reserved_node->vector_id = saved_vector_id;
+        reserved_node->hnsw_node = NULL;
         reserved_node->field_count = saved_field_count;
         reserved_node->field_mask = saved_field_mask;
 
