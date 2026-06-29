@@ -96,7 +96,8 @@ LVAstNode* query_filter_node(const char* field_name, const LVQueryOp op, const L
 cleanup:
     if (flag)
     {
-        safe_free(&filter_node);
+        free(filter_node);
+        filter_node = NULL;
     }
     return filter_node;
 }
@@ -629,8 +630,9 @@ LVSQLParser* create_parser() {
     parser->viewers = viewers;
 cleanup:
     if (flag) {
-        safe_free(&viewers);
-        safe_free(&parser);
+        free(viewers);
+        free(parser);
+        parser = NULL;
     }
     return parser;
 }
