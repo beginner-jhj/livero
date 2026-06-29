@@ -93,6 +93,7 @@ cleanup:
     if (flag)
     {
         destroy_schema(schema);
+        schema = NULL;
     }
     return schema;
 }
@@ -125,7 +126,7 @@ void destroy_schema(LVSchema* schema)
     if (schema)
     {
         schema_destroy_field_hashes(schema->field_hashes);
-        safe_free(&schema);
+        free(schema);
     }
 }
 
