@@ -44,9 +44,10 @@ LVArena *arena_create(const LVSize32_t block_size)
 
 cleanup:
     if (error_flag) {
-        safe_free(&block_buffer);
-        safe_free(&initial_block);
-        safe_free(&arena);
+        free(block_buffer);
+        free(initial_block);
+        free(arena);
+        arena = NULL;
     }
 
     return arena;
@@ -60,11 +61,11 @@ void arena_destroy(LVArena *arena)
         while (current)
         {
             LVArenaBlock *prev = current->prev;
-            safe_free(&current->buffer);
-            safe_free(&current);
+            free(current->buffer);
+            free(current);
             current = prev;
         }
-        safe_free(&arena);
+        free(arena);
     }
 }
 
@@ -124,10 +125,10 @@ void *arena_allocate(LVArena *arena, const LVSize32_t total, int32_t align)
 
     cleanup:
         if (error_flag) {
-            safe_free(&large_buffer);
-            safe_free(&large_block);
-            safe_free(&new_buffer);
-            safe_free(&new_block);
+            free(large_buffer);
+            free(large_block);
+            free(new_buffer);
+            free(new_block);
         }
 
         goto _return;
