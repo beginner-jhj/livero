@@ -14,6 +14,7 @@ typedef struct LVNode
     LVSize32_t field_mask;
     LVCount32_t field_count;
     LVVectorId64_t vector_id;
+    LVHnswNode* hnsw_node;
     struct LVNode* levels[];
 } LVNode;
 
@@ -47,5 +48,6 @@ int node_eval_query(const LVNode* node, const LVAstNode* query, const LVSchema* 
 
 LVSize32_t node_field_size(const LVNode* node);
 
+void node_link_hnsw_node(LVNode* node, const LVHnswNode* hnsw_node);
 
 #endif

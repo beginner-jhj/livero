@@ -35,6 +35,8 @@ LVNode* node_create(const LVArena* arena, const LVNodeType type, const LVSeq64_t
 
     node->vector_id = vector_id;
 
+    node->hnsw_node = NULL;
+
     memset(node->levels, 0, node->level * sizeof(LVNode*));
 
     // copy key
@@ -290,4 +292,8 @@ LVSize32_t node_field_size(const LVNode* node) {
         }
     }
     return size;
+}
+
+void node_link_hnsw_node(LVNode* node, const LVHnswNode* hnsw_node){
+    node->hnsw_node = hnsw_node;
 }
