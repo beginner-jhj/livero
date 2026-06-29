@@ -155,12 +155,3 @@ uint32_t xorshift(void)
     state ^= state << 5;
     return state;
 }
-
-void safe_free(void** ptr)
-{
-    if (ptr && *ptr)
-    {
-        free(*ptr);
-        *ptr = NULL;
-    }
-}

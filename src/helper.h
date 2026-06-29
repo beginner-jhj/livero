@@ -19,6 +19,4 @@ LVStatus pread_helper(const int fd, void* buf, const uint32_t len, const uint64_
 
 uint32_t xorshift(void);
 
-void safe_free(void** ptr);
-
 #endif
