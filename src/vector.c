@@ -7,8 +7,7 @@
 #include <float.h>
 #include "node.h"
 #include "sst.h"
-
-extern long g_shrink_count;
+#include "hash.h"
 
 /**
  * ARM NEON SIMD Naming Convention Reference
@@ -48,6 +47,7 @@ LVHnsw* create_hnsw(const LVVectorType vector_type, const LVDim32_t dim)
     LVHnswIDMap* id_vector_map = NULL;
     LVHnswHeap* frontier_heap = NULL;
     LVHnswHeap* result_heap = NULL;
+    LVHnswIDHashMap* id_hash_map = NULL;
 
     LVHnsw* hnsw_tmp = malloc(sizeof(LVHnsw));
     if (!hnsw_tmp)
@@ -164,16 +164,38 @@ LVHnsw* create_hnsw(const LVVectorType vector_type, const LVDim32_t dim)
     }
 
     hnsw->result_heap = result_heap;
+
+    id_hash_map = malloc(sizeof(LVHnswIDHashMap));
+    if (!id_hash_map) {
+        flag = 1;
+        goto cleanup;
+    }
+
+    id_hash_map->capacity = 1000;
+    id_hash_map->size = 0;
+    id_hash_map->map = NULL;
+
+    id_hash_map->map = calloc(id_hash_map->capacity, sizeof(LVHnswIDHash*));
+    if (!id_hash_map->map) {
+        flag = 1;
+        goto cleanup;
+    }
+
+    hnsw->id_hash_map = id_hash_map;
 cleanup:
     if (flag)
+
+        //todo: resource deallocation refactor
     {
-        safe_free(&frontier_heap);
-        safe_free(&result_heap);
-        safe_free(&id_node_map);
-        safe_free(&id_vector_map);
+        free(frontier_heap);
+        free(result_heap);
+        free(id_node_map);
+        free(id_vector_map);
         arena_destroy(node_arena);
         arena_destroy(vector_arena);
-        safe_free(&hnsw);
+
+        free(hnsw);
+        hnsw = NULL;
     }
     return hnsw;
 }
@@ -194,11 +216,11 @@ void destroy_hnsw(LVHnsw* hnsw) {
     }
 }
 
-LVStatus vector_write_f32_vector(const int fd,const LVVectorId64_t vector_id, const LVDim32_t dim, const float* vector)
+LVStatus vector_write_f32_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, const float* vector)
 {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
-    uint64_t offset = vector_id*dim*4;
+    uint64_t offset = vector_id * dim * 4;
     for (int i = 0; i < dim; ++i)
     {
         uint32_t bits;
@@ -210,33 +232,34 @@ LVStatus vector_write_f32_vector(const int fd,const LVVectorId64_t vector_id, co
         }
         offset += 4;
     }
-    result = write_helper_flush(fd, 1);
+    fsync(fd);
     return result;
 }
 
-LVStatus vector_read_f32_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, float* vector_out){
+LVStatus vector_read_f32_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, float* vector_out) {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
-    uint64_t offset = vector_id*dim*4;
-    for(int i=0; i<dim; ++i){
-        if((result = pread_helper(fd, BUF_32, 4, offset)) != LV_OK) return result;
-        vector_out[i] = get_fixed_32(BUF_32);
+    uint64_t offset = vector_id * dim * 4;
+    for (int i = 0; i < dim; ++i) {
+        if ((result = pread_helper(fd, BUF_32, 4, offset)) != LV_OK) return result;
+        uint32_t bits = get_fixed_32(BUF_32);
+        memcpy(&vector_out[i], &bits, 4);
         offset += 4;
     }
     return result;
 }
 
-LVStatus vector_write_i8_vector(const int fd,const LVVectorId64_t vector_id, const LVDim32_t dim, const int8_t* vector)
+LVStatus vector_write_i8_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, const int8_t* vector)
 {
     LVStatus result = LV_OK;
-    if((result = pwrite_helper(fd, vector, dim, vector_id*dim)) != LV_OK) return result;
-    result = write_helper_flush(fd,1);
+    if ((result = pwrite_helper(fd, vector, dim, vector_id * dim)) != LV_OK) return result;
+    fsync(fd);
     return result;
 }
 
-LVStatus vector_read_i8_vector(const int fd, const LVVectorId64_t vector_id,const LVDim32_t dim, int8_t* vector_out){
+LVStatus vector_read_i8_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, int8_t* vector_out) {
     LVStatus result = LV_OK;
-    result = pread_helper(fd, vector_out, dim, vector_id*dim);
+    result = pread_helper(fd, vector_out, dim, vector_id * dim);
     return result;
 }
 
@@ -386,22 +409,22 @@ LVLevel8_t vector_hnsw_layer(const float ml)
     return (LVLevel8_t)(-logf(f) * ml);
 }
 
-LVStatus vector_hnsw_f32_insert(LVHnsw* hnsw, const LVVectorId64_t id, const float* vector, LVF32DistFn dist_fn)
+LVStatus vector_hnsw_f32_insert(LVHnsw* hnsw, const LVVectorId64_t external_vector_id, const float* vector, LVF32DistFn dist_fn)
 {
-    return vector_hnsw_insert(hnsw, id, vector, 1, dist_fn, NULL);
+    return vector_hnsw_insert(hnsw, external_vector_id, vector, 1, dist_fn, NULL);
 }
-LVStatus vector_hnsw_i8_insert(LVHnsw* hnsw, const LVVectorId64_t id, const int8_t* vector, LVI8DistFn dist_fn)
+LVStatus vector_hnsw_i8_insert(LVHnsw* hnsw, const LVVectorId64_t external_vector_id, const int8_t* vector, LVI8DistFn dist_fn)
 {
-    return vector_hnsw_insert(hnsw, id, vector, 0, NULL, dist_fn);
+    return vector_hnsw_insert(hnsw, external_vector_id, vector, 0, NULL, dist_fn);
 }
 
-LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_id, const void* vector, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
+LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, const void* vector, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
     LVStatus result = LV_OK;
     const LVLevel8_t new_layer = vector_hnsw_layer(hnsw->m_l);
 
     LVSize32_t neighbor_counts[new_layer + 1];
-    memset(neighbor_counts, 0, sizeof(LVSize32_t) * (new_layer + 1));
+    memset(neighbor_counts, 0, sizeof(neighbor_counts));
 
     LVHnswNode* ep_list[HNSW_EF_CONSTRUCTION];
     memset(ep_list, 0, sizeof(ep_list));
@@ -414,20 +437,22 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_id, const voi
     }
     memset(neighbors, 0, vector_node_neighbor_size(new_layer));
 
-    //add vector to id_vector_map first here
-    if ((result = vector_hnsw_append_vector(hnsw, new_id, vector)) != LV_OK) goto _return;
+    const LVVectorId64_t new_internal_id = hnsw->node_count;
+
+    //append vector to id_vector_map first here
+    if ((result = vector_hnsw_append_vector(hnsw, new_internal_id, vector)) != LV_OK) goto _return;
 
     if (hnsw->node_count > 0) {
         // get ep
-        LVVectorId64_t ep_id = hnsw->entry_node->id;
+        LVVectorId64_t ep_internal_id = hnsw->entry_node->internal_id;
         if (new_layer <= hnsw->current_max_layer)
         {
-            ep_id = vector_hnsw_search_ep(hnsw, hnsw->entry_node, vector, hnsw->current_max_layer, new_layer, is_f32, f32_dist_fn, i8_dist_fn);
+            ep_internal_id = vector_hnsw_search_ep(hnsw, hnsw->entry_node, vector, hnsw->current_max_layer, new_layer, is_f32, f32_dist_fn, i8_dist_fn);
         }
 
         LVLevel8_t min_layer = hnsw->current_max_layer < new_layer ? hnsw->current_max_layer : new_layer;
 
-        ep_list[0] = (LVHnswNode*)hnsw->id_node_map->map[ep_id];
+        ep_list[0] = (LVHnswNode*)hnsw->id_node_map->map[ep_internal_id];
 
         LVSize32_t ep_list_size = 1;
 
@@ -451,7 +476,7 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_id, const voi
             {
                 LVHnswNode* neighbor_node = (LVHnswNode*)hnsw->id_node_map->map[neighbors[update_start + i]];
 
-                vector_update_node_neighbor(hnsw, neighbor_node, layer, new_id, vector);
+                vector_update_node_neighbor(hnsw, neighbor_node, layer, new_internal_id, vector);
             }
 
             // update next ep_list
@@ -468,12 +493,14 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_id, const voi
         }
     }
 
-    if ((result = vector_hnsw_append_node(hnsw, new_id, new_layer, neighbor_counts, neighbors)) != LV_OK) goto _return;
+    if ((result = vector_hnsw_append_node(hnsw, new_external_id, new_internal_id, new_layer, neighbor_counts, neighbors)) != LV_OK) goto _return;
+
+    if ((result = vector_hnsw_insert_id_hash_map(hnsw->id_hash_map, new_external_id, new_internal_id)) != LV_OK) goto _return;
 
     if (new_layer > hnsw->current_max_layer || hnsw->entry_node == NULL)
     {
         hnsw->current_max_layer = new_layer;
-        hnsw->entry_node = hnsw->id_node_map->map[new_id];
+        hnsw->entry_node = hnsw->id_node_map->map[new_internal_id];
     }
 
     hnsw->node_count += 1;
@@ -487,11 +514,11 @@ LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const v
 
     const LVDim32_t dim = hnsw->aligned_dim;
 
-    void* current_ep_vector = (hnsw->id_vector_map->map[current_ep->id]);
+    void* current_ep_vector = (hnsw->id_vector_map->map[current_ep->internal_id]);
 
     float best_dis_f32 = f32_dist_fn ? f32_dist_fn((float*)new_node_vector, (float*)current_ep_vector, dim) : -1;
     int32_t best_dis_i32 = i8_dist_fn ? i8_dist_fn((int8_t*)new_node_vector, (int8_t*)current_ep_vector, dim) : -1;
-    LVVectorId64_t best_id = current_ep->id;
+    LVVectorId64_t best_id = current_ep->internal_id;
     for (int layer = start; layer > end; --layer)
     {
         while (1)
@@ -500,15 +527,15 @@ LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const v
             LVVectorId64_t* neighbors = vector_access_neighbors(current_ep, layer);
             for (int i = 0; i < current_ep->neighbor_counts[layer]; ++i)
             {
-                LVVectorId64_t neighbor_id = neighbors[i];
-                void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_id]);
+                LVVectorId64_t neighbor_internal_id = neighbors[i];
+                void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_internal_id]);
 
                 if (is_f32)
                 {
                     float dis = f32_dist_fn((float*)new_node_vector, (float*)neighbor_vector, dim);
                     if (dis < best_dis_f32)
                     {
-                        best_id = neighbor_id;
+                        best_id = neighbor_internal_id;
                         best_dis_f32 = dis;
                     }
                 }
@@ -517,19 +544,17 @@ LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const v
                     int32_t dis = i8_dist_fn((int8_t*)new_node_vector, (int8_t*)neighbor_vector, dim);
                     if (dis < best_dis_i32)
                     {
-                        best_id = neighbor_id;
+                        best_id = neighbor_internal_id;
                         best_dis_i32 = dis;
                     }
                 }
             }
 
-            if (best_id == current_ep->id)
+            if (best_id == current_ep->internal_id)
             {
                 break;
             }
             current_ep = (LVHnswNode*)hnsw->id_node_map->map[best_id];
-
-
         }
     }
 
@@ -549,15 +574,15 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
         LVHnswEntry ep_entry;
         if (is_f32)
         {
-            const float* ep_vector = (float*)(hnsw->id_vector_map->map[ep_list[i]->id]);
-            ep_entry.id = ep_list[i]->id;
+            const float* ep_vector = (float*)(hnsw->id_vector_map->map[ep_list[i]->internal_id]);
+            ep_entry.id = ep_list[i]->internal_id;
             ep_entry.dis.f32 = f32_dist_fn((float*)new_node_vector, ep_vector, hnsw->aligned_dim);
             ep_entry.dis_type = LV_DIS_F32;
         }
         else
         {
-            const int8_t* ep_vector = (int8_t*)(hnsw->id_vector_map->map[ep_list[i]->id]);
-            ep_entry.id = ep_list[i]->id;
+            const int8_t* ep_vector = (int8_t*)(hnsw->id_vector_map->map[ep_list[i]->internal_id]);
+            ep_entry.id = ep_list[i]->internal_id;
             ep_entry.dis.i32 = i8_dist_fn((int8_t*)new_node_vector, ep_vector, hnsw->aligned_dim);
             ep_entry.dis_type = LV_DIS_I32;
         }
@@ -598,10 +623,10 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
 
         for (int i = 0; i < candidate_node->neighbor_counts[layer]; ++i)
         {
-            LVVectorId64_t neighbor_id = neighbors[i];
-            if (!(visited[neighbor_id / 64] & (1ULL << (neighbor_id % 64))))
+            LVVectorId64_t neighbor_internal_id = neighbors[i];
+            if (!(visited[neighbor_internal_id / 64] & (1ULL << (neighbor_internal_id % 64))))
             {
-                const void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_id]);
+                const void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_internal_id]);
                 LVHnswEntry new_entry;
                 int needs_heap_insert = 0;
                 if (is_f32)
@@ -611,7 +636,7 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
                     if (hnsw->result_heap->size < EF || dis < hnsw->result_heap->entries[0].dis.f32)
                     {
                         needs_heap_insert = 1;
-                        new_entry.id = neighbor_id;
+                        new_entry.id = neighbor_internal_id;
                         new_entry.dis.f32 = dis;
                         new_entry.dis_type = LV_DIS_F32;
                     }
@@ -622,7 +647,7 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
                     if (hnsw->result_heap->size < EF || dis < hnsw->result_heap->entries[0].dis.i32)
                     {
                         needs_heap_insert = 1;
-                        new_entry.id = neighbor_id;
+                        new_entry.id = neighbor_internal_id;
                         new_entry.dis.i32 = dis;
                         new_entry.dis_type = LV_DIS_I32;
                     }
@@ -633,7 +658,7 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
                     {
                         goto _return;
                     }
-                    const LVHnswNode* neighbor_node = hnsw->id_node_map->map[neighbor_id];
+                    const LVHnswNode* neighbor_node = hnsw->id_node_map->map[neighbor_internal_id];
                     if (!neighbor_node->is_latest || neighbor_node->deleted || neighbor_node->flushed) {
                         //pass
                     }
@@ -651,7 +676,7 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
                 }
             }
 
-            visited[neighbor_id / 64] |= (1ULL << (neighbor_id % 64));
+            visited[neighbor_internal_id / 64] |= (1ULL << (neighbor_internal_id % 64));
         }
     }
 
@@ -716,7 +741,7 @@ LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const 
     return current_result_size;
 }
 
-LVStatus vector_hnsw_append_node(LVHnsw* hnsw, const LVVectorId64_t id, const LVLevel8_t layer, const LVSize32_t* neighbor_counts, const LVVectorId64_t* neighbor_list)
+LVStatus vector_hnsw_append_node(LVHnsw* hnsw, const LVVectorId64_t external_id, const LVVectorId64_t internal_id, const LVLevel8_t layer, const LVSize32_t* neighbor_counts, const LVVectorId64_t* neighbor_list)
 {
     LVStatus result = LV_OK;
 
@@ -743,7 +768,8 @@ LVStatus vector_hnsw_append_node(LVHnsw* hnsw, const LVVectorId64_t id, const LV
         goto _return;
     }
 
-    node->id = id;
+    node->external_id = external_id;
+    node->internal_id = internal_id; //starts at zero
     node->memtable_node = NULL;
     node->max_layer = layer;
     node->flushed = 0;
@@ -755,7 +781,7 @@ LVStatus vector_hnsw_append_node(LVHnsw* hnsw, const LVVectorId64_t id, const LV
     memcpy((char*)node->neighbors, neighbor_list, vector_node_neighbor_size(layer));
 
 
-    if ((result = vector_hnsw_idmap_append(hnsw->id_node_map, id, node)) != LV_OK)
+    if ((result = vector_hnsw_idmap_append(hnsw->id_node_map, internal_id, node)) != LV_OK)
     {
         goto _return;
     }
@@ -807,7 +833,7 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
     if (prev_neighbor_count + 1 > M) {
         LVHnswEntry candidates[M + 1];
         LVVectorId64_t new_neighbors[M];
-        void* current_node_vector = hnsw->id_vector_map->map[node->id];
+        void* current_node_vector = hnsw->id_vector_map->map[node->internal_id];
         LVVectorId64_t* neighbors = vector_access_neighbors(node, layer);
         for (int i = 0; i < prev_neighbor_count; ++i) {
             LVVectorId64_t id = neighbors[i];
@@ -845,9 +871,7 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
 
         node->neighbor_counts[layer] = new_neighbor_count;
 
-#ifdef LV_TEST_SHRINK_COUNTER
-        g_shrink_count++;
-#endif
+
     }
     else {
         LVSize32_t slot_offset = prev_neighbor_count * sizeof(LVVectorId64_t);
@@ -974,7 +998,7 @@ pop:
     }
 }
 
-LVStatus vector_hnsw_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t id, const void* ptr)
+LVStatus vector_hnsw_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t internal_id, const void* ptr)
 {
     if (idmap->size >= idmap->capacity)
     {
@@ -988,29 +1012,29 @@ LVStatus vector_hnsw_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t id, c
         idmap->capacity = new_capacity;
     }
 
-    idmap->map[id] = ptr;
+    idmap->map[internal_id] = ptr;
     idmap->size += 1;
     return LV_OK;
 }
 
-void vector_hnsw_link_memtable_node(LVHnsw* hnsw, const LVVectorId64_t id, const LVNode* memtable_node){
-    LVHnswNode* hnsw_node = hnsw->id_node_map->map[id];
+void vector_hnsw_link_memtable_node(LVHnsw* hnsw, const LVVectorId64_t internal_id, const LVNode* memtable_node) {
+    LVHnswNode* hnsw_node = hnsw->id_node_map->map[internal_id];
     hnsw_node->memtable_node = memtable_node;
 }
 
-void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t id) {
-    LVHnswNode* flushed_node = hnsw->id_node_map->map[id];
+void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t internal_id) {
+    LVHnswNode* flushed_node = hnsw->id_node_map->map[internal_id];
     flushed_node->flushed = 1;
     flushed_node->memtable_node = NULL;
 }
 
-void vector_hnsw_mark_deleted(LVHnsw* hnsw, const LVVectorId64_t id) {
-    LVHnswNode* deleted_node = hnsw->id_node_map->map[id];
+void vector_hnsw_mark_deleted(LVHnsw* hnsw, const LVVectorId64_t internal_id) {
+    LVHnswNode* deleted_node = hnsw->id_node_map->map[internal_id];
     deleted_node->deleted = 1;
 }
 
-void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_node_id) {
-    LVHnswNode* last_node = hnsw->id_node_map->map[prev_node_id];
+void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_internal_node_id) {
+    LVHnswNode* last_node = hnsw->id_node_map->map[prev_internal_node_id];
     last_node->is_latest = 0;
 }
 
@@ -1061,12 +1085,13 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
         LVVectorId64_t* neighbors = vector_access_neighbors(candidate_node, 0);
 
         for (int i = 0; i < candidate_node->neighbor_counts[0]; ++i) {
-            LVVectorId64_t neighbor_id = neighbors[i];
-            LVHnswNode* neighbor = hnsw->id_node_map->map[neighbor_id];
+            const LVVectorId64_t neighbor_internal_id = neighbors[i];
+            const LVHnswNode* neighbor = hnsw->id_node_map->map[neighbor_internal_id];
+            const LVVectorId64_t neighbor_external_id = neighbor->external_id;
 
-            if (!(visited[neighbor_id / 64] & (1ULL << (neighbor_id % 64))))
+            if (!(visited[neighbor_internal_id / 64] & (1ULL << (neighbor_internal_id % 64))))
             {
-                const void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_id]);
+                const void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_internal_id]);
                 LVHnswEntry new_entry;
                 int needs_frontier_heap_insert = 0;
                 float score = 0.0f;
@@ -1077,7 +1102,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                     if (hnsw->result_heap->size < EF || dis < hnsw->result_heap->entries[0].dis.f32)
                     {
                         needs_frontier_heap_insert = 1;
-                        new_entry.id = neighbor_id;
+                        new_entry.id = neighbor_internal_id;
                         new_entry.dis.f32 = dis;
                         new_entry.dis_type = LV_DIS_F32;
 
@@ -1091,7 +1116,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                     if (hnsw->result_heap->size < EF || dis < hnsw->result_heap->entries[0].dis.i32)
                     {
                         needs_frontier_heap_insert = 1;
-                        new_entry.id = neighbor_id;
+                        new_entry.id = neighbor_internal_id;
                         new_entry.dis.i32 = dis;
                         new_entry.dis_type = LV_DIS_I32;
 
@@ -1136,7 +1161,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                                     break;
                                 }
 
-                                if ((result = query_ctx->memtable_qvset_append_fn(query_ctx->memtable_qvset, memtable_node->seq, neighbor_id, node_access_key(memtable_node), memtable_node->key_len, node_access_value(memtable_node), memtable_node->value_len, score, ordbyvalue, neighbor->deleted)) != LV_OK) goto _return;
+                                if ((result = query_ctx->memtable_qvset_append_fn(query_ctx->memtable_qvset, memtable_node->seq, neighbor_internal_id, node_access_key(memtable_node), memtable_node->key_len, node_access_value(memtable_node), memtable_node->value_len, score, ordbyvalue, neighbor->deleted)) != LV_OK) goto _return;
 
                                 if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
                                 {
@@ -1151,7 +1176,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                         }
                         else {
                             LVSSTQueryCtx ctx = { .ordby_field_mask = query_ctx->ordby_field_mask, .ordbytype = query_ctx->ordbytype,.query_field_mask = query_ctx->query_field_mask,.qvset = query_ctx->sst_qvset,.qvset_append_fn = query_ctx->sst_qvset_append_fn, .vector_score = score };
-                            const LVStatus sst_query_result = sst_query_with_hnsw(query_ctx->sst_fd, query_ctx->vector_index_fd, neighbor_id, schema, query, &ctx);
+                            const LVStatus sst_query_result = sst_query_with_hnsw(query_ctx->sst_fd, query_ctx->vector_index_fd, neighbor_external_id, schema, query, &ctx);
                             if (sst_query_result != LV_QFILTER_F && sst_query_result != LV_QFILTER_T) {
                                 result = sst_query_result;
                                 goto _return;
@@ -1173,10 +1198,143 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                 }
             }
 
-            visited[neighbor_id / 64] |= (1ULL << (neighbor_id % 64));
+            visited[neighbor_internal_id / 64] |= (1ULL << (neighbor_internal_id % 64));
         }
     }
 
 _return:
     return result;
+}
+
+LVVectorId64_t vector_hnsw_current_internal_id(const LVHnsw* hnsw) {
+    return hnsw->node_count > 0 ? hnsw->node_count - 1 : LV_NO_VECTOR_ID;
+}
+
+LVStatus vector_hnsw_insert_id_hash_value(LVHnswIDHash** map, const LVSize32_t capacity, const LVVectorId64_t external_id, const LVVectorId64_t internal_id) {
+    LVStatus result = LV_OK;
+
+    const LVHash32_t hash = fnv1a_hash(&external_id, sizeof(LVVectorId64_t));
+    const int index = hash % capacity;
+
+    if (map[index] == NULL) {
+        LVHnswIDHash* id_hash = malloc(sizeof(LVHnswIDHash));
+        if (!id_hash) {
+            result = LV_ERR_OOM;
+            goto _return;
+        }
+        id_hash->external_id = external_id;
+        id_hash->internal_id = internal_id;
+        id_hash->next = NULL;
+
+        map[index] = id_hash;
+    }
+    else {
+        LVHnswIDHash* current = map[index];
+        while (current->next) {
+            current = current->next;
+        }
+        LVHnswIDHash* id_hash = malloc(sizeof(LVHnswIDHash));
+        if (!id_hash) {
+            result = LV_ERR_OOM;
+            goto _return;
+        }
+        id_hash->external_id = external_id;
+        id_hash->internal_id = internal_id;
+        id_hash->next = NULL;
+
+        current->next = id_hash;
+    }
+
+_return:
+    return result;
+}
+
+LVStatus vector_hnsw_insert_id_hash_map(LVHnswIDHashMap* id_hash_map, const LVVectorId64_t external_id, const LVVectorId64_t internal_id) {
+    LVStatus result = LV_OK;
+
+    if ((result = vector_hnsw_insert_id_hash_value(id_hash_map->map, id_hash_map->capacity, external_id, internal_id)) != LV_OK) goto _return;
+
+    id_hash_map->size += 1;
+
+    if (id_hash_map->size * 4 > id_hash_map->capacity * 3) {
+        result = vector_hnsw_rehash_id_hash_map(id_hash_map);
+    }
+_return:
+    return result;
+}
+
+LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
+    LVStatus result = LV_OK;
+    int flag = 0;
+
+    const LVSize32_t new_capacity = id_hash_map->capacity * 2;
+    LVHnswIDHash** old_map = id_hash_map->map;
+    LVHnswIDHash** new_map = NULL;
+    new_map = calloc(new_capacity, sizeof(LVHnswIDHash*));
+
+    if (!new_map) {
+        result = LV_ERR_OOM;
+        flag = 1;
+        goto cleanup;
+    }
+
+    LVSize32_t new_size = 0;
+
+    for (int i = 0; i < id_hash_map->capacity; ++i) {
+        LVHnswIDHash* current = id_hash_map->map[i];
+        while (current) {
+            if ((result = vector_hnsw_insert_id_hash_value(new_map, new_capacity, current->external_id, current->internal_id)) != LV_OK) {
+                flag = 1;
+                goto cleanup;
+            }
+            new_size += 1;
+            current = current->next;
+        }
+    }
+
+    for (int i = 0; i < id_hash_map->capacity; ++i) {
+        LVHnswIDHash* current = id_hash_map->map[i];
+        while (current) {
+            LVHnswIDHash* tmp = current->next;
+            free(current);
+            current = tmp;
+        }
+    }
+
+    id_hash_map->capacity = new_capacity;
+    id_hash_map->size = new_size;
+    id_hash_map->map = new_map;
+
+cleanup:
+    if (flag) {
+        if (new_map) {
+            for (int i = 0; i < new_capacity; ++i) {
+                LVHnswIDHash* current = new_map[i];
+                while (current) {
+                    LVHnswIDHash* tmp = current->next;
+                    free(current);
+                    current = tmp;
+                }
+            }
+            free(new_map);
+        }
+    }
+    else {
+        // if there is no error, dealloc old map
+        free(old_map);
+    }
+    return result;
+}
+
+LVVectorId64_t vector_hnsw_get_internal_id(const LVHnswIDHashMap* id_hash_map, const LVVectorId64_t external_id) {
+    const LVHash32_t hash = fnv1a_hash(&external_id, sizeof(LVVectorId64_t));
+    const int index = hash % id_hash_map->capacity;
+    LVHnswIDHash* current = id_hash_map->map[index];
+    while (current) {
+        if (current->external_id == external_id) {
+            return current->internal_id;
+        }
+        current = current->next;
+    }
+    return LV_NO_VECTOR_ID;
 }
