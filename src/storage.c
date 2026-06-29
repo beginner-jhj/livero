@@ -74,7 +74,8 @@ cleanup:
     if (flag)
     {
         arena_destroy(arena);
-        safe_free(&table);
+        free(table);
+        table = NULL;
     }
 
     return table;
@@ -93,23 +94,23 @@ LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, 
     LVNode* update[LV_SKIPLIST_MAX_LEVEL];
     memset(update, 0, sizeof(LVNode*) * LV_SKIPLIST_MAX_LEVEL);
 
-    LVLevel8_t current_update_level = table->current_level - 1;
+    LVLevel8_t current_update_level_index = table->current_level - 1;
     LVNode* current_head = table->head;
-    LVNode* current_cmp_node = current_head->levels[current_update_level];
+    LVNode* current_cmp_node = current_head->levels[current_update_level_index];
 
-    while (current_update_level >= 0)
+    while (current_update_level_index >= 0)
     {
         while (node_cmp(current_cmp_node->type, node_access_key(current_cmp_node), current_cmp_node->key_len, current_cmp_node->seq, LV_NODE_DATA, key, key_len, seq) < 0)
         {
             current_head = current_cmp_node;
-            current_cmp_node = current_head->levels[current_update_level];
+            current_cmp_node = current_head->levels[current_update_level_index];
         }
 
-        update[current_update_level] = current_head;
-        if (current_update_level == 0)
+        update[current_update_level_index] = current_head;
+        if (current_update_level_index == 0)
             break;
-        --current_update_level;
-        current_cmp_node = current_head->levels[current_update_level];
+        --current_update_level_index;
+        current_cmp_node = current_head->levels[current_update_level_index];
     }
 
     LVNode* new_node = node_create(table->arena, LV_NODE_DATA, seq, op, level, key_len, key, value_len, value, vector_id, field_mask, field_count, field_size, field_buffer);
@@ -138,6 +139,7 @@ LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, 
 
     result = new_node;
 
+    LVNode* n = table->head->levels[0];
 _return:
     return result;
 }
@@ -147,23 +149,23 @@ void table_direct_insert(LVMemTable* table, LVNode* node)
     LVNode* update[LV_SKIPLIST_MAX_LEVEL];
     memset(update, 0, sizeof(LVNode*) * LV_SKIPLIST_MAX_LEVEL);
 
-    LVLevel8_t current_update_level = table->current_level - 1;
+    LVLevel8_t current_update_level_index = table->current_level - 1;
     LVNode* current_head = table->head;
-    LVNode* current_cmp_node = current_head->levels[current_update_level];
+    LVNode* current_cmp_node = current_head->levels[current_update_level_index];
 
-    while (current_update_level >= 0)
+    while (current_update_level_index >= 0)
     {
         while (node_cmp(current_cmp_node->type, node_access_key(current_cmp_node), current_cmp_node->key_len, current_cmp_node->seq, node->type, node_access_key(node), node->key_len, node->seq) < 0)
         {
             current_head = current_cmp_node;
-            current_cmp_node = current_head->levels[current_update_level];
+            current_cmp_node = current_head->levels[current_update_level_index];
         }
 
-        update[current_update_level] = current_head;
-        if (current_update_level == 0)
+        update[current_update_level_index] = current_head;
+        if (current_update_level_index == 0)
             break;
-        --current_update_level;
-        current_cmp_node = current_head->levels[current_update_level];
+        --current_update_level_index;
+        current_cmp_node = current_head->levels[current_update_level_index];
     }
 
     if (node->level > table->current_level)
