@@ -122,6 +122,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                     }
                     last_seq = current_node->seq;
                     current_node = table_get_next_node(current_node);
+
                     continue;
                 }
 
@@ -146,12 +147,14 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                     else {
                         has_old_entry = 0;
                     }
+
                     continue;
                 }
                 else {
                     //drop
                     last_seq = current_node->seq;
                     current_node = table_get_next_node(current_node);
+
                     continue;
                 }
             }
@@ -278,7 +281,9 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
         next_seq = last_seq + 1;
         next_vector_id = last_vector_id + 1;
+
     }
+
 
     const uint64_t index_block_offset = write_helper_get_offset(new_fd);
 
