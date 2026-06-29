@@ -243,7 +243,6 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
 {
     LVStatus result = LV_OK;
 
-
     // check db is properly initialized
     if ((result = lv_check_db_corruption_internal(db)) != LV_OK) return result;
 
@@ -268,6 +267,7 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
     {
         LVMetaField* current_field = fields + i;
         LVMetaFieldHash* search_result = schema_search_field_hash(db->schema->field_hashes, current_field->name, strlen(current_field->name));
+
         if (!search_result)
         { // check field name exists
             result = LV_ERR_INVALID;
@@ -345,7 +345,7 @@ LVStatus lv_update_value(LightVec* db, const void* key, const LVKeyLen32_t key_l
             };
             if (found_field_size > 0) {
                 char memory_field_buffer[found_field_size];
-                if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, 0, NULL, 0, memory_field_buffer, found_field_size, NULL)) != LV_OK) {
+                if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, key_len, NULL, value_len, memory_field_buffer, found_field_size, NULL)) != LV_OK) {
                     free(entry.key);
                     return result;
                 };
@@ -426,24 +426,32 @@ LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_
         }
 
         char found_value[found_value_len];
-        if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, 0, found_value, found_value_len, NULL, found_field_size, NULL)) != LV_OK) {
-            free(entry.key);
-            return result;
-        }
-
-        if ((result = lv_put_internal(db, LV_UPDATE, db->next_seq, db->next_vector_id, key, key_len,
-            found_value, found_value_len, vector,
-            found_field_mask, found_field_count, found_field_size, NULL)) != LV_OK) {
-            free(entry.key);
-            return result;
-        }
 
         found_vector_id = entry.vector_id;
+
+        if (found_field_size > 0) {
+            char found_field[found_field_size];
+            if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, key_len, found_value, found_value_len, found_field, found_field_size, NULL)) != LV_OK) {
+                free(entry.key);
+                return result;
+            };
+
+            result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, found_value, found_value_len, vector, found_field_mask, found_field_count, found_field_size, found_field);
+        }
+        else {
+            if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, key_len, found_value, found_value_len, NULL, 0, NULL)) != LV_OK) {
+                free(entry.key);
+                return result;
+            };
+            result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, found_value, found_value_len, vector, 0, 0, 0, NULL);
+        }
+
         free(entry.key);
     }
 
     if (found_vector_id != LV_NO_VECTOR_ID) {
-        vector_hnsw_mark_updated(db->hnsw, found_vector_id);
+        const LVVectorId64_t internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, found_vector_id);
+        vector_hnsw_mark_updated(db->hnsw, internal_id);
     }
 
     return result;
@@ -544,7 +552,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
             }
         }
 
-        if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, 0, found_value, found_value_len, found_field, found_field_size, NULL)) != LV_OK) goto cleanup;
+        if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, key_len, found_value, found_value_len, found_field, found_field_size, NULL)) != LV_OK) goto cleanup;
     }
 
     new_field_size = found_field_size;
@@ -802,7 +810,8 @@ LVStatus lv_delete(LightVec* db, const void* key, const LVKeyLen32_t key_len) {
     if ((result = lv_put_internal(db, LV_DELETE, db->next_seq, LV_NO_VECTOR_ID, key, key_len, NULL, 0, NULL, 0, 0, 0, NULL)) != LV_OK) goto _return;
 
     if (found_vector_id != LV_NO_VECTOR_ID) {
-        vector_hnsw_mark_deleted(db->hnsw, found_vector_id);
+        const LVVectorId64_t internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, found_vector_id);
+        vector_hnsw_mark_deleted(db->hnsw, internal_id);
     }
 _return:
     return result;
@@ -901,6 +910,7 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         result = LV_ERR_OOM;
         goto _return;
     }
+
 
     if (needs_hnsw) {
         const int is_f32 = db->schema->vector_type == LV_VEC_FLOAT32;
@@ -1046,7 +1056,9 @@ static LVStatus lv_recover_internal(LightVec* db) {
                     if ((result = vector_read_i8_vector(db->vectors_fd, current_node->vector_id, db->schema->vector_dim, vector)) != LV_OK) goto _return;
                     if ((result = vector_hnsw_i8_insert(db->hnsw, current_node->vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK) goto _return;
                 }
-                vector_hnsw_link_memtable_node(db->hnsw, current_node->vector_id, current_node);
+                const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_current_internal_id(db->hnsw);
+                node_link_hnsw_node(current_node, db->hnsw->id_node_map->map[current_hnsw_internal_id]);
+                vector_hnsw_link_memtable_node(db->hnsw, current_hnsw_internal_id, current_node);
             }
 
 
@@ -1095,7 +1107,7 @@ static LVStatus lv_recover_internal(LightVec* db) {
                         };
                     }
 
-                    vector_hnsw_mark_flushed(db->hnsw, entry.vector_id);
+                    vector_hnsw_mark_flushed(db->hnsw, vector_hnsw_current_internal_id(db->hnsw));
                 }
             }
 
@@ -1107,6 +1119,14 @@ static LVStatus lv_recover_internal(LightVec* db) {
 
     db->next_seq = next_seq_from_wal > next_seq_from_sst ? next_seq_from_wal : next_seq_from_sst;
     db->next_vector_id = next_vector_id_from_wal > next_vector_id_from_sst ? next_vector_id_from_wal : next_vector_id_from_sst;
+
+    LVNode* n = db->memtable->head->levels[0];
+    int tomb = 0, total = 0;
+    while (n->type != LV_NODE_TAIL) {
+        total++;
+        if (n->op == LV_DELETE) tomb++;
+        n = table_get_next_node(n);
+    }
 
 _return:
     return result;
@@ -1202,7 +1222,9 @@ static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t
     }
 
     if (vector) {
-        vector_hnsw_link_memtable_node(db->hnsw, current_vector_id, inserted_memtable_node);
+        const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_current_internal_id(db->hnsw);
+        node_link_hnsw_node(inserted_memtable_node, db->hnsw->id_node_map->map[current_hnsw_internal_id]);
+        vector_hnsw_link_memtable_node(db->hnsw, current_hnsw_internal_id, inserted_memtable_node);
     }
 
     db->next_seq += 1;
@@ -1249,7 +1271,7 @@ static LVStatus lv_flush_internal(LightVec* db) {
     LVNode* current = db->memtable->head->levels[0];
     while (current->type != LV_NODE_TAIL) {
         if (current->vector_id != LV_NO_VECTOR_ID) {
-            vector_hnsw_mark_flushed(db->hnsw, current->vector_id);
+            vector_hnsw_mark_flushed(db->hnsw, current->hnsw_node->internal_id);
         }
         current = current->levels[0];
     }
@@ -1668,6 +1690,11 @@ cleanup:
 LVStatus lv_close(LightVec* db) {
     if (!db) return LV_ERR_INVALID;
     if (lv_check_db_corruption_internal(db) != LV_OK) return LV_ERR_CORRUPT;
+
+    off_t sz = lseek(db->wal_fd, 0, SEEK_END);
+
+    LVStatus fs = lv_flush_internal(db);
+    if(fs != LV_OK) return fs;
 
     write_helper_reset();
     if (db->schema_fd >= 0)       close(db->schema_fd);
