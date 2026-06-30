@@ -659,20 +659,17 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
                         goto _return;
                     }
                     const LVHnswNode* neighbor_node = hnsw->id_node_map->map[neighbor_internal_id];
-                    if (!neighbor_node->is_latest || neighbor_node->deleted || neighbor_node->flushed) {
-                        //pass
-                    }
-                    else {
-                        if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
-                        {
-                            goto _return;
-                        }
 
-                        if (hnsw->result_heap->size > EF)
-                        {
-                            vector_heap_pop(hnsw->result_heap, NULL);
-                        }
+                    if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
+                    {
+                        goto _return;
                     }
+
+                    if (hnsw->result_heap->size > EF)
+                    {
+                        vector_heap_pop(hnsw->result_heap, NULL);
+                    }
+
                 }
             }
 
@@ -1204,10 +1201,6 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
 
 _return:
     return result;
-}
-
-LVVectorId64_t vector_hnsw_current_internal_id(const LVHnsw* hnsw) {
-    return hnsw->node_count > 0 ? hnsw->node_count - 1 : LV_NO_VECTOR_ID;
 }
 
 LVStatus vector_hnsw_insert_id_hash_value(LVHnswIDHash** map, const LVSize32_t capacity, const LVVectorId64_t external_id, const LVVectorId64_t internal_id) {

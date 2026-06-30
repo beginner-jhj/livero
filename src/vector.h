@@ -203,8 +203,6 @@ void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_internal_i
 LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema,
     const LVAstNode* query, const void* query_vector, const LVHnswQueryCtx* query_ctx);
 
-LVVectorId64_t vector_hnsw_current_internal_id(const LVHnsw* hnsw);
-
 LVStatus vector_hnsw_insert_id_hash_value(LVHnswIDHash** map, const LVSize32_t capacity, const LVVectorId64_t external_id, const LVVectorId64_t internal_id);
 LVStatus vector_hnsw_insert_id_hash_map(LVHnswIDHashMap* id_hash_map, const LVVectorId64_t external_id, const LVVectorId64_t internal_id);
 LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map);
