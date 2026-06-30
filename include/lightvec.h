@@ -21,6 +21,4 @@ LVStatus lv_close(LightVec* db);
 
 void lv_destroy_query_result_set(LVQueryResultSet* qrset);
 
-//todo lv_update, lv_delete
-//LV_NODE_UPDATE flag should be added
 #endif
