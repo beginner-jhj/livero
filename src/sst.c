@@ -71,7 +71,8 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
             if (current_node->vector_id != LV_NO_VECTOR_ID) {
                 uint64_t offset = record_start_offset;
-                if ((result = pwrite_helper(vector_index_fd, &offset, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
+                put_fixed_64(BUF_64, offset);
+                if ((result = pwrite_helper(vector_index_fd, BUF_64, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
             }
 
             record_count += 1;
@@ -135,7 +136,8 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                         old_entry.seq, old_entry.vector_id, record_start_offset)) != LV_OK) goto _return;
                     if (old_entry.vector_id != LV_NO_VECTOR_ID) {
                         uint64_t offset = record_start_offset;
-                        if ((result = pwrite_helper(vector_index_fd, &offset, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
+                        put_fixed_64(BUF_64, offset);
+                        if ((result = pwrite_helper(vector_index_fd, BUF_64, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
                     }
                     record_read += 1;
                     record_count += 1;
@@ -170,8 +172,11 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                     current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
                 if (current_node->vector_id != LV_NO_VECTOR_ID) {
                     uint64_t offset = record_start_offset;
-                    if ((result = pwrite_helper(vector_index_fd, &offset, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
-                    last_vector_id = current_node->vector_id;
+                    put_fixed_64(BUF_64, offset);
+                    if ((result = pwrite_helper(vector_index_fd, BUF_64, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
+                    if (current_node->vector_id > last_vector_id) {
+                        last_vector_id = current_node->vector_id;
+                    }
                 }
                 last_seq = current_node->seq;
 
@@ -196,7 +201,8 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
                 if (old_entry.vector_id != LV_NO_VECTOR_ID) {
                     uint64_t offset = record_start_offset;
-                    if ((result = pwrite_helper(vector_index_fd, &offset, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
+                    put_fixed_64(BUF_64, offset);
+                    if ((result = pwrite_helper(vector_index_fd, BUF_64, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
                 }
 
                 record_read += 1;
@@ -216,10 +222,11 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 if ((result = sst_indexblockset_append(index_set, current_key_len, current_key, current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
                 if (current_node->vector_id != LV_NO_VECTOR_ID) {
                     uint64_t offset = record_start_offset;
-                    if ((result = pwrite_helper(vector_index_fd, &offset, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
+                    put_fixed_64(BUF_64, offset);
+                    if ((result = pwrite_helper(vector_index_fd, BUF_64, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
                 }
                 last_seq = current_node->seq;
-                if (current_node->vector_id != LV_NO_VECTOR_ID) {
+                if (current_node->vector_id != LV_NO_VECTOR_ID && current_node->vector_id > last_vector_id) {
                     last_vector_id = current_node->vector_id;
                 }
                 current_node = table_get_next_node(current_node);
@@ -245,11 +252,12 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
             if (current_node->vector_id != LV_NO_VECTOR_ID) {
                 uint64_t offset = record_start_offset;
-                if ((result = pwrite_helper(vector_index_fd, &offset, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
+                put_fixed_64(BUF_64, offset);
+                if ((result = pwrite_helper(vector_index_fd, BUF_64, 8, current_node->vector_id * 8)) != LV_OK) goto _return;
             }
             record_count += 1;
             last_seq = current_node->seq;
-            if (current_node->vector_id != LV_NO_VECTOR_ID) {
+            if (current_node->vector_id != LV_NO_VECTOR_ID && current_node->vector_id > last_vector_id) {
                 last_vector_id = current_node->vector_id;
             }
             current_node = table_get_next_node(current_node);
@@ -263,7 +271,8 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
             if (old_entry.vector_id != LV_NO_VECTOR_ID) {
                 uint64_t offset = record_start_offset;
-                if ((result = pwrite_helper(vector_index_fd, &offset, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
+                put_fixed_64(BUF_64, offset);
+                if ((result = pwrite_helper(vector_index_fd, BUF_64, 8, old_entry.vector_id * 8)) != LV_OK) goto _return;
             }
 
             record_read += 1;
