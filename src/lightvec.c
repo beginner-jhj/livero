@@ -429,6 +429,9 @@ LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_
 
         found_vector_id = entry.vector_id;
 
+        const LVSeq64_t current_seq = db->next_seq;
+        const LVSeq64_t current_vector_id = db->next_vector_id;
+
         if (found_field_size > 0) {
             char found_field[found_field_size];
             if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, key_len, found_value, found_value_len, found_field, found_field_size, NULL)) != LV_OK) {
@@ -436,14 +439,14 @@ LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_
                 return result;
             };
 
-            result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, found_value, found_value_len, vector, found_field_mask, found_field_count, found_field_size, found_field);
+            result = lv_put_internal(db, LV_UPDATE, current_seq, current_vector_id, key, key_len, found_value, found_value_len, vector, found_field_mask, found_field_count, found_field_size, found_field);
         }
         else {
             if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, key_len, found_value, found_value_len, NULL, 0, NULL)) != LV_OK) {
                 free(entry.key);
                 return result;
             };
-            result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, found_value, found_value_len, vector, 0, 0, 0, NULL);
+            result = lv_put_internal(db, LV_UPDATE, current_seq, current_vector_id, key, key_len, found_value, found_value_len, vector, 0, 0, 0, NULL);
         }
 
         free(entry.key);
@@ -1056,7 +1059,7 @@ static LVStatus lv_recover_internal(LightVec* db) {
                     if ((result = vector_read_i8_vector(db->vectors_fd, current_node->vector_id, db->schema->vector_dim, vector)) != LV_OK) goto _return;
                     if ((result = vector_hnsw_i8_insert(db->hnsw, current_node->vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK) goto _return;
                 }
-                const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_current_internal_id(db->hnsw);
+                const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, current_node->vector_id);
                 node_link_hnsw_node(current_node, db->hnsw->id_node_map->map[current_hnsw_internal_id]);
                 vector_hnsw_link_memtable_node(db->hnsw, current_hnsw_internal_id, current_node);
             }
@@ -1079,6 +1082,7 @@ static LVStatus lv_recover_internal(LightVec* db) {
         while (record_read < saved_record_count) {
             uint64_t next_offset = 0;
             if ((result = sst_read_index_entry_at_offset(db->sst_fd, read_offset, &entry, &next_offset)) != LV_OK) goto _return;
+
             if (entry.vector_id != LV_NO_VECTOR_ID) {
                 if (table_search(db->memtable, entry.key, entry.key_len) != NULL) {
                     // skip (latest node is already proccessed)
@@ -1086,14 +1090,17 @@ static LVStatus lv_recover_internal(LightVec* db) {
                 else {
                     if (db->schema->vector_type == LV_VEC_FLOAT32) {
                         float vector[db->schema->vector_dim];
+
                         if ((result = vector_read_f32_vector(db->vectors_fd, entry.vector_id, db->schema->vector_dim, vector)) != LV_OK) {
                             free(entry.key);
                             goto _return;
                         };
+
                         if ((result = vector_hnsw_f32_insert(db->hnsw, entry.vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot)) != LV_OK) {
                             free(entry.key);
                             goto _return;
                         };
+
                     }
                     else {
                         int8_t vector[db->schema->vector_dim];
@@ -1107,7 +1114,8 @@ static LVStatus lv_recover_internal(LightVec* db) {
                         };
                     }
 
-                    vector_hnsw_mark_flushed(db->hnsw, vector_hnsw_current_internal_id(db->hnsw));
+                    const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, entry.vector_id);
+                    vector_hnsw_mark_flushed(db->hnsw, current_hnsw_internal_id);
                 }
             }
 
@@ -1120,12 +1128,8 @@ static LVStatus lv_recover_internal(LightVec* db) {
     db->next_seq = next_seq_from_wal > next_seq_from_sst ? next_seq_from_wal : next_seq_from_sst;
     db->next_vector_id = next_vector_id_from_wal > next_vector_id_from_sst ? next_vector_id_from_wal : next_vector_id_from_sst;
 
-    LVNode* n = db->memtable->head->levels[0];
-    int tomb = 0, total = 0;
-    while (n->type != LV_NODE_TAIL) {
-        total++;
-        if (n->op == LV_DELETE) tomb++;
-        n = table_get_next_node(n);
+    if (db->memtable->node_count >= db->flush_threshold) {
+        result = lv_flush_internal(db);
     }
 
 _return:
@@ -1222,7 +1226,7 @@ static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t
     }
 
     if (vector) {
-        const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_current_internal_id(db->hnsw);
+        const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, current_vector_id);
         node_link_hnsw_node(inserted_memtable_node, db->hnsw->id_node_map->map[current_hnsw_internal_id]);
         vector_hnsw_link_memtable_node(db->hnsw, current_hnsw_internal_id, inserted_memtable_node);
     }
@@ -1693,9 +1697,13 @@ LVStatus lv_close(LightVec* db) {
 
     off_t sz = lseek(db->wal_fd, 0, SEEK_END);
 
-    LVStatus fs = lv_flush_internal(db);
-    if(fs != LV_OK) return fs;
+    if (db->memtable->node_count > 0) {
+        LVStatus fs = lv_flush_internal(db);
+        if (fs != LV_OK) return fs;
+    }
 
+
+    write_helper_flush(db->sst_fd, 1);
     write_helper_reset();
     if (db->schema_fd >= 0)       close(db->schema_fd);
     if (db->wal_fd >= 0)          close(db->wal_fd);
