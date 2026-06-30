@@ -160,7 +160,7 @@ _return:
     return result;
 }
 
-LVStatus wal_recover(const int fd, const LVMemTable* table, LVSeq64_t* next_seq_out, LVVectorId64_t* next_vector_id_out)
+LVStatus wal_recover(const int fd, LVMemTable* table, LVSeq64_t* next_seq_out, LVVectorId64_t* next_vector_id_out)
 {
     LVStatus result = LV_OK;
     off_t wal_size = lseek(fd, 0, SEEK_END);
@@ -243,10 +243,13 @@ LVStatus wal_recover(const int fd, const LVMemTable* table, LVSeq64_t* next_seq_
 
         if (saved_vector_id != LV_NO_VECTOR_ID) {
             saw_vector = 1;
-            last_vector_id = saved_vector_id;
+            if (saved_vector_id > last_vector_id) {
+                last_vector_id = saved_vector_id;
+            }
         }
         saw_any = 1;
         last_seq = saved_seq;
+
     }
 
     *next_seq_out = saw_any ? last_seq + 1 : 0;
