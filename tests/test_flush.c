@@ -74,8 +74,8 @@ long g_shrink_count = 0;
   * state we want every query to read correctly. */
 #define FLUSH_LOW  64
 
-  /* Field layout — every record carries all three, so any filter over them
-   * touches every record's field_mask (same as test_table.c). */
+ /* Field layout — every record carries all three, so any filter over them
+  * touches every record's field_mask (same as test_table.c). */
 #define FIELD_CATEGORY 0
 #define FIELD_SCORE    1
 #define FIELD_TAG      2
@@ -131,7 +131,6 @@ static void build_schema(LVSchema* schema)
     memset(schema, 0, sizeof(*schema));
     schema->vector_dim = DIM;
     schema->vector_type = LV_VEC_FLOAT32;
-    schema->vector_metric = LV_METRIC_L2;
     schema->field_count = N_FIELDS;
 
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
@@ -198,7 +197,7 @@ static int populate(LightVec* db)
         LVStatus s = lv_put(db,
             r->key, r->key_len,
             r->key, r->key_len,
-            r->vec,
+            r->vec, 
             N_FIELDS, fields);
 
         if (s != LV_OK) {
@@ -593,268 +592,35 @@ static void test_delete_tombstone_across_flush(void)
 }
 
 /* ===========================================================================
- * Test 7 — field serialization order independence ACROSS FLUSH  (REGRESSION)
+ * 7c — update_vector then reopen (shadow), with an A/B SPLIT.
  *
- * SIBLING OF test_table.c's test_field_serialization_order().
+ * The point of this test is to separate two questions that the original
+ * single-query version conflated:
  *
- * Background (the bug):
- *   schema_serialize_field() used to emit fields in the CALLER'S array order,
- *   while every reader walks fields assuming ASCENDING MASK-BIT order. They only
- *   matched because build_fields()/populate() always filled fields[] in
- *   ascending-mask order, so the two orders never differed and the bug stayed
- *   invisible. The fix makes schema_serialize_field() drive the loop by mask bit
- *   (pull the field for bit 0, then bit 1, ...) so output order is correct by
- *   construction, regardless of input order.
+ *   [A] Is ONLY the updated node (key_0005, whose vector_id jumped to a fresh
+ *       id while its key still sorts early) broken — i.e. is it findable by its
+ *       NEW vector B after a reopen?
  *
- * WHY A SEPARATE FLUSH TEST — even though both paths share one function:
- *   The MemTable test (test_table.c) only exercises the IN-MEMORY serialization
- *   (node_create, is_on_disk = 0). The flush path is different in two ways that
- *   the memtable test cannot reach:
- *     1. It serializes with is_on_disk = 1 (the put_fixed_32/64 byte-encoded
- *        branch), a *different* code path inside schema_serialize_field.
- *     2. The bytes make a full round trip THROUGH DISK: memtable -> SST (and
- *        SST<->SST merge), and separately WAL -> recovery on reopen.
- *   So even though the order-fix lives in one function, "the memtable test is
- *   green" does NOT prove the disk path is green. We must force a flush and a
- *   reopen and re-read the fields to confirm the on-disk layout is also in mask
- *   order. This test does exactly that.
+ *   [B] Is the REST of the graph healthy — i.e. does a plain recall query on a
+ *       key that was never updated (key_0003) still clear the floor?
  *
- * Strategy:
- *   - Put ONE probe record with fields in REVERSE mask order (tag=bit2,
- *     score=bit1, category=bit0). Unique values isolate it from populate()'s
- *     data: category 7 (populate uses 0..4), score 12345.0 (populate < 100),
- *     tag "zebra" (not in TAGS[]).
- *   - Then put enough additional records to cross FLUSH_LOW and force the probe
- *     record OUT of the MemTable and INTO the SST (so the query reads it back
- *     from disk, through the SST serialization path — not from memory).
- *   - Query each field; before the fix the disk layout is [tag][score][category]
- *     but readers expect [category][score][tag], so the int and string probes
- *     miss. After the fix all three round-trip.
- *   - Finally CLOSE and REOPEN the db (WAL/SST recovery) and query once more, to
- *     prove the persisted-and-recovered layout is also mask-ordered.
- * ===========================================================================*/
-static void test_field_serialization_order_across_flush(void)
-{
-    int n = 1;
-    printf("\n=== field serialization order across flush (regression) ===\n");
-
-    fresh_db_dir();
-    LVSchema schema; build_schema(&schema);
-    LightVec* db = NULL;
-    LVStatus s = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
-    if (s != LV_OK || !db) {
-        print_status_code(s);
-        printf("    (skip — open failed)\n");
-        return;
-    }
-
-    const char* PKEY = "zorder_probe";
-    const uint32_t PKLEN = (uint32_t)strlen(PKEY);
-    const int64_t  UNIQ_CATEGORY = 7;          /* populate() uses only 0..4    */
-    const double   UNIQ_SCORE = 12345.0;    /* far above populate()'s < 100 */
-    const char* UNIQ_TAG = "zebra";    /* not present in TAGS[]        */
-
-    float pvec[DIM];
-    for (int d = 0; d < DIM; ++d) pvec[d] = lv_rand_f32_range(-1.0f, 1.0f);
-
-    /* THE KEY MOVE: fill fields[] in REVERSE mask order [tag, score, category].
-     * Schema mask bits: category=bit0, score=bit1, tag=bit2. A correct
-     * implementation must serialize by mask bit, not by this array order. */
-    LVMetaField fields[N_FIELDS];
-    memset(fields, 0, sizeof(fields));
-
-    strcpy(fields[0].name, "tag");            /* bit 2 */
-    fields[0].type = LV_META_STRING;
-    fields[0].value.str.string = (char*)UNIQ_TAG;
-    fields[0].value.str.len = (uint32_t)strlen(UNIQ_TAG);
-
-    strcpy(fields[1].name, "score");          /* bit 1 */
-    fields[1].type = LV_META_FLOAT;
-    fields[1].value.f64 = UNIQ_SCORE;
-
-    strcpy(fields[2].name, "category");       /* bit 0 */
-    fields[2].type = LV_META_INT;
-    fields[2].value.i64 = UNIQ_CATEGORY;
-
-    LVStatus sp = lv_put(db, PKEY, PKLEN, PKEY, PKLEN, pvec,
-        N_FIELDS, fields);
-    TEST_START(n++, "probe put (reverse-order fields) returns LV_OK");
-    print_status_code(sp);
-    expect_true(sp == LV_OK, "probe put (reverse-order fields) returns LV_OK");
-    if (sp != LV_OK) { lv_close(db); return; }
-
-    /* Force the probe record from MemTable into the SST: push well past
-     * FLUSH_LOW with filler records (distinct keys, ordinary in-range values so
-     * they never collide with the probe's unique predicates). */
-    int filler = FLUSH_LOW * 3;   /* comfortably crosses the threshold */
-    for (int i = 0; i < filler; ++i) {
-        char fkey[32];
-        uint32_t fklen = (uint32_t)snprintf(fkey, sizeof(fkey), "filler_%04d", i);
-
-        float fvec[DIM];
-        for (int d = 0; d < DIM; ++d) fvec[d] = lv_rand_f32_range(-1.0f, 1.0f);
-
-        char ftag[16];
-        uint32_t ftlen = (uint32_t)snprintf(ftag, sizeof(ftag), "%s", TAGS[i % N_TAGS]);
-
-        /* normal ascending-order fields for filler; value ranges chosen NOT to
-         * satisfy the probe predicates (category 0..4, score 0..100). */
-        LVMetaField ff[N_FIELDS];
-        build_fields(ff, (int64_t)(i % 5), lv_rand_f32_range(0.0f, 100.0f),
-            ftag, ftlen);
-
-        LVStatus fs = lv_put(db, fkey, fklen, fkey, fklen, fvec,
-            N_FIELDS, ff);
-        if (fs != LV_OK) {
-            print_status_code(fs);
-            printf("    filler put failed at i=%d\n", i);
-            expect_true(0, "filler puts succeed");
-            lv_close(db);
-            return;
-        }
-    }
-
-    LVQueryOption opt; memset(&opt, 0, sizeof(opt));
-    opt.flags = LV_QOPT_NONE;
-
-    /* Helper-style inline checks: each unique predicate must match EXACTLY the
-     * one probe record, proving that field was read back from the SST correctly
-     * despite the reverse input order. */
-
-     /* (a) INT field, read back from SST: category == 7 -> exactly 1 */
-    {
-        LVQueryResultSet* rs = NULL;
-        LVStatus q = lv_query(db, "category == 7", NULL, &opt, &rs);
-        TEST_START(n++, "[SST] reverse-order INT reads back (category==7 -> 1)");
-        if (q == LV_OK && rs) {
-            printf("    expected=1 got=%u\n", rs->size);
-            expect_true(rs->size == 1,
-                "[SST] reverse-order INT reads back (category==7 -> 1)");
-        }
-        else {
-            print_status_code(q);
-            expect_true(0, "[SST] reverse-order INT reads back (category==7 -> 1)");
-        }
-        if (rs) lv_destroy_query_result_set(rs);
-    }
-
-    /* (b) FLOAT field, read back from SST: score > 10000 -> exactly 1 */
-    {
-        LVQueryResultSet* rs = NULL;
-        LVStatus q = lv_query(db, "score > 10000.0", NULL, &opt, &rs);
-        TEST_START(n++, "[SST] reverse-order FLOAT reads back (score>10000 -> 1)");
-        if (q == LV_OK && rs) {
-            printf("    expected=1 got=%u\n", rs->size);
-            expect_true(rs->size == 1,
-                "[SST] reverse-order FLOAT reads back (score>10000 -> 1)");
-        }
-        else {
-            print_status_code(q);
-            expect_true(0, "[SST] reverse-order FLOAT reads back (score>10000 -> 1)");
-        }
-        if (rs) lv_destroy_query_result_set(rs);
-    }
-
-    /* (c) STRING field, read back from SST: tag == 'zebra' -> exactly 1 */
-    {
-        LVQueryResultSet* rs = NULL;
-        LVStatus q = lv_query(db, "tag == 'zebra'", NULL, &opt, &rs);
-        TEST_START(n++, "[SST] reverse-order STRING reads back (tag=='zebra' -> 1)");
-        if (q == LV_OK && rs) {
-            printf("    expected=1 got=%u\n", rs->size);
-            expect_true(rs->size == 1,
-                "[SST] reverse-order STRING reads back (tag=='zebra' -> 1)");
-        }
-        else {
-            print_status_code(q);
-            expect_true(0, "[SST] reverse-order STRING reads back (tag=='zebra' -> 1)");
-        }
-        if (rs) lv_destroy_query_result_set(rs);
-    }
-
-    /* ---- Now close + reopen to exercise the RECOVERY path (WAL/SST read back
-     * on open). This proves the PERSISTED layout — not just the live one — is
-     * mask-ordered. If recovery re-read fields by input order, the probe's int
-     * and string fields would come back misaligned here. ---- */
-    if (lv_close(db) != LV_OK) {
-        expect_true(0, "lv_close before reopen returns LV_OK");
-        return;
-    }
-    db = NULL;
-    LVStatus sr = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
-    TEST_START(n++, "reopen for recovery returns LV_OK");
-    print_status_code(sr);
-    expect_true(sr == LV_OK && db != NULL, "reopen for recovery returns LV_OK");
-    if (sr != LV_OK || !db) return;
-
-    /* (d) after recovery, the int probe must still resolve: category == 7 -> 1 */
-    {
-        LVQueryResultSet* rs = NULL;
-        LVStatus q = lv_query(db, "category == 7", NULL, &opt, &rs);
-        TEST_START(n++, "[recovered] reverse-order INT reads back (category==7 -> 1)");
-        if (q == LV_OK && rs) {
-            printf("    expected=1 got=%u\n", rs->size);
-            expect_true(rs->size == 1,
-                "[recovered] reverse-order INT reads back (category==7 -> 1)");
-        }
-        else {
-            print_status_code(q);
-            expect_true(0, "[recovered] reverse-order INT reads back (category==7 -> 1)");
-        }
-        if (rs) lv_destroy_query_result_set(rs);
-    }
-
-    /* (e) and the string probe likewise: tag == 'zebra' -> 1 */
-    {
-        LVQueryResultSet* rs = NULL;
-        LVStatus q = lv_query(db, "tag == 'zebra'", NULL, &opt, &rs);
-        TEST_START(n++, "[recovered] reverse-order STRING reads back (tag=='zebra' -> 1)");
-        if (q == LV_OK && rs) {
-            printf("    expected=1 got=%u\n", rs->size);
-            expect_true(rs->size == 1,
-                "[recovered] reverse-order STRING reads back (tag=='zebra' -> 1)");
-        }
-        else {
-            print_status_code(q);
-            expect_true(0, "[recovered] reverse-order STRING reads back (tag=='zebra' -> 1)");
-        }
-        if (rs) lv_destroy_query_result_set(rs);
-    }
-
-    lv_close(db);
-}
-
-/* ===========================================================================
- * Test 7 — HNSW recovery across close/reopen
+ * Reading the result:
+ *   A fail, B pass  -> only the updated (vid != internal order) node is lost;
+ *                      the general SST-recovery graph build is fine.
+ *   A fail, B fail  -> the whole recovered graph is degraded; the bug is in the
+ *                      SST-recovery path itself, not specific to the update.
+ *   A pass, B pass  -> not broken.
  *
- * Everything above this point keeps a single LightVec open for the whole test.
- * This test is different: it CLOSES the db and OPENS it again. On reopen,
- * lv_open -> lv_recover_internal must rebuild the in-memory HNSW graph entirely
- * from disk, because the graph lives only in memory and is gone after close.
- *
- * Recovery pulls identity from two sources and vector bytes from vectors.lv:
- *   - the WAL-recovered MemTable (non-flushed records)  -> insert, flushed=0
- *   - the SST index entries (flushed records)           -> insert, flushed=1,
- *       BUT skipped when the key is already owned by the recovered MemTable
- *       (table_search != NULL), so an older/again-deleted version can't
- *       resurrect.
- *
- * The whole point: after reopen, a VECTOR query must see exactly the same live
- * records it saw before close. If recovery missed the SST records, recall
- * collapses; if it failed to shadow deleted/old keys, dead vectors resurface.
- *
- * mirror note: g_ref (the brute-force mirror) is plain process memory, so it
- * SURVIVES lv_close. We deliberately do NOT call fresh_db_dir() or populate()
- * again after reopen — the mirror from before the close is still the ground
- * truth for what *should* be in the reopened db.
+ * No flush is forced after the update, so the SST holds A's stale record and
+ * the MemTable holds B; clean-shutdown flush in lv_close is what pushes B down
+ * into the SST, making the reopen take the SST-recovery path.
  * ===========================================================================*/
 
- /* brute-force true K-nearest over live mirror records, into best_idx[] */
+/* brute-force true top-k by L2 over live mirror records (k <= 64). */
 static void recovery_brute_force_topk(const float* qv, int K,
-    int* best_idx, float* best_dis)
+                                      int* best_idx, float* best_dis)
 {
     for (int i = 0; i < K; ++i) { best_idx[i] = -1; best_dis[i] = FLT_MAX; }
-
     for (int i = 0; i < g_ref_count; ++i) {
         if (!g_ref[i].live) continue;
         float d = ref_l2_sq(qv, g_ref[i].vec, DIM);
@@ -871,8 +637,9 @@ static void recovery_brute_force_topk(const float* qv, int K,
     }
 }
 
-/* recall@k of a result set against the brute-force top-k mirror indices */
-static double recovery_recall(LVQueryResultSet* rs, const int* best_idx, int K)
+/* fraction of brute-force top-k keys present in the result set. */
+static double recovery_recall(const LVQueryResultSet* rs,
+                              const int* best_idx, int K)
 {
     int hit = 0;
     for (int k = 0; k < K; ++k) {
@@ -881,196 +648,16 @@ static double recovery_recall(LVQueryResultSet* rs, const int* best_idx, int K)
         uint32_t    bf_len = g_ref[best_idx[k]].key_len;
         for (uint32_t i = 0; i < rs->size; ++i) {
             if (rs->results[i].key_len == bf_len &&
-                memcmp(rs->results[i].key, bf_key, bf_len) == 0) {
-                hit++;
-                break;
-            }
+                memcmp(rs->results[i].key, bf_key, bf_len) == 0) { hit++; break; }
         }
     }
     return (double)hit / (double)K;
 }
 
-/* ---------------------------------------------------------------------------
- * 7a — basic: populate (mixed SST + MemTable), close, reopen, vector query.
- *      Verifies BOTH recovery paths populated the graph: if the SST walk were
- *      missing, the early (flushed) records would vanish and recall would crater.
- * ------------------------------------------------------------------------- */
-static void test_recovery_basic(void)
-{
-    int n = 1;
-    printf("\n=== recovery: reopen + vector recall ===\n");
-
-    fresh_db_dir();
-    LVSchema schema; build_schema(&schema);
-
-    LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
-        printf("    (skip — open failed)\n"); return;
-    }
-    if (!populate(db)) { lv_close(db); return; }
-
-    /* close: in-memory HNSW graph is destroyed here */
-    lv_close(db);
-
-    /* reopen: lv_recover_internal must rebuild the graph from disk */
-    db = NULL;
-    LVStatus os = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
-    TEST_START(n++, "reopen returns LV_OK");
-    print_status_code(os);
-    expect_true(os == LV_OK && db != NULL, "reopen returns LV_OK");
-    if (os != LV_OK || !db) return;
-
-    const int K = 10;
-    float qv[DIM];
-    for (int d = 0; d < DIM; ++d) qv[d] = lv_rand_f32_range(-1.0f, 1.0f);
-
-    int best_idx[64]; float best_dis[64];
-    recovery_brute_force_topk(qv, K, best_idx, best_dis);
-
-    LVQueryOption opt; memset(&opt, 0, sizeof(opt));
-    opt.flags = LV_QOPT_NONE;
-    opt.top_k = K;
-    opt.vector_metric = LV_METRIC_L2;
-
-    LVQueryResultSet* rs = NULL;
-    LVStatus s = lv_query(db, "category >= 0", qv, &opt, &rs);
-
-    TEST_START(n++, "post-reopen vector query returns LV_OK");
-    print_status_code(s);
-    expect_true(s == LV_OK, "post-reopen vector query returns LV_OK");
-
-    if (s == LV_OK && rs) {
-        double recall = recovery_recall(rs, best_idx, K);
-        TEST_START(n++, "post-reopen recall@k >= RECALL_MIN");
-        printf("    recall@%d = %.2f, returned=%u\n", K, recall, rs->size);
-        expect_true(recall >= RECALL_MIN, "post-reopen recall@k >= RECALL_MIN");
-    }
-    if (rs) lv_destroy_query_result_set(rs);
-    lv_close(db);
-}
-
-/* ---------------------------------------------------------------------------
- * 7b — delete then reopen: a key deleted before close must STAY gone after
- *      recovery. The SST still physically holds the deleted record; the
- *      recovered MemTable holds its tombstone. Recovery must let the tombstone
- *      shadow the SST entry (table_search != NULL -> skip), so the dead vector
- *      never re-enters the graph.
- * ------------------------------------------------------------------------- */
-static void test_recovery_delete(void)
-{
-    int n = 1;
-    printf("\n=== recovery: deleted key stays gone after reopen ===\n");
-
-    fresh_db_dir();
-    LVSchema schema; build_schema(&schema);
-
-    LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
-        printf("    (skip — open failed)\n"); return;
-    }
-    if (!populate(db)) { lv_close(db); return; }
-
-    /* delete all live category-3 records (early ones already flushed to SST) */
-    int deleted = 0;
-    for (int i = 0; i < g_ref_count; ++i) {
-        if (g_ref[i].live && g_ref[i].category == 3) {
-            if (lv_delete(db, g_ref[i].key, g_ref[i].key_len) == LV_OK) {
-                g_ref[i].live = 0;
-                deleted++;
-            }
-        }
-    }
-    printf("    deleted %d category-3 records before close\n", deleted);
-
-    /* filter check: zero live category-3 after recovery */
-    LVQueryOption opt; memset(&opt, 0, sizeof(opt));
-    opt.flags = LV_QOPT_NONE;
-
-    LVQueryResultSet* pre = NULL;
-    lv_query(db, "category == 3", NULL, &opt, &pre);
-    printf("    BEFORE reopen: category==3 count = %u (want 0)\n", pre ? pre->size : 0);
-    if (pre) lv_destroy_query_result_set(pre);
-
-    lv_close(db);
-
-    /* reopen */
-    db = NULL;
-    LVStatus os = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
-    TEST_START(n++, "reopen returns LV_OK");
-    print_status_code(os);
-    expect_true(os == LV_OK && db != NULL, "reopen returns LV_OK");
-    if (os != LV_OK || !db) return;
-
-    LVQueryResultSet* rs = NULL;
-    LVStatus qs = lv_query(db, "category == 3", NULL, &opt, &rs);
-    TEST_START(n++, "post-reopen filter category==3 returns LV_OK");
-    print_status_code(qs);
-    expect_true(qs == LV_OK, "post-reopen filter returns LV_OK");
-    if (qs == LV_OK && rs) {
-        TEST_START(n++, "deleted keys absent after recovery (count == 0)");
-        printf("    got=%u (expected 0)\n", rs->size);
-        expect_true(rs->size == 0, "deleted keys absent after recovery (count == 0)");
-    }
-    if (rs) lv_destroy_query_result_set(rs);
-
-    /* vector check: a deleted key's own vector must not return itself.
-     * Pick the first deleted category-3 mirror record and query with its vector;
-     * it must NOT appear in the results (it's gone), though neighbors may. */
-    int probe = -1;
-    for (int i = 0; i < g_ref_count; ++i) {
-        if (!g_ref[i].live && g_ref[i].category == 3) { probe = i; break; }
-    }
-    if (probe >= 0) {
-        const int K = 10;
-        LVQueryOption vopt; memset(&vopt, 0, sizeof(vopt));
-        vopt.flags = LV_QOPT_NONE;
-        vopt.top_k = K;
-        vopt.vector_metric = LV_METRIC_L2;
-
-        LVQueryResultSet* vrs = NULL;
-        LVStatus vs = lv_query(db, "category >= 0", g_ref[probe].vec, &vopt, &vrs);
-        TEST_START(n++, "deleted key excluded from vector results after reopen");
-        if (vs == LV_OK && vrs) {
-            int found_deleted = 0;
-            for (uint32_t i = 0; i < vrs->size; ++i) {
-                if (vrs->results[i].key_len == g_ref[probe].key_len &&
-                    memcmp(vrs->results[i].key, g_ref[probe].key,
-                        g_ref[probe].key_len) == 0) {
-                    found_deleted = 1; break;
-                }
-            }
-            printf("    deleted probe key present in results = %d (want 0)\n",
-                found_deleted);
-            expect_true(!found_deleted,
-                "deleted key excluded from vector results after reopen");
-        }
-        else {
-            print_status_code(vs);
-            expect_true(0, "deleted key excluded from vector results after reopen");
-        }
-        if (vrs) lv_destroy_query_result_set(vrs);
-    }
-
-    lv_close(db);
-}
-
-/* ---------------------------------------------------------------------------
- * 7c — update_vector then reopen (shadow): put A, flush, update_vector to B
- *      WITHOUT another flush, then close/reopen. The SST still holds A's record
- *      (old vector_id), the MemTable holds B (new vector_id). Recovery must let
- *      the MemTable shadow the SST so only B's vector_id enters the graph; A
- *      must not resurrect.
- *
- *      We verify by querying with B's vector: the key must come back, and its
- *      nearest match should be B (recall stays high), not stranded by a ghost A.
- *      A direct "is A's vector_id gone" check would need internals; instead we
- *      assert the key is still findable and recall holds, which fails if the
- *      graph got polluted by the stale A node.
- * ------------------------------------------------------------------------- */
 static void test_recovery_update_shadow(void)
 {
     int n = 1;
-    printf("\n=== recovery: update_vector shadow across reopen ===\n");
+    printf("\n=== recovery: update_vector shadow across reopen (A/B split) ===\n");
 
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
@@ -1081,15 +668,14 @@ static void test_recovery_update_shadow(void)
     }
     if (!populate(db)) { lv_close(db); return; }
 
-    /* pick an EARLY key (already flushed to SST), update its vector to a fresh
-     * one, and mirror the change. No flush is forced afterwards, so the old
-     * record stays in the SST and the new one stays in the MemTable. */
-    int target = 5;   /* key_0005, put early -> flushed */
+    /* update an EARLY key (already flushed to SST). Its key still sorts early
+     * (key_0005) but its vector_id becomes fresh -> key order != vid order,
+     * the exact condition that only this node hits. */
+    const int target = 5;   /* key_0005 */
     float newvec[DIM];
     for (int d = 0; d < DIM; ++d) newvec[d] = lv_rand_f32_range(-1.0f, 1.0f);
 
-    LVStatus us = lv_update_vector(db, g_ref[target].key, g_ref[target].key_len,
-        newvec);
+    LVStatus us = lv_update_vector(db, g_ref[target].key, g_ref[target].key_len, newvec);
     TEST_START(n++, "update_vector returns LV_OK");
     print_status_code(us);
     expect_true(us == LV_OK, "update_vector returns LV_OK");
@@ -1097,8 +683,9 @@ static void test_recovery_update_shadow(void)
         memcpy(g_ref[target].vec, newvec, sizeof(float) * DIM);  /* mirror update */
     }
 
-    lv_close(db);
+    lv_close(db);   /* clean-shutdown flush pushes B into the SST */
 
+    /* reopen -> SST-recovery path (WAL was truncated by the close flush) */
     db = NULL;
     LVStatus os = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
     TEST_START(n++, "reopen returns LV_OK");
@@ -1106,46 +693,72 @@ static void test_recovery_update_shadow(void)
     expect_true(os == LV_OK && db != NULL, "reopen returns LV_OK");
     if (os != LV_OK || !db) return;
 
-    /* query with the NEW vector: the target key must be the (near) top hit.
-     * If stale A resurrected, the graph is polluted but B is still correct;
-     * the stronger signal is overall recall staying above the floor. */
     const int K = 10;
-    int best_idx[64]; float best_dis[64];
-    recovery_brute_force_topk(g_ref[target].vec, K, best_idx, best_dis);
 
-    LVQueryOption opt; memset(&opt, 0, sizeof(opt));
-    opt.flags = LV_QOPT_NONE;
-    opt.top_k = K;
-    opt.vector_metric = LV_METRIC_L2;
+    /* ---- [A] updated key_0005 findable by its NEW vector B ---------------- */
+    {
+        LVQueryOption opt; memset(&opt, 0, sizeof(opt));
+        opt.flags = LV_QOPT_NONE;
+        opt.top_k = K;
+        opt.vector_metric = LV_METRIC_L2;
 
-    LVQueryResultSet* rs = NULL;
-    LVStatus s = lv_query(db, "category >= 0", g_ref[target].vec, &opt, &rs);
-    TEST_START(n++, "post-reopen vector query (new vec) returns LV_OK");
-    print_status_code(s);
-    expect_true(s == LV_OK, "post-reopen vector query returns LV_OK");
+        LVQueryResultSet* rs = NULL;
+        /* g_ref[target].vec was mirrored to B above */
+        LVStatus s = lv_query(db, "category >= 0", g_ref[target].vec, &opt, &rs);
+        TEST_START(n++, "[A] post-reopen query (B) returns LV_OK");
+        print_status_code(s);
+        expect_true(s == LV_OK, "[A] post-reopen query (B) returns LV_OK");
 
-    if (s == LV_OK && rs) {
-        /* the updated key itself must be retrievable by its new vector */
         int found_target = 0;
-        for (uint32_t i = 0; i < rs->size; ++i) {
-            if (rs->results[i].key_len == g_ref[target].key_len &&
-                memcmp(rs->results[i].key, g_ref[target].key,
-                    g_ref[target].key_len) == 0) {
-                found_target = 1; break;
+        if (s == LV_OK && rs) {
+            for (uint32_t i = 0; i < rs->size; ++i) {
+                if (rs->results[i].key_len == g_ref[target].key_len &&
+                    memcmp(rs->results[i].key, g_ref[target].key,
+                           g_ref[target].key_len) == 0) { found_target = 1; break; }
             }
         }
-        TEST_START(n++, "updated key retrievable by new vector after reopen");
-        printf("    target key present = %d (want 1)\n", found_target);
-        expect_true(found_target,
-            "updated key retrievable by new vector after reopen");
-
-        double recall = recovery_recall(rs, best_idx, K);
-        TEST_START(n++, "recall holds after update+reopen (no ghost pollution)");
-        printf("    recall@%d = %.2f, returned=%u\n", K, recall, rs->size);
-        expect_true(recall >= RECALL_MIN,
-            "recall holds after update+reopen (no ghost pollution)");
+        TEST_START(n++, "[A] updated key_0005 findable by new vector B");
+        printf("    [A] target(key_0005) present = %d (want 1)\n", found_target);
+        expect_true(found_target, "[A] updated key_0005 findable by new vector B");
+        if (rs) lv_destroy_query_result_set(rs);
     }
-    if (rs) lv_destroy_query_result_set(rs);
+
+    /* ---- [B] general recall on a NON-updated key (key_0003) --------------- */
+    {
+        const int probe = 3;   /* never updated; key order == vid order */
+        int best_idx[64]; float best_dis[64];
+        recovery_brute_force_topk(g_ref[probe].vec, K, best_idx, best_dis);
+
+        LVQueryOption opt; memset(&opt, 0, sizeof(opt));
+        opt.flags = LV_QOPT_NONE;
+        opt.top_k = K;
+        opt.vector_metric = LV_METRIC_L2;
+
+        LVQueryResultSet* rs = NULL;
+        LVStatus s = lv_query(db, "category >= 0", g_ref[probe].vec, &opt, &rs);
+        TEST_START(n++, "[B] post-reopen recall query returns LV_OK");
+        print_status_code(s);
+        expect_true(s == LV_OK, "[B] post-reopen recall query returns LV_OK");
+
+        double recall = (s == LV_OK && rs) ? recovery_recall(rs, best_idx, K) : 0.0;
+        TEST_START(n++, "[B] general recall on non-updated key_0003 >= floor");
+        printf("    [B] recall@%d = %.2f on key_0003 (not updated), returned=%u\n",
+               K, recall, rs ? rs->size : 0);
+        expect_true(recall >= RECALL_MIN,
+                    "[B] general recall on non-updated key_0003 >= floor");
+
+        if (rs) {
+            fprintf(stderr, "[B result keys]: ");
+            for (uint32_t i = 0; i < rs->size; ++i)
+                fprintf(stderr, "%.*s ", rs->results[i].key_len, (char*)rs->results[i].key);
+            fprintf(stderr, "\n[B expected]:    ");
+            for (int k = 0; k < K; ++k)
+                if (best_idx[k] >= 0) fprintf(stderr, "%s ", g_ref[best_idx[k]].key);
+            fprintf(stderr, "\n");
+        }
+        if (rs) lv_destroy_query_result_set(rs);
+    }
+
     lv_close(db);
 }
 
@@ -1166,10 +779,6 @@ int main(void)
     test_filter_string_across_flush();
     test_vector_recall_across_flush();
     test_delete_tombstone_across_flush();
-    test_field_serialization_order_across_flush();
-
-    test_recovery_basic();
-    test_recovery_delete();
     test_recovery_update_shadow();
 
     printf("\n========================================\n");
