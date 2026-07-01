@@ -45,7 +45,8 @@ typedef enum
     LV_ERR_DUPLICATE = -7, /* key already exists (if uniqueness required)*/
     LV_ERR_INVALID_DB = -8,
     LV_ERR_INVALID_QUERY = -9,
-    LV_ERR_UNSUP_QOP = -10
+    LV_ERR_UNSUP_QOP = -10,
+    LV_ERR_EXISTS = -11,
 } LVStatus;
 
 /* ── Vector type ────────────────────────────────────────────────────────────
