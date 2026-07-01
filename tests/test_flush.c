@@ -145,6 +145,18 @@ static void build_schema(LVSchema* schema)
     schema->field_defs[FIELD_TAG].type = LV_META_STRING;
 }
 
+/* Create a fresh DB from a built schema. lv_create takes the schema fields
+ * as explicit args (not the LVSchema struct), so we unpack `schema` here.
+ * Reopen uses lv_open(&db, DB_DIR, threshold) with no schema — it is loaded
+ * from disk. */
+static LVStatus create_db(LightVec** db, const LVSchema* schema,
+                          const char* dir, LVSize32_t threshold)
+{
+    return lv_create(db, dir, threshold,
+                     schema->vector_dim, schema->vector_type, schema->vector_metric,
+                     schema->field_count, schema->field_defs);
+}
+
 /* value.str.string is a POINTER, not copied by lv_put — the buffer must stay
  * alive across the call. We point it at the mirror's r->tag (static storage),
  * so it's valid. Never point this at a stack temporary. */
@@ -229,7 +241,7 @@ static void test_flush_lifecycle(void)
 
     LightVec* db = NULL;
     TEST_START(n++, "lv_open returns LV_OK");
-    LVStatus s = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
+    LVStatus s = create_db(&db, &schema, DB_DIR, FLUSH_LOW);
     expect_true(s == LV_OK && db != NULL, "lv_open returns LV_OK");
     if (!db) return;
 
@@ -243,7 +255,7 @@ static void test_flush_lifecycle(void)
      * already exist — open must take the "exists" branches without error. */
     TEST_START(n++, "reopen flushed DB returns LV_OK");
     db = NULL;
-    s = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
+    s = lv_open(&db, DB_DIR, FLUSH_LOW);
     print_status_code(s);
     expect_true(s == LV_OK && db != NULL, "reopen flushed DB returns LV_OK");
     if (db) lv_close(db);
@@ -266,7 +278,7 @@ static void test_filter_across_flush(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -324,7 +336,7 @@ static void test_filter_compound_across_flush(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -371,7 +383,7 @@ static void test_filter_string_across_flush(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -434,7 +446,7 @@ static void test_vector_recall_across_flush(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -524,7 +536,7 @@ static void test_delete_tombstone_across_flush(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -663,7 +675,7 @@ static void test_recovery_update_shadow(void)
     LVSchema schema; build_schema(&schema);
 
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_LOW) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -687,7 +699,7 @@ static void test_recovery_update_shadow(void)
 
     /* reopen -> SST-recovery path (WAL was truncated by the close flush) */
     db = NULL;
-    LVStatus os = lv_open(&db, &schema, DB_DIR, FLUSH_LOW);
+    LVStatus os = lv_open(&db, DB_DIR, FLUSH_LOW);
     TEST_START(n++, "reopen returns LV_OK");
     print_status_code(os);
     expect_true(os == LV_OK && db != NULL, "reopen returns LV_OK");

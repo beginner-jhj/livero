@@ -140,6 +140,17 @@ static void build_schema(LVSchema* schema)
     schema->field_defs[FIELD_TAG].type = LV_META_STRING;
 }
 
+/* Create a fresh DB from a built schema. lv_create takes schema fields as
+ * explicit args (not the LVSchema struct). Reopen uses lv_open with no schema
+ * (loaded from disk). */
+static LVStatus create_db(LightVec** db, const LVSchema* schema,
+                          const char* dir, LVSize32_t threshold)
+{
+    return lv_create(db, dir, threshold,
+                     schema->vector_dim, schema->vector_type, schema->vector_metric,
+                     schema->field_count, schema->field_defs);
+}
+
 /* ---- 4. Field builder: fill all three fields ----------------------------- *
  * NOTE: value.str.string is a POINTER, not a copy. The buffer it points at
  * (here: the mirror's r->tag) must stay alive across the lv_put call. g_ref is
@@ -231,7 +242,7 @@ static void test_open_close(void)
     LightVec* db = NULL;
 
     TEST_START(n++, "lv_open returns LV_OK");
-    LVStatus s = lv_open(&db, &schema, DB_DIR, FLUSH_HIGH);
+    LVStatus s = create_db(&db, &schema, DB_DIR, FLUSH_HIGH);
     expect_true(s == LV_OK, "lv_open returns LV_OK");
 
     TEST_START(n++, "lv_open sets db non-null");
@@ -245,7 +256,7 @@ static void test_open_close(void)
     /* reopen the same dir: mkdir EEXIST path must not break open */
     TEST_START(n++, "reopen existing dir returns LV_OK");
     db = NULL;
-    s = lv_open(&db, &schema, DB_DIR, FLUSH_HIGH);
+    s = lv_open(&db, DB_DIR, FLUSH_HIGH);
     expect_true(s == LV_OK && db != NULL, "reopen existing dir returns LV_OK");
     if (db) lv_close(db);
 }
@@ -264,7 +275,7 @@ static void test_filter_exact(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
         printf("    (skip — open failed)\n");
         return;
     }
@@ -328,7 +339,7 @@ static void test_filter_compound(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -379,7 +390,7 @@ static void test_vector_recall(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -452,7 +463,7 @@ static void test_delete_tombstone(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -520,7 +531,7 @@ static void test_updates(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    LVStatus s = lv_open(&db, &schema, DB_DIR, FLUSH_HIGH);
+    LVStatus s = create_db(&db, &schema, DB_DIR, FLUSH_HIGH);
     print_status_code(s);
     if (s != LV_OK || !db) {
         perror("lv_open (update test)");
@@ -594,7 +605,7 @@ static void test_filter_string(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    if (lv_open(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
+    if (create_db(&db, &schema, DB_DIR, FLUSH_HIGH) != LV_OK || !db) {
         printf("    (skip — open failed)\n"); return;
     }
     if (!populate(db)) { lv_close(db); return; }
@@ -727,7 +738,7 @@ static void test_field_serialization_order(void)
     fresh_db_dir();
     LVSchema schema; build_schema(&schema);
     LightVec* db = NULL;
-    LVStatus s = lv_open(&db, &schema, DB_DIR, FLUSH_HIGH);
+    LVStatus s = create_db(&db, &schema, DB_DIR, FLUSH_HIGH);
     if (s != LV_OK || !db) {
         print_status_code(s);
         printf("    (skip — open failed)\n");

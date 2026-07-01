@@ -38,6 +38,10 @@ struct LightVec
     int32_t magic;
 };
 
+static LVStatus lv_prepare_db_dir(char* db_path_out, const char* path);
+static LVStatus lv_open_internal(LightVec** db, const char* db_path,
+    const LVSize32_t flush_threshold,
+    LVSchema* schema, int schema_fd);
 static LVStatus lv_recover_internal(LightVec* db);
 static LVStatus lv_check_db_corruption_internal(const LightVec* db);
 static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer);
@@ -53,190 +57,105 @@ static void lv_apply_ordby_internal(LVQVSet* qvset, const LVOrdbyType type, cons
 static void lv_apply_limit_internal(LVQVSet* qvset, const LVSize32_t limit);
 static LVQueryResultSet* lv_create_query_result_set_internal(const LVQVSet* result_qvset);
 
-LVStatus lv_open(LightVec** db, const LVSchema* schema, const char* path, const LVSize32_t flush_threshold)
+
+/* ============================================================================
+ * lv_create — create a NEW database from a schema.
+ *
+ * Fails with LV_ERR_EXISTS if schema.lv already exists (use lv_open instead).
+ * The schema is written to disk here and becomes authoritative; from this
+ * point on nobody passes a schema in again.
+ * ========================================================================== */
+LVStatus lv_create(LightVec** db, const char* path, const LVSize32_t flush_threshold,
+    const LVDim32_t vector_dim, const LVVectorType vector_type,
+    const LVVectorMetric vector_metric,
+    const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
 {
-    int flag = 0;
     LVStatus result = LV_OK;
-    LightVec* LV_DB = NULL;
-    LVSchema* LV_SCHEMA = NULL;
-    LVMemTable* LV_MTABLE = NULL;
-    LVHnsw* LV_HNSW = NULL;
+    LVSchema* schema = NULL;
+    int schema_fd = -1;
 
-    LV_DB = malloc(sizeof(LightVec));
-
-    if (!LV_DB)
-    {
-        flag = 1;
-        result = LV_ERR_OOM;
-        goto cleanup;
-    }
-    memset(LV_DB, 0, sizeof(LightVec));
-
-    LV_DB->flush_threshold = flush_threshold > 0 ? flush_threshold : 1024;
-    LV_DB->magic = LV_MAGIC;
-    LV_DB->schema_fd = -1;
-    LV_DB->wal_fd = -1;
-    LV_DB->sst_fd = -1;
-    LV_DB->vectors_fd = -1;
-    LV_DB->vector_index_fd = -1;
-
-    // set DB default save path here
-    if ((result = path_join(LV_DB->path, LV_PATH_MAX, path, "LV")) != LV_OK)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    if (mkdir(LV_DB->path, 0755) == -1 && errno != EEXIST) {
-        flag = 1;
-        result = LV_ERR_IO;
-        goto cleanup;
-    }
-
-    // SCHEMA
-    // read when it already exists
-    // else write
+    char db_path[LV_PATH_MAX];
+    if ((result = lv_prepare_db_dir(db_path, path)) != LV_OK)
+        return result;
 
     char schema_path[LV_PATH_MAX];
+    if ((result = path_join(schema_path, LV_PATH_MAX, db_path, "schema.lv")) != LV_OK)
+        return result;
 
-    if ((result = path_join(schema_path, LV_PATH_MAX, LV_DB->path, "schema.lv")) != LV_OK)
+    /* create must not clobber an existing DB */
+    if (access(schema_path, F_OK) == 0)
+        return LV_ERR_EXISTS;
+
+    /* build the in-memory schema (validates names, reserved words, masks) */
+    schema = create_schema(vector_dim, vector_type, vector_metric, field_count, field_defs);
+    if (!schema)
+        return LV_ERR_INVALID;
+
+    /* persist it (schema_write flushes + checksums) */
+    schema_fd = open(schema_path, O_RDWR | O_CREAT, 0644);
+    if (schema_fd < 0)
     {
-        flag = 1;
-        goto cleanup;
+        destroy_schema(schema);
+        return LV_ERR_IO;
     }
 
-    int schema_exists = access(schema_path, F_OK) == 0;
-
-    int schema_fd;
-
-    if (schema_exists)
+    if ((result = schema_write(schema_fd, schema)) != LV_OK)
     {
-        LV_SCHEMA = malloc(sizeof(LVSchema));
-
-        if (!LV_SCHEMA)
-        {
-            flag = 1;
-            result = LV_ERR_OOM;
-            goto cleanup;
-        }
-        // read saved schema
-        schema_fd = open(schema_path, O_RDONLY);
-        result = schema_read(schema_fd, LV_SCHEMA);
-        if (result != LV_OK)
-        {
-            flag = 1;
-            goto cleanup;
-        }
+        destroy_schema(schema);
+        close(schema_fd);
+        return result;
     }
 
-    else
+    /* hand schema + schema_fd off; lv_open_internal owns them from here,
+     * including cleanup on failure. */
+    return lv_open_internal(db, db_path, flush_threshold, schema, schema_fd);
+}
+
+
+/* ============================================================================
+ * lv_open — open an EXISTING database. Schema comes from disk; no schema args.
+ *
+ * Fails with LV_ERR_NOT_FOUND if schema.lv is missing (use lv_create instead).
+ * ========================================================================== */
+LVStatus lv_open(LightVec** db, const char* path, const LVSize32_t flush_threshold)
+{
+    LVStatus result = LV_OK;
+    LVSchema* schema = NULL;
+    int schema_fd = -1;
+
+    char db_path[LV_PATH_MAX];
+    if ((result = lv_prepare_db_dir(db_path, path)) != LV_OK)
+        return result;
+
+    char schema_path[LV_PATH_MAX];
+    if ((result = path_join(schema_path, LV_PATH_MAX, db_path, "schema.lv")) != LV_OK)
+        return result;
+
+    /* open requires an existing DB */
+    if (access(schema_path, F_OK) != 0)
+        return LV_ERR_NOT_FOUND;
+
+    schema = malloc(sizeof(LVSchema));
+    if (!schema)
+        return LV_ERR_OOM;
+
+    schema_fd = open(schema_path, O_RDONLY);
+    if (schema_fd < 0)
     {
-        schema_fd = open(schema_path, O_RDWR | O_CREAT, 0644); // 0644 (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH):  owner can read/write, else only can read
-
-        if ((result = schema_write(schema_fd, schema)) != LV_OK)
-        {
-            flag = 1;
-            goto cleanup;
-        }
-
-        LV_SCHEMA = create_schema(schema->vector_dim, schema->vector_type, schema->vector_metric, schema->field_count, schema->field_defs);
-        if (!LV_SCHEMA)
-        {
-            flag = 1;
-            result = LV_ERR_OOM;
-            goto cleanup;
-        }
+        free(schema);
+        return LV_ERR_IO;
     }
 
-    LV_DB->schema_fd = schema_fd;
-    LV_DB->schema = LV_SCHEMA;
-
-    // create a Memory Table
-    LV_MTABLE = create_table();
-    if (!LV_MTABLE)
+    /* load + verify (magic, version, per-field hashes, CRC) */
+    if ((result = schema_read(schema_fd, schema)) != LV_OK)
     {
-        flag = 1;
-        result = LV_ERR_OOM;
-        goto cleanup;
+        destroy_schema(schema);
+        close(schema_fd);
+        return result;
     }
 
-    LV_DB->memtable = LV_MTABLE;
-
-    // WAL
-    char wal_path[LV_PATH_MAX];
-    if ((result = path_join(wal_path, LV_PATH_MAX, LV_DB->path, "wal.lv")) != LV_OK)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    int wal_fd = open(wal_path, O_RDWR | O_CREAT, 0644);
-    LV_DB->wal_fd = wal_fd;
-
-    //SST
-    char sst_path[LV_PATH_MAX];
-    if ((result = path_join(sst_path, LV_PATH_MAX, LV_DB->path, "sst.lv")) != LV_OK) {
-        flag = 1;
-        goto cleanup;
-    }
-
-    //if sst exists then open returns proper fd.
-    //else open returns -1.
-    int sst_fd = open(sst_path, O_RDONLY); //this sst is old_sst, O_RDONLY is ok for sst_flush.
-
-    LV_DB->sst_fd = sst_fd;
-
-
-    // vector
-    // create a LVHnsw
-
-    LV_HNSW = create_hnsw(schema->vector_type, schema->vector_dim);
-    if (!LV_HNSW)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    LV_DB->hnsw = LV_HNSW;
-
-    char vectors_path[LV_PATH_MAX];
-    char vector_index_path[LV_PATH_MAX];
-
-    // set vectors.lv path
-    if ((result = path_join(vectors_path, LV_PATH_MAX, LV_DB->path, "vectors.lv")) != LV_OK)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    //set vector_index.lv path
-    if ((result = path_join(vector_index_path, LV_PATH_MAX, LV_DB->path, "vector_index.lv")) != LV_OK)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    int vectors_fd = open(vectors_path, O_RDWR | O_CREAT, 0644);
-    int vector_index_fd = open(vector_index_path, O_RDWR | O_CREAT, 0644);
-
-
-    LV_DB->vectors_fd = vectors_fd;
-    LV_DB->vector_index_fd = vector_index_fd;
-
-    if ((result = lv_recover_internal(LV_DB)) != LV_OK) {
-        flag = 1;
-        goto cleanup;
-    }
-
-    *db = LV_DB;
-
-cleanup:
-    if (flag)
-    {
-        lv_close(LV_DB);
-    }
-
-    return result;
+    /* hand off; lv_open_internal owns schema + schema_fd from here. */
+    return lv_open_internal(db, db_path, flush_threshold, schema, schema_fd);
 }
 
 LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVCount32_t field_count, const LVMetaField* fields)
@@ -1002,6 +921,185 @@ void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
         free(qrset->results);
         free(qrset);
     }
+}
+
+/* ============================================================================
+ * lv_prepare_db_dir — shared: build the ".../LV" directory path and mkdir it.
+ * Both create and open need the directory to exist before touching files.
+ * ========================================================================== */
+static LVStatus lv_prepare_db_dir(char* db_path_out, const char* path)
+{
+    LVStatus result = LV_OK;
+
+    if ((result = path_join(db_path_out, LV_PATH_MAX, path, "LV")) != LV_OK)
+        return result;
+
+    if (mkdir(db_path_out, 0755) == -1 && errno != EEXIST)
+        return LV_ERR_IO;
+
+    return LV_OK;
+}
+
+/* ============================================================================
+ * lv_open_internal — shared DB assembly + recovery.
+ *
+ * Contract: the caller (lv_create / lv_open) has ALREADY resolved the schema:
+ *   - schema      : a fully-built LVSchema* (from disk on open, or freshly
+ *                   created + written to disk on create).
+ *   - schema_fd   : an open fd for schema.lv (owned by the DB from here on).
+ *   - db_path     : the ".../LV" directory, already created (mkdir done).
+ *
+ * This function does NOT read the user's schema arguments. It builds HNSW from
+ * `schema` (the authoritative, disk-backed one), so there is no way for a
+ * caller-supplied dim/type to disagree with what is on disk.
+ *
+ * On failure it cleans up via lv_close (which frees schema, closes schema_fd,
+ * etc.), so ownership of schema/schema_fd transfers into LV_DB before any
+ * fallible step that could trigger cleanup.
+ * ========================================================================== */
+static LVStatus lv_open_internal(LightVec** db, const char* db_path,
+    const LVSize32_t flush_threshold,
+    LVSchema* schema, int schema_fd)
+{
+    int flag = 0;
+    LVStatus result = LV_OK;
+    LightVec* LV_DB = NULL;
+    LVMemTable* LV_MTABLE = NULL;
+    LVHnsw* LV_HNSW = NULL;
+
+    LV_DB = malloc(sizeof(LightVec));
+    if (!LV_DB)
+    {
+        flag = 1;
+        result = LV_ERR_OOM;
+        goto cleanup;
+    }
+    memset(LV_DB, 0, sizeof(LightVec));
+
+    LV_DB->flush_threshold = flush_threshold > 0 ? flush_threshold : 1024;
+    LV_DB->magic = LV_MAGIC;
+    LV_DB->schema_fd = -1;
+    LV_DB->wal_fd = -1;
+    LV_DB->sst_fd = -1;
+    LV_DB->vectors_fd = -1;
+    LV_DB->vector_index_fd = -1;
+
+    /* db_path is the ".../LV" directory the caller already prepared. */
+    memset(LV_DB->path, 0, LV_PATH_MAX);
+    strncpy(LV_DB->path, db_path, LV_PATH_MAX - 1);
+
+    /* Take ownership of the schema + its fd right away, so that if any step
+     * below fails, lv_close() frees/destroys them exactly once. */
+    LV_DB->schema = schema;
+    LV_DB->schema_fd = schema_fd;
+
+    /* MemTable */
+    LV_MTABLE = create_table();
+    if (!LV_MTABLE)
+    {
+        flag = 1;
+        result = LV_ERR_OOM;
+        goto cleanup;
+    }
+    LV_DB->memtable = LV_MTABLE;
+
+    /* WAL */
+    char wal_path[LV_PATH_MAX];
+    if ((result = path_join(wal_path, LV_PATH_MAX, LV_DB->path, "wal.lv")) != LV_OK)
+    {
+        flag = 1;
+        goto cleanup;
+    }
+    LV_DB->wal_fd = open(wal_path, O_RDWR | O_CREAT, 0644);
+    if (LV_DB->wal_fd < 0)
+    {
+        flag = 1;
+        result = LV_ERR_IO;
+        goto cleanup;
+    }
+
+    /* SST — old_sst opened read-only (sufficient for sst_flush merge input).
+     * open() returns -1 if it does not exist yet; that is a valid "no SST"
+     * state, so we do NOT treat -1 as an error here. */
+    char sst_path[LV_PATH_MAX];
+    if ((result = path_join(sst_path, LV_PATH_MAX, LV_DB->path, "sst.lv")) != LV_OK)
+    {
+        flag = 1;
+        goto cleanup;
+    }
+    LV_DB->sst_fd = open(sst_path, O_RDONLY);   // -1 == no SST yet, OK 
+
+    LV_HNSW = create_hnsw(schema->vector_type, schema->vector_dim);
+    if (!LV_HNSW)
+    {
+        flag = 1;
+        result = LV_ERR_OOM;
+        goto cleanup;
+    }
+    LV_DB->hnsw = LV_HNSW;
+
+    /* vectors.lv + vector_index.lv */
+    char vectors_path[LV_PATH_MAX];
+    char vector_index_path[LV_PATH_MAX];
+
+    if ((result = path_join(vectors_path, LV_PATH_MAX, LV_DB->path, "vectors.lv")) != LV_OK)
+    {
+        flag = 1;
+        goto cleanup;
+    }
+    if ((result = path_join(vector_index_path, LV_PATH_MAX, LV_DB->path, "vector_index.lv")) != LV_OK)
+    {
+        flag = 1;
+        goto cleanup;
+    }
+
+    LV_DB->vectors_fd = open(vectors_path, O_RDWR | O_CREAT, 0644);
+    if (LV_DB->vectors_fd < 0)
+    {
+        flag = 1;
+        result = LV_ERR_IO;
+        goto cleanup;
+    }
+
+    LV_DB->vector_index_fd = open(vector_index_path, O_RDWR | O_CREAT, 0644);
+    if (LV_DB->vector_index_fd < 0)
+    {
+        flag = 1;
+        result = LV_ERR_IO;
+        goto cleanup;
+    }
+
+    /* replay WAL + SST into memtable/hnsw */
+    if ((result = lv_recover_internal(LV_DB)) != LV_OK)
+    {
+        flag = 1;
+        goto cleanup;
+    }
+
+    *db = LV_DB;
+
+cleanup:
+    if (flag)
+    {
+        /* lv_close frees schema, closes all fds (incl. schema_fd), destroys
+         * memtable/hnsw. Ownership of schema+schema_fd was transferred into
+         * LV_DB above, so they are released here exactly once.
+         *
+         * NOTE: if LV_DB itself failed to allocate, schema/schema_fd never
+         * transferred — the caller must free them in that case (see wrappers).
+         */
+        if (LV_DB) { lv_close(LV_DB); }
+        else
+        {
+            /* LV_DB never allocated, so ownership never transferred. This
+             * function still owns schema + schema_fd and must release them —
+             * the contract is: hand schema/schema_fd to lv_open_internal and
+             * it takes care of cleanup on every path, success or failure. */
+            if (schema)        destroy_schema(schema);
+            if (schema_fd >= 0) close(schema_fd);
+        }
+    }
+    return result;
 }
 
 //must be called after open wal, sst, vectors
