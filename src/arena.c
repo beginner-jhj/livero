@@ -3,65 +3,55 @@
 #include <stdalign.h>
 #include "helper.h"
 
-LVArena *arena_create(const LVSize32_t block_size)
+LVArena* arena_create(const LVSize32_t block_capacity)
 {
-    int error_flag = 0;
-    LVArenaBlock *initial_block = NULL;
-    void *block_buffer = NULL;
-    LVArena *arena = NULL;
+    LVArenaBlock* initial_block = NULL;
+    void* block_buffer = NULL;
+    LVArena* arena = NULL;
 
-    if(block_size < 0){
+    if (block_capacity == 0) {
         goto cleanup;
     }
-
-    initial_block = malloc(sizeof(LVArenaBlock));
-    if (!initial_block) {
-        error_flag = 1;
-        goto cleanup;
-    }
-
-    initial_block->buffer = NULL;
-    initial_block->prev = NULL;
-    initial_block->capacity = 0;
-
-    block_buffer = malloc(block_size);
-    if (!block_buffer) {
-        error_flag = 1;
-        goto cleanup;
-    }
-
-    initial_block->buffer = block_buffer;
 
     arena = malloc(sizeof(LVArena));
     if (!arena) {
-        error_flag = 1;
         goto cleanup;
     }
 
-    arena->current_block = initial_block;
+    arena->current_block = NULL;
     arena->current_offset = 0;
-    arena->block_size = block_size;
+    arena->block_capacity = block_capacity;
+
+    initial_block = malloc(sizeof(LVArenaBlock));
+    if (!initial_block) goto cleanup;
+    initial_block->buffer = NULL;
+    initial_block->prev = NULL;
+    arena->current_block = initial_block;
+
+    block_buffer = malloc(block_capacity);
+    if (!block_buffer) goto cleanup;
+    initial_block->buffer = block_buffer;
+
+    return arena;
 
 cleanup:
-    if (error_flag) {
-        free(block_buffer);
-        free(initial_block);
-        free(arena);
-        arena = NULL;
-    }
+    arena_destroy(arena);
+    arena = NULL;
 
     return arena;
 }
 
-void arena_destroy(LVArena *arena)
+void arena_destroy(LVArena* arena)
 {
     if (arena)
     {
-        LVArenaBlock *current = arena->current_block;
+        LVArenaBlock* current = arena->current_block;
         while (current)
         {
-            LVArenaBlock *prev = current->prev;
-            free(current->buffer);
+            LVArenaBlock* prev = current->prev;
+            if (current->buffer) {
+                free(current->buffer);
+            }
             free(current);
             current = prev;
         }
@@ -69,7 +59,7 @@ void arena_destroy(LVArena *arena)
     }
 }
 
-void *arena_allocate(LVArena *arena, const LVSize32_t total, int32_t align)
+void* arena_allocate(LVArena* arena, const LVSize32_t total, int32_t align)
 {
     if (align <= 0)
     {
@@ -77,91 +67,53 @@ void *arena_allocate(LVArena *arena, const LVSize32_t total, int32_t align)
     }
     LVSize32_t aligned_offset = (arena->current_offset + align - 1) & ~(align - 1);
 
-    void *result = NULL;
+    LVArenaBlock* new_block = NULL;
+    void* new_block_buffer = NULL;
+    void* result = NULL;
 
-    if (total > arena->block_size)
+    if (total > arena->block_capacity)
     {
-        int error_flag = 0;
-        LVArenaBlock *large_block = NULL;
-        void *large_buffer = NULL;
-        LVArenaBlock *new_block = NULL;
-        void *new_buffer = NULL;
-
-        large_block = malloc(sizeof(LVArenaBlock));
-        if (!large_block) {
-            error_flag = 1;
-            goto cleanup;
-        }
-
-        large_buffer = malloc(total);
-        if (!large_buffer) {
-            error_flag = 1;
-            goto cleanup;
-        }
-
-        large_block->buffer = large_buffer;
-        large_block->prev = arena->current_block;
-        large_block->capacity = total;
-
         new_block = malloc(sizeof(LVArenaBlock));
-        if (!new_block) {
-            error_flag = 1;
-            goto cleanup;
-        }
+        if (!new_block) goto cleanup;
+        new_block->buffer = NULL;
 
-        new_buffer = malloc(arena->block_size);
-        if (!new_buffer) {
-            error_flag = 1;
-            goto cleanup;
-        }
+        new_block_buffer = malloc(total);
+        if (!new_block_buffer) goto cleanup;
+        new_block->buffer = new_block_buffer;
 
-        new_block->buffer = new_buffer;
-        new_block->prev = large_block;
-        new_block->capacity = arena->block_size;
-
-        arena->current_block = new_block;
-        arena->current_offset = 0;
-        result = large_block->buffer;
-
-    cleanup:
-        if (error_flag) {
-            free(large_buffer);
-            free(large_block);
-            free(new_buffer);
-            free(new_block);
-        }
-
-        goto _return;
-    }
-
-    if (aligned_offset + total > arena->block_size)
-    {
-        LVArenaBlock *new_block = NULL;
-        void *new_buffer = NULL;
-
-        new_block = malloc(sizeof(LVArenaBlock));
-        if (!new_block) {
-            goto _return;
-        }
-
-        new_buffer = malloc(arena->block_size);
-        if (!new_buffer) {
-            goto _return;
-        }
-
-        new_block->buffer = new_buffer;
+        new_block->buffer = new_block_buffer;
         new_block->prev = arena->current_block;
-        new_block->capacity = arena->block_size;
-
         arena->current_block = new_block;
         arena->current_offset = total;
-        result = arena->current_block->buffer;
 
-        goto _return;
+        result = new_block->buffer;
+        return result;
     }
 
-    result = (char *)arena->current_block->buffer + aligned_offset;
+    if (aligned_offset + total > arena->block_capacity)
+    {
+        new_block = malloc(sizeof(LVArenaBlock));
+        if (!new_block) goto cleanup;
+        new_block->buffer = NULL;
+
+        new_block_buffer = malloc(arena->block_capacity);
+        if (!new_block_buffer) goto cleanup;
+
+        new_block->buffer = new_block_buffer;
+        new_block->prev = arena->current_block;
+        arena->current_block = new_block;
+        arena->current_offset = total;
+
+        return new_block->buffer;
+    }
+
+    result = (char*)arena->current_block->buffer + aligned_offset;
     arena->current_offset = aligned_offset + total;
-_return:
+    return result;
+
+cleanup:
+    free(new_block);
+    free(new_block_buffer);
+    result = NULL;
     return result;
 }

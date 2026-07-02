@@ -5,17 +5,17 @@
 
 typedef struct LVArenaBlock{
     void* buffer;
-    LVSize32_t capacity;
+    // LVSize32_t capacity;
     struct LVArenaBlock* prev;
 } LVArenaBlock;
 
 typedef struct LVArena {
     LVArenaBlock* current_block;
     LVSize32_t current_offset;
-    LVSize32_t block_size;
+    LVSize32_t block_capacity;
 } LVArena;
 
-LVArena* arena_create(const LVSize32_t block_size);
+LVArena* arena_create(const LVSize32_t block_capacity);
 
 void arena_destroy(LVArena* arena);
 
