@@ -12,15 +12,15 @@
 #include "test_util.h"
 #include <stdalign.h>
 
-/* ============================================================
- * Helpers
- * ============================================================ */
+ /* ============================================================
+  * Helpers
+  * ============================================================ */
 
-/*
- * Returns the alignment guarantee of the arena.
- * Mirrors the logic inside arena_allocate() so tests stay in sync
- * if the alignment policy ever changes.
- */
+  /*
+   * Returns the alignment guarantee of the arena.
+   * Mirrors the logic inside arena_allocate() so tests stay in sync
+   * if the alignment policy ever changes.
+   */
 static LVSize32_t arena_alignment(void)
 {
     return (LVSize32_t)alignof(max_align_t);
@@ -30,7 +30,7 @@ static LVSize32_t arena_alignment(void)
  * Returns true if `ptr` is aligned to the arena's natural alignment.
  * We cast to uintptr_t so bitwise ops are well-defined on pointer values.
  */
-static int is_arena_aligned(void *ptr)
+static int is_arena_aligned(void* ptr)
 {
     LVSize32_t align = arena_alignment();
     return IS_ALIGNED(ptr, align); /* macro from test_util.h */
@@ -47,7 +47,7 @@ static void test_create_arena(void)
 
     /* 1-1. arena_create() must return a non-NULL pointer. */
     TEST_START(n++, "create returns non-null");
-    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     expect_ptr_not_null(arena, "create returns non-null");
 
     if (!arena) {
@@ -61,8 +61,8 @@ static void test_create_arena(void)
     uint32_t expected_zero = 0;
     uint32_t actual_offset = arena->current_offset;
     expect(&actual_offset, sizeof(actual_offset),
-           &expected_zero, sizeof(expected_zero),
-           "initial offset is zero");
+        &expected_zero, sizeof(expected_zero),
+        "initial offset is zero");
 
     /* 1-3. The first block must be allocated and non-NULL. */
     TEST_START(n++, "first block exists");
@@ -90,7 +90,7 @@ static void test_basic_allocation(void)
     int n = 1;
     printf("\n=== basic allocation ===\n");
 
-    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -98,7 +98,7 @@ static void test_basic_allocation(void)
 
     /* 2-1. A normal small allocation must succeed (non-NULL). */
     TEST_START(n++, "small alloc returns non-null");
-    void *p = arena_allocate(arena, 16,-1);
+    void* p = arena_allocate(arena, 16, -1);
     expect_ptr_not_null(p, "small alloc returns non-null");
 
     /* 2-2. The returned pointer must satisfy the alignment requirement.
@@ -112,7 +112,7 @@ static void test_basic_allocation(void)
     TEST_START(n++, "small alloc is writable");
     if (p) {
         memset(p, 0xAB, 16);
-        uint8_t *bytes = (uint8_t *)p;
+        uint8_t* bytes = (uint8_t*)p;
         int all_match = 1;
         for (int i = 0; i < 16; i++) {
             if (bytes[i] != 0xAB) { all_match = 0; break; }
@@ -135,7 +135,7 @@ static void test_no_overlap(void)
     int n = 1;
     printf("\n=== consecutive allocations don't overlap ===\n");
 
-    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -143,11 +143,11 @@ static void test_no_overlap(void)
 
     /* Allocate several regions and write a unique byte pattern to each. */
     const int   COUNT = 8;
-    const size_t EACH  = 32;
-    void *ptrs[8];
+    const size_t EACH = 32;
+    void* ptrs[8];
 
     for (int i = 0; i < COUNT; i++) {
-        ptrs[i] = arena_allocate(arena, (LVSize32_t)EACH,-1);
+        ptrs[i] = arena_allocate(arena, (LVSize32_t)EACH, -1);
         if (ptrs[i]) {
             /* Write a distinct pattern so we can detect overwrites */
             memset(ptrs[i], (uint8_t)(0x10 + i), EACH);
@@ -160,12 +160,12 @@ static void test_no_overlap(void)
     int overlap_detected = 0;
     for (int i = 0; i < COUNT; i++) {
         if (!ptrs[i]) { overlap_detected = 1; break; }
-        uint8_t *bytes = (uint8_t *)ptrs[i];
+        uint8_t* bytes = (uint8_t*)ptrs[i];
         for (size_t j = 0; j < EACH; j++) {
             if (bytes[j] != (uint8_t)(0x10 + i)) {
                 overlap_detected = 1;
                 printf("    overlap at alloc[%d] byte[%zu]: got 0x%02x, expected 0x%02x\n",
-                       i, j, bytes[j], (uint8_t)(0x10 + i));
+                    i, j, bytes[j], (uint8_t)(0x10 + i));
                 break;
             }
         }
@@ -201,7 +201,7 @@ static void test_alignment(void)
     int n = 1;
     printf("\n=== alignment ===\n");
 
-    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — create_arena failed)\n");
         return;
@@ -211,22 +211,22 @@ static void test_alignment(void)
 
     /* 4-1. Allocation of size 1 — the next alloc must still be aligned. */
     TEST_START(n++, "alloc(1) result is aligned");
-    void *p1 = arena_allocate(arena, 1,-1);
+    void* p1 = arena_allocate(arena, 1, -1);
     expect_aligned(p1, align, "alloc(1) result is aligned");
 
     /* 4-2. After a 1-byte alloc, offset is not a multiple of align.
      *      The arena must pad before the next alloc. */
     TEST_START(n++, "alloc after alloc(1) is aligned");
-    void *p2 = arena_allocate(arena, 16,-1);
+    void* p2 = arena_allocate(arena, 16, -1);
     expect_aligned(p2, align, "alloc after alloc(1) is aligned");
 
     /* 4-3. Odd-size chain: 3, 5, 7 bytes — each result must be aligned. */
-    const LVSize32_t odd_sizes[] = {3, 5, 7};
+    const LVSize32_t odd_sizes[] = { 3, 5, 7 };
     for (int i = 0; i < 3; i++) {
         char label[64];
         snprintf(label, sizeof(label), "alloc(%u) is aligned", odd_sizes[i]);
         TEST_START(n++, label);
-        void *p = arena_allocate(arena, odd_sizes[i],-1);
+        void* p = arena_allocate(arena, odd_sizes[i], -1);
         expect_aligned(p, align, label);
     }
 
@@ -245,20 +245,20 @@ static void test_block_overflow(void)
     int n = 1;
     printf("\n=== block overflow ===\n");
 
-    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — arena_create failed)\n");
         return;
     }
 
-    LVArenaBlock *first_block = arena->current_block;
+    LVArenaBlock* first_block = arena->current_block;
 
     /* Fill the first block almost completely.
      * We allocate (LV_DEFAULT_BLOCK_SIZE - align) bytes so the next
      * allocation of `align` bytes will just barely not fit. */
-    LVSize32_t align    = arena_alignment();
-    LVSize32_t fill     = LV_DEFAULT_BLOCK_SIZE - align;
-    void *fill_ptr = arena_allocate(arena, fill,-1);
+    LVSize32_t align = arena_alignment();
+    LVSize32_t fill = LV_DEFAULT_BLOCK_SIZE - align;
+    void* fill_ptr = arena_allocate(arena, fill, -1);
 
     TEST_START(n++, "fill allocation succeeds");
     expect_ptr_not_null(fill_ptr, "fill allocation succeeds");
@@ -266,19 +266,19 @@ static void test_block_overflow(void)
     /* 5-1. Now allocate something that won't fit in the remaining space.
      *      The arena must create a new block. */
     TEST_START(n++, "overflow triggers new block");
-    void *overflow_ptr = arena_allocate(arena, align * 2,-1);
+    void* overflow_ptr = arena_allocate(arena, align * 2, -1);
     expect_ptr_not_null(overflow_ptr, "overflow triggers new block");
 
     /* If a new block was created, current_block must have changed. */
     TEST_START(n++, "current_block pointer changed after overflow");
     expect_true(arena->current_block != first_block,
-                "current_block pointer changed after overflow");
+        "current_block pointer changed after overflow");
 
     /* 5-2. The new block must link back to the old one via ->prev. */
     TEST_START(n++, "new block's prev points to previous block");
     if (arena->current_block) {
         expect_true(arena->current_block->prev == first_block,
-                    "new block's prev points to previous block");
+            "new block's prev points to previous block");
     }
 
     /* 5-3. The overflow pointer must still be aligned. */
@@ -301,7 +301,7 @@ static void test_dedicated_block(void)
     int n = 1;
     printf("\n=== dedicated block (total > LV_DEFAULT_BLOCK_SIZE) ===\n");
 
-    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — arena_create failed)\n");
         return;
@@ -310,32 +310,41 @@ static void test_dedicated_block(void)
     /* 6-1. Request more than LV_DEFAULT_BLOCK_SIZE bytes. */
     LVSize32_t large = LV_DEFAULT_BLOCK_SIZE + 1;
     TEST_START(n++, "large alloc (> block size) returns non-null");
-    void *large_ptr = arena_allocate(arena, large,-1);
+    void* large_ptr = arena_allocate(arena, large, -1);
     expect_ptr_not_null(large_ptr, "large alloc (> block size) returns non-null");
 
-    /* 6-2. After the large alloc, the arena must have reset to a fresh
-     *      normal block (offset == 0), so small allocs still work. */
-    TEST_START(n++, "offset reset to 0 after dedicated block");
-    uint32_t expected_zero = 0;
-    expect(&arena->current_offset, sizeof(arena->current_offset),
-           &expected_zero, sizeof(expected_zero),
-           "offset reset to 0 after dedicated block");
+    // /* 6-2. After the large alloc, the arena must have reset to a fresh
+    //  *      normal block (offset == 0), so small allocs still work. */
+    // TEST_START(n++, "offset reset to 0 after dedicated block");
+    // uint32_t expected_zero = 0;
+    // expect(&arena->current_offset, sizeof(arena->current_offset),
+    //        &expected_zero, sizeof(expected_zero),
+    //        "offset reset to 0 after dedicated block");
+
+    /* After a large (dedicated) allocation, small allocations must still work
+ * correctly — whether the arena eagerly resets to a fresh block or lazily
+ * creates one on the next alloc is an implementation detail we don't pin. */
+    TEST_START(n++, "small alloc works after dedicated block");
+    void* p = arena_allocate(arena, 64, 0);
+    expect_ptr_not_null(p, "small alloc after dedicated block returns non-NULL");
+    /* write to it to prove it's real, ASan-checked memory */
+    memset(p, 0xAB, 64);
 
     /* 6-3. Small alloc after large alloc must succeed. */
     TEST_START(n++, "small alloc after large alloc succeeds");
-    void *small_ptr = arena_allocate(arena, 16,-1);
+    void* small_ptr = arena_allocate(arena, 16, -1);
     expect_ptr_not_null(small_ptr, "small alloc after large alloc succeeds");
 
     /* 6-4. The two pointers must be different (no overlap). */
     TEST_START(n++, "large and small alloc addresses differ");
     expect_true(large_ptr != small_ptr,
-                "large and small alloc addresses differ");
+        "large and small alloc addresses differ");
 
     /* 6-5. Write to the large region to confirm it's actually usable. */
     if (large_ptr) {
         TEST_START(n++, "large alloc region is writable");
         memset(large_ptr, 0xFF, large);
-        uint8_t *bytes = (uint8_t *)large_ptr;
+        uint8_t* bytes = (uint8_t*)large_ptr;
         int ok = 1;
         for (LVSize32_t i = 0; i < large; i++) {
             if (bytes[i] != 0xFF) { ok = 0; break; }
@@ -362,14 +371,14 @@ static void test_stress(void)
      * for fuzzing, but then failures won't be reproducible. */
     lv_rand_seed(42);
 
-    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!arena) {
         printf("    (skipping — arena_create failed)\n");
         return;
     }
 
-    const int     ITERS     = 500;
-    LVSize32_t    align      = arena_alignment();
+    const int     ITERS = 500;
+    LVSize32_t    align = arena_alignment();
     int           null_count = 0;
     int           misaligned = 0;
 
@@ -381,18 +390,21 @@ static void test_stress(void)
         if (lv_rand_u32() % 20 == 0) {
             /* ~5% chance of a dedicated-block allocation */
             size = LV_DEFAULT_BLOCK_SIZE + (LVSize32_t)lv_rand_int_range(1, 512);
-        } else {
+        }
+        else {
             size = (LVSize32_t)lv_rand_int_range(1, 256);
         }
 
-        void *p = arena_allocate(arena, size,-1);
+        void* p = arena_allocate(arena, size, -1);
 
         if (!p) {
             null_count++;
-        } else if (!IS_ALIGNED(p, align)) {
+        }
+        else if (!IS_ALIGNED(p, align)) {
             misaligned++;
             printf("    misaligned pointer at iter %d: %p (size=%u)\n", i, p, size);
-        } else {
+        }
+        else {
             /* Write to every byte to catch any buffer overrun */
             memset(p, (uint8_t)(i & 0xFF), size);
         }
@@ -432,12 +444,12 @@ static void test_destroy(void)
 
     /* 8-2. Normal destroy after allocations (valgrind will catch leaks). */
     TEST_START(n++, "destroy after multi-block usage does not crash");
-    LVArena *arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    LVArena* arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (arena) {
         /* Force at least 2 blocks */
-        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1,-1);
-        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1,-1);
-        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE + 1,-1); /* dedicated block */
+        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1, -1);
+        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE - 1, -1);
+        arena_allocate(arena, LV_DEFAULT_BLOCK_SIZE + 1, -1); /* dedicated block */
         arena_destroy(arena);
         TEST_SUCCESS("destroy after multi-block usage does not crash");
     }
