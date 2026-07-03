@@ -17,49 +17,52 @@ int query_is_op_token(const LVQueryToken token)
     return token == LV_TOKEN_GT || token == LV_TOKEN_GTE || token == LV_TOKEN_LT || token == LV_TOKEN_LTE || token == LV_TOKEN_EQ || token == LV_TOKEN_NEQ;
 }
 
-LVAstNode* query_and_node(const LVAstNode* left, const LVAstNode* right)
+LVAstNode* query_create_and_node(LVAstNode* left, LVAstNode* right)
 {
     if (!left || !right)
     {
+        query_destroy_ast(left);
+        query_destroy_ast(right);
         return NULL;
     }
     LVAstNode* and_node = malloc(sizeof(LVAstNode));
-    if (!and_node)
+    if (!and_node) {
+        query_destroy_ast(left);
+        query_destroy_ast(right);
         return NULL;
+    }
     and_node->type = LV_AST_AND;
     and_node->value.logic.left = left;
     and_node->value.logic.right = right;
     return and_node;
 }
-LVAstNode* query_or_node(const LVAstNode* left, const LVAstNode* right)
+LVAstNode* query_create_or_node(LVAstNode* left, LVAstNode* right)
 {
     if (!left || !right)
     {
+        query_destroy_ast(left);
+        query_destroy_ast(right);
         return NULL;
     }
     LVAstNode* or_node = malloc(sizeof(LVAstNode));
-    if (!or_node)
+    if (!or_node) {
+        query_destroy_ast(left);
+        query_destroy_ast(right);
         return NULL;
+    }
     or_node->type = LV_AST_OR;
     or_node->value.logic.left = left;
     or_node->value.logic.right = right;
     return or_node;
 }
-LVAstNode* query_filter_node(const char* field_name, const LVQueryOp op, const LVFilterValue* value)
+LVAstNode* query_create_filter_node(const char* field_name, const LVQueryOp op, const LVFilterValue* value)
 {
-    int flag = 0;
     LVAstNode* filter_node = NULL;
 
-    if (strlen(field_name) > LV_META_NAME_MAX - 1)
-    {
-        goto cleanup;
-    }
+    if (strlen(field_name) > LV_META_NAME_MAX - 1) goto cleanup;
 
-    LVAstNode* tmp = malloc(sizeof(LVAstNode));
-    if (!tmp)
-        goto cleanup;
-
-    filter_node = tmp;
+    filter_node = malloc(sizeof(LVAstNode));
+    if (!filter_node) goto cleanup;
 
     filter_node->type = LV_AST_FILTER;
     filter_node->value.logic.left = NULL;
@@ -80,11 +83,7 @@ LVAstNode* query_filter_node(const char* field_name, const LVQueryOp op, const L
     case LV_META_STRING:
         filter_node->value.filter.value.value.str.len = value->value.str.len;
         char* string = malloc(value->value.str.len + 1);
-        if (!string)
-        {
-            flag = 1;
-            goto cleanup;
-        }
+        if (!string) goto cleanup;
         memcpy(string, value->value.str.string, value->value.str.len);
         string[value->value.str.len] = '\0';
         filter_node->value.filter.value.value.str.string = string;
@@ -93,12 +92,12 @@ LVAstNode* query_filter_node(const char* field_name, const LVQueryOp op, const L
         break;
     }
 
+    return filter_node;
+
 cleanup:
-    if (flag)
-    {
-        free(filter_node);
-        filter_node = NULL;
-    }
+    free(filter_node);
+    filter_node = NULL;
+
     return filter_node;
 }
 
@@ -251,14 +250,14 @@ _return:
     return result;
 }
 
-void destroy_ast(LVAstNode* node)
+void query_destroy_ast(LVAstNode* node)
 {
     if (!node)
         return;
     if (node->type != LV_AST_FILTER)
     {
-        destroy_ast(node->value.logic.left);
-        destroy_ast(node->value.logic.right);
+        query_destroy_ast(node->value.logic.left);
+        query_destroy_ast(node->value.logic.right);
     }
     if (node->type == LV_AST_FILTER && node->value.filter.value.type == LV_META_STRING)
     {
@@ -529,6 +528,11 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
         }
     }
 
+    if (lexer.lparen_count != 0) {
+        result = LV_ERR_INVALID_QUERY;
+        goto _return;
+    }
+
     if ((result = query_append_tokenviewer(parser, LV_TOKEN_EOF, NULL, 0)) != LV_OK)
     {
         goto _return;
@@ -609,7 +613,7 @@ int query_lexer_is_stop_char(char c)
     return isspace(c) || c == '(' || c == ')' || c == '>' || c == '<' || c == '=' || c == '!' || c == '\'' || c == '\0';
 }
 
-LVSQLParser* create_parser() {
+LVSQLParser* query_create_parser() {
     int flag = 0;
     LVSQLParser* parser = NULL;
     LVSQLTokenViewer* viewers = NULL;
@@ -622,22 +626,20 @@ LVSQLParser* create_parser() {
     parser->cursor = 0;
     parser->current_viewer = NULL;
     parser->complexity_score = 0;
+
     viewers = malloc(sizeof(LVSQLTokenViewer) * LV_DEFAULT_CAPACITY);
-    if (!viewers) {
-        flag = 1;
-        goto cleanup;
-    }
+    if (!viewers)  goto cleanup;
     parser->viewers = viewers;
+
+    return parser;
 cleanup:
-    if (flag) {
-        free(viewers);
-        free(parser);
-        parser = NULL;
-    }
+    query_destroy_parser(parser);
+    parser = NULL;
+
     return parser;
 }
 
-void destory_parser(LVSQLParser* parser) {
+void query_destroy_parser(LVSQLParser* parser) {
     if (parser) {
         free(parser->viewers);
         free(parser);
@@ -648,7 +650,12 @@ LVAstNode* query_parse(LVSQLParser* parser, const LVSchema* schema)
     if (parser->size == 0)return NULL;
     parser->cursor = 0;
     parser->current_viewer = &parser->viewers[0];
-    return query_parse_or(parser, schema);
+    LVAstNode* ast = query_parse_or(parser, schema);
+    if (ast && parser->current_viewer->token != LV_TOKEN_EOF) {
+        query_destroy_ast(ast);
+        return NULL;
+    }
+    return ast;
 }
 
 LVAstNode* query_parse_or(LVSQLParser* parser, const LVSchema* schema)
@@ -657,7 +664,7 @@ LVAstNode* query_parse_or(LVSQLParser* parser, const LVSchema* schema)
     while (query_parser_match(parser, LV_TOKEN_OR))
     {
         LVAstNode* right = query_parse_and(parser, schema);
-        node = query_or_node(node, right);
+        node = query_create_or_node(node, right);
     }
     return node;
 }
@@ -667,7 +674,7 @@ LVAstNode* query_parse_and(LVSQLParser* parser, const LVSchema* schema)
     while (query_parser_match(parser, LV_TOKEN_AND))
     {
         LVAstNode* right = query_parse_term(parser, schema);
-        node = query_and_node(node, right);
+        node = query_create_and_node(node, right);
     }
     return node;
 }
@@ -676,7 +683,10 @@ LVAstNode* query_parse_term(LVSQLParser* parser, const LVSchema* schema)
     if (query_parser_match(parser, LV_TOKEN_LPAREN))
     {
         LVAstNode* node = query_parse_or(parser, schema);
-        query_parser_consume(parser, LV_TOKEN_RPAREN);
+        if (query_parser_consume(parser, LV_TOKEN_RPAREN) != LV_OK) {
+            query_destroy_ast(node);
+            return NULL;
+        }
         return node;
     }
     return query_parse_filter(parser, schema);
@@ -700,7 +710,7 @@ LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema)
         return NULL;
     }
 
-    query_parser_consume(parser, LV_TOKEN_IDENT);
+    if (query_parser_consume(parser, LV_TOKEN_IDENT) != LV_OK) return NULL;
 
     LVQueryOp filter_op;
     switch (parser->current_viewer->token)
@@ -732,7 +742,7 @@ LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema)
         return NULL;
     }
 
-    query_parser_consume(parser, parser->current_viewer->token);
+    if (query_parser_consume(parser, parser->current_viewer->token) != LV_OK) return NULL;
 
     LVFilterValue filter_value;
 
@@ -755,9 +765,9 @@ LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema)
         break;
     }
 
-    query_parser_consume(parser, parser->current_viewer->token);
+    if (query_parser_consume(parser, parser->current_viewer->token) != LV_OK) return NULL;
 
-    return query_filter_node(hash->field_name, filter_op, &filter_value);
+    return query_create_filter_node(hash->field_name, filter_op, &filter_value);
 }
 
 int64_t query_strtol(const char* ptr, const LVSize32_t size)
@@ -820,11 +830,15 @@ void query_advance_parser(LVSQLParser* parser)
     }
 }
 
-void query_parser_consume(LVSQLParser* parser, const LVQueryToken token)
+LVStatus query_parser_consume(LVSQLParser* parser, const LVQueryToken token)
 {
     if (parser->current_viewer->token == token)
     {
         query_advance_parser(parser);
+        return LV_OK;
+    }
+    else {
+        return LV_ERR_INVALID_QUERY;
     }
 }
 
