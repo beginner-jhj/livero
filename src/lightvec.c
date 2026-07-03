@@ -49,8 +49,8 @@ static LVQVSet* lv_create_qvset_internal(void);
 static LVStatus lv_flush_internal(LightVec* db);
 static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone);
 static LVStatus lv_qvset_light_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone);
-static void lv_destory_qvset_internal(LVQVSet* qvset);
-static void lv_light_destory_qvset_internal(LVQVSet* qvset);
+static void lv_destroy_qvset_internal(LVQVSet* qvset);
+static void lv_destroy_light_qvset_internal(LVQVSet* qvset);
 static LVStatus lv_merge_qvsets_internal(LVQVSet* result_qvset, const LVQVSet* memtable_qvset, const LVQVSet* sst_qvset);
 static void lv_apply_score_filter_internal(LVQVSet* qvset, const float threshold, const LVScoreBound bound);
 static void lv_apply_ordby_internal(LVQVSet* qvset, const LVOrdbyType type, const LVQueryOrderDir dir);
@@ -75,21 +75,18 @@ LVStatus lv_create(LightVec** db, const char* path, const LVSize32_t flush_thres
     int schema_fd = -1;
 
     char db_path[LV_PATH_MAX];
-    if ((result = lv_prepare_db_dir_internal(db_path, path)) != LV_OK)
-        return result;
+    if ((result = lv_prepare_db_dir_internal(db_path, path)) != LV_OK) return result;
 
     char schema_path[LV_PATH_MAX];
     if ((result = path_join(schema_path, LV_PATH_MAX, db_path, "schema.lv")) != LV_OK)
         return result;
 
     /* create must not clobber an existing DB */
-    if (access(schema_path, F_OK) == 0)
-        return LV_ERR_EXISTS;
+    if (access(schema_path, F_OK) == 0) return LV_ERR_EXISTS;
 
     /* build the in-memory schema (validates names, reserved words, masks) */
     schema = schema_create(vector_dim, vector_type, vector_metric, field_count, field_defs);
-    if (!schema)
-        return LV_ERR_INVALID;
+    if (!schema)return LV_ERR_INVALID;
 
     /* persist it (schema_write flushes + checksums) */
     schema_fd = open(schema_path, O_RDWR | O_CREAT, 0644);
@@ -124,16 +121,13 @@ LVStatus lv_open(LightVec** db, const char* path, const LVSize32_t flush_thresho
     int schema_fd = -1;
 
     char db_path[LV_PATH_MAX];
-    if ((result = lv_prepare_db_dir_internal(db_path, path)) != LV_OK)
-        return result;
+    if ((result = lv_prepare_db_dir_internal(db_path, path)) != LV_OK) return result;
 
     char schema_path[LV_PATH_MAX];
-    if ((result = path_join(schema_path, LV_PATH_MAX, db_path, "schema.lv")) != LV_OK)
-        return result;
+    if ((result = path_join(schema_path, LV_PATH_MAX, db_path, "schema.lv")) != LV_OK) return result;
 
     /* open requires an existing DB */
-    if (access(schema_path, F_OK) != 0)
-        return LV_ERR_NOT_FOUND;
+    if (access(schema_path, F_OK) != 0) return LV_ERR_NOT_FOUND;
 
     schema = malloc(sizeof(LVSchema));
     if (!schema)
@@ -405,11 +399,11 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
     LVCount32_t new_field_mask = 0;
     LVCount32_t new_field_count = 0;
 
-    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto cleanup;
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
 
     if (key_len == 0 || key_len > LV_MAX_KEY_LEN || field_count > db->schema->field_count || (field_count > 0 && fields == NULL)) {
         result = LV_ERR_INVALID;
-        goto cleanup;
+        goto _return;
     }
 
     LVNode* mt_node = table_search(db->memtable, key, key_len);
@@ -417,7 +411,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
     if (mt_node) {
         if (mt_node->op == LV_DELETE) {
             result = LV_ERR_NOT_FOUND;
-            goto cleanup;
+            goto _return;
         }
 
         found_value_len = mt_node->value_len;
@@ -429,7 +423,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
         found_value = malloc(found_value_len);
         if (!found_value) {
             result = LV_ERR_OOM;
-            goto cleanup;
+            goto _return;
         }
         memcpy(found_value, node_access_value(mt_node), found_value_len);
 
@@ -437,7 +431,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
             found_field = malloc(found_field_size);
             if (!found_field) {
                 result = LV_ERR_OOM;
-                goto cleanup;
+                goto _return;
             }
             memcpy(found_field, node_access_field(mt_node, 0), found_field_size);
         }
@@ -445,7 +439,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
 
     else if (db->sst_fd < 0) {
         result = LV_ERR_NOT_FOUND;
-        goto cleanup;
+        goto _return;
     }
 
     else {
@@ -454,27 +448,27 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
 
         if (sst_search_status != LV_OK) {
             result = sst_search_status;
-            goto cleanup;
+            goto _return;
         }
 
         uint64_t record_head_size = 0;
-        if ((result = sst_read_record_head(db->sst_fd, entry.offset, NULL, NULL, NULL, NULL, &found_value_len, &found_vector_id, &found_field_mask, &found_field_count, &found_field_size, &record_head_size)) != LV_OK) goto cleanup;
+        if ((result = sst_read_record_head(db->sst_fd, entry.offset, NULL, NULL, NULL, NULL, &found_value_len, &found_vector_id, &found_field_mask, &found_field_count, &found_field_size, &record_head_size)) != LV_OK) goto _return;
 
         found_value = malloc(found_value_len);
         if (!found_value) {
             result = LV_ERR_OOM;
-            goto cleanup;
+            goto _return;
         }
 
         if (found_field_count > 0) {
             found_field = malloc(found_field_size);
             if (!found_field) {
                 result = LV_ERR_OOM;
-                goto cleanup;
+                goto _return;
             }
         }
 
-        if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, key_len, found_value, found_value_len, found_field, found_field_size, NULL)) != LV_OK) goto cleanup;
+        if ((result = sst_read_record_tail(db->sst_fd, entry.offset + record_head_size, NULL, key_len, found_value, found_value_len, found_field, found_field_size, NULL)) != LV_OK) goto _return;
     }
 
     new_field_size = found_field_size;
@@ -485,12 +479,12 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
         const LVMetaFieldHash* searched_hash = schema_search_field_hash(db->schema->field_hashes, current_field->name, strlen(current_field->name));
         if (!searched_hash) {
             result = LV_ERR_INVALID;
-            goto cleanup;
+            goto _return;
         }
 
         if (searched_hash->type != current_field->type) {
             result = LV_ERR_INVALID;
-            goto cleanup;
+            goto _return;
         }
 
         //new added field
@@ -536,7 +530,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
     new_field = malloc(new_field_size);
     if (!new_field) {
         result = LV_ERR_OOM;
-        goto cleanup;
+        goto _return;
     }
 
     new_field_mask = found_field_mask | field_mask_to_add;
@@ -545,7 +539,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
     new_field_accrued_offsets = (LVSize32_t*)malloc(new_field_count * sizeof(LVSize32_t));
     if (!new_field_accrued_offsets) {
         result = LV_ERR_OOM;
-        goto cleanup;
+        goto _return;
     }
 
     LVCount32_t upd_cnt = 0;
@@ -688,7 +682,7 @@ LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_l
 
     result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, found_value, found_value_len, NULL, new_field_mask, new_field_count, new_field_size, new_field);
 
-cleanup:
+_return:
     free(found_value);
     free(found_field);
     free(new_field);
@@ -776,9 +770,16 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
 
     if (is_ordby_on) {
         const LVMetaFieldHash* hash = schema_search_field_hash(db->schema->field_hashes, option->order.by, strlen(option->order.by));
+
+        if (!hash) {
+            result = LV_ERR_INVALID_QUERY;
+            goto _return;
+        }
+
         if (hash->type != LV_META_STRING) {
             ordby_field_mask = hash->mask;
         }
+
         if (is_ordby_vec) {
             ordbytype = LV_ORDBY_VEC;
         }
@@ -903,10 +904,14 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
 
     *outputs = lv_create_query_result_set_internal(merged_qvset);
 
+    if (!*outputs) {
+        result = LV_ERR_OOM;
+    }
+
 _return:
-    lv_light_destory_qvset_internal(memtable_qvset);
-    lv_destory_qvset_internal(sst_qvset);
-    lv_light_destory_qvset_internal(merged_qvset);
+    lv_destroy_light_qvset_internal(memtable_qvset);
+    lv_destroy_qvset_internal(sst_qvset);
+    lv_destroy_light_qvset_internal(merged_qvset);
     query_destroy_parser(parser);
     query_destroy_ast(query_tree);
     return result;
@@ -914,13 +919,44 @@ _return:
 
 void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
     if (qrset) {
-        for (int i = 0; i < qrset->size; ++i) {
-            free(qrset->results[i].key);
-            free(qrset->results[i].value);
+        if (qrset->results) {
+            for (int i = 0; i < qrset->size; ++i) {
+                free(qrset->results[i].key);
+                free(qrset->results[i].value);
+            }
+            free(qrset->results);
         }
-        free(qrset->results);
         free(qrset);
     }
+}
+
+LVStatus lv_close(LightVec* db)
+{
+    if (!db) return LV_OK;
+
+    LVStatus result = LV_OK;
+
+    if (db->memtable && db->memtable->node_count > 0)
+    {
+        LVStatus fs = lv_flush_internal(db);
+        if (fs != LV_OK) result = fs;
+    }
+
+    if (db->sst_fd >= 0) write_helper_flush(db->sst_fd, 1);
+    write_helper_reset();
+
+    if (db->schema_fd >= 0)       close(db->schema_fd);
+    if (db->wal_fd >= 0)          close(db->wal_fd);
+    if (db->sst_fd >= 0)          close(db->sst_fd);
+    if (db->vectors_fd >= 0)      close(db->vectors_fd);
+    if (db->vector_index_fd >= 0) close(db->vector_index_fd);
+
+    table_destroy(db->memtable);
+    schema_destroy(db->schema);
+    vector_hnsw_destroy(db->hnsw);
+    free(db);
+
+    return result;
 }
 
 /* ============================================================================
@@ -961,16 +997,11 @@ static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     const LVSize32_t flush_threshold,
     LVSchema* schema, int schema_fd)
 {
-    int flag = 0;
     LVStatus result = LV_OK;
-    LightVec* LV_DB = NULL;
-    LVMemTable* LV_MTABLE = NULL;
-    LVHnsw* LV_HNSW = NULL;
 
-    LV_DB = malloc(sizeof(LightVec));
+    LightVec* LV_DB = malloc(sizeof(LightVec));
     if (!LV_DB)
     {
-        flag = 1;
         result = LV_ERR_OOM;
         goto cleanup;
     }
@@ -993,27 +1024,26 @@ static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     LV_DB->schema = schema;
     LV_DB->schema_fd = schema_fd;
 
+    LV_DB->memtable = NULL;
+    LV_DB->hnsw = NULL;
+
     /* MemTable */
-    LV_MTABLE = table_create();
-    if (!LV_MTABLE)
+    LV_DB->memtable = table_create();
+    if (!LV_DB->memtable)
     {
-        flag = 1;
         result = LV_ERR_OOM;
         goto cleanup;
     }
-    LV_DB->memtable = LV_MTABLE;
 
     /* WAL */
     char wal_path[LV_PATH_MAX];
     if ((result = path_join(wal_path, LV_PATH_MAX, LV_DB->path, "wal.lv")) != LV_OK)
     {
-        flag = 1;
         goto cleanup;
     }
     LV_DB->wal_fd = open(wal_path, O_RDWR | O_CREAT, 0644);
     if (LV_DB->wal_fd < 0)
     {
-        flag = 1;
         result = LV_ERR_IO;
         goto cleanup;
     }
@@ -1024,19 +1054,16 @@ static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     char sst_path[LV_PATH_MAX];
     if ((result = path_join(sst_path, LV_PATH_MAX, LV_DB->path, "sst.lv")) != LV_OK)
     {
-        flag = 1;
         goto cleanup;
     }
     LV_DB->sst_fd = open(sst_path, O_RDONLY);   // -1 == no SST yet, OK 
 
-    LV_HNSW = vector_hnsw_create(schema->vector_type, schema->vector_dim);
-    if (!LV_HNSW)
+    LV_DB->hnsw = vector_hnsw_create(schema->vector_type, schema->vector_dim);
+    if (!LV_DB->hnsw)
     {
-        flag = 1;
         result = LV_ERR_OOM;
         goto cleanup;
     }
-    LV_DB->hnsw = LV_HNSW;
 
     /* vectors.lv + vector_index.lv */
     char vectors_path[LV_PATH_MAX];
@@ -1044,19 +1071,16 @@ static LVStatus lv_open_internal(LightVec** db, const char* db_path,
 
     if ((result = path_join(vectors_path, LV_PATH_MAX, LV_DB->path, "vectors.lv")) != LV_OK)
     {
-        flag = 1;
         goto cleanup;
     }
     if ((result = path_join(vector_index_path, LV_PATH_MAX, LV_DB->path, "vector_index.lv")) != LV_OK)
     {
-        flag = 1;
         goto cleanup;
     }
 
     LV_DB->vectors_fd = open(vectors_path, O_RDWR | O_CREAT, 0644);
     if (LV_DB->vectors_fd < 0)
     {
-        flag = 1;
         result = LV_ERR_IO;
         goto cleanup;
     }
@@ -1064,7 +1088,6 @@ static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     LV_DB->vector_index_fd = open(vector_index_path, O_RDWR | O_CREAT, 0644);
     if (LV_DB->vector_index_fd < 0)
     {
-        flag = 1;
         result = LV_ERR_IO;
         goto cleanup;
     }
@@ -1072,33 +1095,33 @@ static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     /* replay WAL + SST into memtable/hnsw */
     if ((result = lv_recover_internal(LV_DB)) != LV_OK)
     {
-        flag = 1;
         goto cleanup;
     }
 
     *db = LV_DB;
 
+    return result;
+
 cleanup:
-    if (flag)
+
+    /* lv_close frees schema, closes all fds (incl. schema_fd), destroys
+     * memtable/hnsw. Ownership of schema+schema_fd was transferred into
+     * LV_DB above, so they are released here exactly once.
+     *
+     * NOTE: if LV_DB itself failed to allocate, schema/schema_fd never
+     * transferred — the caller must free them in that case (see wrappers).
+     */
+    if (LV_DB) { lv_close(LV_DB); }
+    else
     {
-        /* lv_close frees schema, closes all fds (incl. schema_fd), destroys
-         * memtable/hnsw. Ownership of schema+schema_fd was transferred into
-         * LV_DB above, so they are released here exactly once.
-         *
-         * NOTE: if LV_DB itself failed to allocate, schema/schema_fd never
-         * transferred — the caller must free them in that case (see wrappers).
-         */
-        if (LV_DB) { lv_close(LV_DB); }
-        else
-        {
-            /* LV_DB never allocated, so ownership never transferred. This
-             * function still owns schema + schema_fd and must release them —
-             * the contract is: hand schema/schema_fd to lv_open_internal and
-             * it takes care of cleanup on every path, success or failure. */
-            if (schema)        schema_destroy(schema);
-            if (schema_fd >= 0) close(schema_fd);
-        }
+        /* LV_DB never allocated, so ownership never transferred. This
+         * function still owns schema + schema_fd and must release them —
+         * the contract is: hand schema/schema_fd to lv_open_internal and
+         * it takes care of cleanup on every path, success or failure. */
+        if (schema)        schema_destroy(schema);
+        if (schema_fd >= 0) close(schema_fd);
     }
+
     return result;
 }
 
@@ -1397,27 +1420,20 @@ _return:
 }
 
 static LVQVSet* lv_create_qvset_internal(void) {
-    int flag = 0;
-    LVQVSet* result = NULL;
+    LVQVSet* qvset = malloc(sizeof(LVQVSet));
+    if (!qvset) goto cleanup;
+    qvset->capacity = LV_DEFAULT_CAPACITY;
+    qvset->size = 0;
+    qvset->values = NULL;
 
-    result = malloc(sizeof(LVQVSet));
-    if (!result) goto cleanup;
-    result->capacity = LV_DEFAULT_CAPACITY;
-    result->size = 0;
-    result->values = NULL;
+    qvset->values = malloc(sizeof(LVQueryValue) * qvset->capacity);
+    if (!qvset->values) goto cleanup;
 
-    LVQueryValue* values = malloc(sizeof(LVQueryValue) * result->capacity);
-    if (!values) {
-        flag = 1;
-        goto cleanup;
-    }
-
-    result->values = values;
+    return qvset;
 cleanup:
-    if (flag) {
-        lv_destory_qvset_internal(result);
-    }
-    return result;
+    lv_destroy_qvset_internal(qvset);
+
+    return NULL;
 }
 
 static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone) {
@@ -1436,14 +1452,14 @@ static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_se
         qvset->values = tmp;
     }
 
-    const void* key_to_save = malloc(key_len);
+    void* key_to_save = malloc(key_len);
     if (!key_to_save) {
         result = LV_ERR_OOM;
         goto _return;
     }
     memcpy(key_to_save, key, key_len);
 
-    const void* value_to_save = malloc(value_len);
+    void* value_to_save = malloc(value_len);
     if (!value_to_save) {
         free(key_to_save);
         result = LV_ERR_OOM;
@@ -1452,7 +1468,7 @@ static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_se
     memcpy(value_to_save, value, value_len);
 
 
-    const int index = qvset->size;
+    const LVSize32_t index = qvset->size;
 
     qvset->values[index].node_seq = node_seq;
     qvset->values[index].vector_id = vector_id;
@@ -1502,18 +1518,21 @@ _return:
     return result;
 }
 
-static void lv_destory_qvset_internal(LVQVSet* qvset) {
+static void lv_destroy_qvset_internal(LVQVSet* qvset) {
     if (qvset) {
-        for (int i = 0; i < qvset->size; ++i) {
-            free(qvset->values[i].key);
-            free(qvset->values[i].value);
+        if (qvset->values) {
+            for (int i = 0; i < qvset->size; ++i) {
+                free(qvset->values[i].key);
+                free(qvset->values[i].value);
+            }
+            free(qvset->values);
         }
-        free(qvset->values);
+
         free(qvset);
     }
 }
 
-static void lv_light_destory_qvset_internal(LVQVSet* qvset) {
+static void lv_destroy_light_qvset_internal(LVQVSet* qvset) {
     if (qvset) {
         free(qvset->values);
         free(qvset);
@@ -1654,42 +1673,42 @@ static void lv_apply_score_filter_internal(LVQVSet* qvset, const float threshold
 }
 
 
-static int cmp_f64_asc(const void* a, const void* b) {
+static int lv_cmp_f64_asc_internal(const void* a, const void* b) {
     const LVQueryValue* qva = a;
     const LVQueryValue* qvb = b;
 
     return (qva->ordbyvalue.f64 > qvb->ordbyvalue.f64) - (qva->ordbyvalue.f64 < qvb->ordbyvalue.f64);
 }
 
-static int cmp_f64_desc(const void* a, const void* b) {
+static int lv_cmp_f64_desc_internal(const void* a, const void* b) {
     const LVQueryValue* qva = a;
     const LVQueryValue* qvb = b;
 
     return (qva->ordbyvalue.f64 < qvb->ordbyvalue.f64) - (qva->ordbyvalue.f64 > qvb->ordbyvalue.f64);
 }
 
-static int cmp_i64_asc(const void* a, const void* b) {
+static int lv_cmp_i64_asc_internal(const void* a, const void* b) {
     const LVQueryValue* qva = a;
     const LVQueryValue* qvb = b;
 
     return (qva->ordbyvalue.i64 > qvb->ordbyvalue.i64) - (qva->ordbyvalue.i64 < qvb->ordbyvalue.i64);
 }
 
-static int cmp_i64_desc(const void* a, const void* b) {
+static int lv_cmp_i64_desc_internal(const void* a, const void* b) {
     const LVQueryValue* qva = a;
     const LVQueryValue* qvb = b;
 
     return (qva->ordbyvalue.i64 < qvb->ordbyvalue.i64) - (qva->ordbyvalue.i64 > qvb->ordbyvalue.i64);
 }
 
-static int cmp_vecscore_asc(const void* a, const void* b) {
+static int lv_cmp_vecscore_asc_internal(const void* a, const void* b) {
     const LVQueryValue* qva = a;
     const LVQueryValue* qvb = b;
 
     return (qva->ordbyvalue.score > qvb->ordbyvalue.score) - (qva->ordbyvalue.score < qvb->ordbyvalue.score);
 }
 
-static int cmp_vecscore_desc(const void* a, const void* b) {
+static int lv_cmp_vecscore_desc_internal(const void* a, const void* b) {
     const LVQueryValue* qva = a;
     const LVQueryValue* qvb = b;
 
@@ -1701,30 +1720,30 @@ static void lv_apply_ordby_internal(LVQVSet* qvset, const LVOrdbyType type, cons
     {
     case LV_ORDBY_FLOAT: {
         if (dir == LV_ORDER_ASC) {
-            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), cmp_f64_asc);
+            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), lv_cmp_f64_asc_internal);
         }
         else {
-            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), cmp_f64_desc);
+            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), lv_cmp_f64_desc_internal);
         }
         break;
     }
 
     case LV_ORDBY_INT: {
         if (dir == LV_ORDER_ASC) {
-            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), cmp_i64_asc);
+            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), lv_cmp_i64_asc_internal);
         }
         else {
-            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), cmp_i64_desc);
+            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), lv_cmp_i64_desc_internal);
         }
         break;
     }
 
     case LV_ORDBY_VEC: {
         if (dir == LV_ORDER_ASC) {
-            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), cmp_vecscore_asc);
+            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), lv_cmp_vecscore_asc_internal);
         }
         else {
-            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), cmp_vecscore_desc);
+            qsort(qvset->values, qvset->size, sizeof(LVQueryValue), lv_cmp_vecscore_desc_internal);
         }
         break;
     }
@@ -1741,79 +1760,43 @@ static void lv_apply_limit_internal(LVQVSet* qvset, const LVSize32_t limit) {
 }
 
 static LVQueryResultSet* lv_create_query_result_set_internal(const LVQVSet* result_qvset) {
-    int flag = 0;
-    LVQueryResultSet* result = NULL;
+    LVQueryResultSet* qrset = malloc(sizeof(LVQueryResultSet));
+    if (!qrset) goto cleanup;
 
-    result = malloc(sizeof(LVQueryResultSet));
-    if (!result) goto cleanup;
+    qrset->size = result_qvset->size;
+    qrset->results = malloc(sizeof(LVQueryResult) * qrset->size);
 
-    result->size = result_qvset->size;
-    result->results = malloc(sizeof(LVQueryResult) * result->size);
-
-    if (!result->results) {
-        flag = 1;
+    if (!qrset->results) {
         goto cleanup;
     }
 
     for (LVSize32_t i = 0; i < result_qvset->size; ++i) {
-        result->results[i].key = NULL;
-        result->results[i].value = NULL;
+        qrset->results[i].key = NULL;
+        qrset->results[i].value = NULL;
         void* key_copy = malloc(result_qvset->values[i].key_len);
         if (!key_copy) {
-            flag = 1;
             goto cleanup;
         }
+        memcpy(key_copy, result_qvset->values[i].key, result_qvset->values[i].key_len);
 
         void* value_copy = malloc(result_qvset->values[i].value_len);
         if (!value_copy) {
-            flag = 1;
             goto cleanup;
         }
-
-        memcpy(key_copy, result_qvset->values[i].key, result_qvset->values[i].key_len);
         memcpy(value_copy, result_qvset->values[i].value, result_qvset->values[i].value_len);
 
-        result->results[i].node_seq = result_qvset->values[i].node_seq;
-        result->results[i].vector_id = result_qvset->values[i].vector_id;
-        result->results[i].key = key_copy;
-        result->results[i].key_len = result_qvset->values[i].key_len;
-        result->results[i].value = value_copy;
-        result->results[i].value_len = result_qvset->values[i].value_len;
-        result->results[i].vector_score = result_qvset->values[i].vector_score;
+        qrset->results[i].node_seq = result_qvset->values[i].node_seq;
+        qrset->results[i].vector_id = result_qvset->values[i].vector_id;
+        qrset->results[i].key = key_copy;
+        qrset->results[i].key_len = result_qvset->values[i].key_len;
+        qrset->results[i].value = value_copy;
+        qrset->results[i].value_len = result_qvset->values[i].value_len;
+        qrset->results[i].vector_score = result_qvset->values[i].vector_score;
     }
+
+    return qrset;
 cleanup:
-    if (flag) {
-        lv_destroy_query_result_set(result);
-        result = NULL;
-    }
-    return result;
-}
+    lv_destroy_query_result_set(qrset);
 
-LVStatus lv_close(LightVec* db) {
-    if (!db) return LV_ERR_INVALID;
-    if (lv_check_db_corruption_internal(db) != LV_OK) return LV_ERR_CORRUPT;
-
-    off_t sz = lseek(db->wal_fd, 0, SEEK_END);
-
-    if (db->memtable->node_count > 0) {
-        LVStatus fs = lv_flush_internal(db);
-        if (fs != LV_OK) return fs;
-    }
-
-
-    write_helper_flush(db->sst_fd, 1);
-    write_helper_reset();
-    if (db->schema_fd >= 0)       close(db->schema_fd);
-    if (db->wal_fd >= 0)          close(db->wal_fd);
-    if (db->sst_fd >= 0)          close(db->sst_fd);
-    if (db->vectors_fd >= 0)       close(db->vectors_fd);
-    if (db->vector_index_fd >= 0) close(db->vector_index_fd);
-
-    table_destroy(db->memtable);
-    schema_destroy(db->schema);
-    vector_hnsw_destroy(db->hnsw);
-    free(db);
-
-    return LV_OK;
-
+    return NULL;
 }
