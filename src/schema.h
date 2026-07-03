@@ -42,8 +42,6 @@ typedef struct LVSchema
     LVCount32_t field_count;
     LVMetaFieldDef field_defs[LV_MAX_META_FIELDS];
     LVMetaFieldHash* field_hashes[LV_MAX_META_FIELDS];
-    uint32_t next_field_mask;
-    uint32_t total_field_mask;
 } LVSchema;
 
 LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVVectorMetric vector_metric, const LVCount32_t field_count, const LVMetaFieldDef* field_defs);

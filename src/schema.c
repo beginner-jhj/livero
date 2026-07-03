@@ -9,22 +9,13 @@
 
 LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVVectorMetric vector_metric, const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
 {
-    int flag = 0;
     LVSchema* schema = NULL;
 
-    if (vector_dim > LV_MAX_DIMENSION || field_count > LV_MAX_META_FIELDS)
-    {
-        goto cleanup;
-    }
+    if (vector_dim > LV_MAX_DIMENSION || field_count > LV_MAX_META_FIELDS) goto cleanup;
 
-    LVSchema* schema_temp = malloc(sizeof(LVSchema));
-    if (!schema_temp)
-    {
-        flag = 1;
-        goto cleanup;
-    }
 
-    schema = schema_temp;
+    schema = malloc(sizeof(LVSchema));
+    if (!schema) goto cleanup;
 
     schema->vector_dim = vector_dim;
     schema->vector_type = vector_type;
@@ -32,9 +23,7 @@ LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_ty
 
     schema->field_count = field_count;
 
-    schema->next_field_mask = 1;
-    schema->total_field_mask = 0;
-
+    uint32_t current_field_mask = 1;
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
 
     static const char* LV_RESERVED_NAMES[] = {
@@ -52,50 +41,31 @@ LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_ty
     {
         const LVMetaFieldDef* current_def = field_defs + i;
 
-        if (strlen(current_def->name) > LV_META_NAME_MAX)
-        {
-            flag = 1;
-            goto cleanup;
-        }
+        if (strlen(current_def->name) > LV_META_NAME_MAX) goto cleanup;
+
 
         for (int k = 0; LV_RESERVED_NAMES[k] != NULL; ++k)
         {
-            if (strncasecmp(current_def->name, LV_RESERVED_NAMES[k],
-                strlen(LV_RESERVED_NAMES[k]) + 1) == 0)
-            {
-                flag = 1;
-                goto cleanup;
-            }
+            if (strncasecmp(current_def->name, LV_RESERVED_NAMES[k], strlen(LV_RESERVED_NAMES[k]) + 1) == 0) goto cleanup;
         }
 
         for (int j = 0; j < strlen(current_def->name); ++j) // check name is valid
         {
-            if (!isalnum(current_def->name[j]) && current_def->name[j] != '_')
-            {
-                flag = 1;
-                goto cleanup;
-            }
+            if (!isalnum(current_def->name[j]) && current_def->name[j] != '_')  goto cleanup;
         }
 
         schema->field_defs[i] = *current_def;
 
-        if (schema_insert_field_hash(schema->field_hashes, current_def->name, current_def->type, schema->next_field_mask) != LV_OK)
-        {
-            flag = 1;
-            goto cleanup;
-        }
-
-        schema->total_field_mask |= schema->next_field_mask;
-        schema->next_field_mask <<= 1;
+        if (schema_insert_field_hash(schema->field_hashes, current_def->name, current_def->type, current_field_mask) != LV_OK) goto cleanup;
+        
+        current_field_mask <<= 1;
     }
+
+    return schema;
 
 cleanup:
-    if (flag)
-    {
-        schema_destroy(schema);
-        schema = NULL;
-    }
-    return schema;
+    schema_destroy(schema);
+    return NULL;
 }
 
 void schema_destroy_field_hashes(LVMetaFieldHash** hashes)
@@ -345,8 +315,7 @@ LVStatus schema_read(const int fd, LVSchema* schema)
 
     int count = 0;
 
-    uint32_t next_field_mask = 1;
-    uint32_t total_field_mask = 0;
+    uint32_t current_field_mask = 1;
 
     char saved_field_name[LV_META_NAME_MAX];
     memset(saved_field_name, 0, LV_META_NAME_MAX);
@@ -389,20 +358,15 @@ LVStatus schema_read(const int fd, LVSchema* schema)
 
         checksum = crc_calc(BUF_32, sizeof(uint32_t), checksum);
 
-        if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, saved_field_type, next_field_mask)) != LV_OK)
+        if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, saved_field_type, current_field_mask)) != LV_OK)
         {
             goto _return;
         }
 
-        total_field_mask |= next_field_mask;
-        next_field_mask <<= 1;
+        current_field_mask <<= 1;
 
         ++count;
     }
-
-    schema->total_field_mask = total_field_mask;
-    schema->next_field_mask = next_field_mask;
-
     // read checksum
     if ((result = read_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
     {
