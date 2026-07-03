@@ -1029,7 +1029,7 @@ static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     }
     LV_DB->sst_fd = open(sst_path, O_RDONLY);   // -1 == no SST yet, OK 
 
-    LV_HNSW = create_hnsw(schema->vector_type, schema->vector_dim);
+    LV_HNSW = vector_hnsw_create(schema->vector_type, schema->vector_dim);
     if (!LV_HNSW)
     {
         flag = 1;
@@ -1811,7 +1811,7 @@ LVStatus lv_close(LightVec* db) {
 
     table_destroy(db->memtable);
     schema_destroy(db->schema);
-    destroy_hnsw(db->hnsw);
+    vector_hnsw_destroy(db->hnsw);
     free(db);
 
     return LV_OK;

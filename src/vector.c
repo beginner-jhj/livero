@@ -37,7 +37,7 @@
  * (Multiplies two 16-bit values and adds the result to a 32-bit accumulator).
  */
 
-LVHnsw* create_hnsw(const LVVectorType vector_type, const LVDim32_t dim)
+LVHnsw* vector_hnsw_create(const LVVectorType vector_type, const LVDim32_t dim)
 {
     int flag = 0;
     LVHnsw* hnsw = NULL;
@@ -200,7 +200,7 @@ cleanup:
     return hnsw;
 }
 
-void destroy_hnsw(LVHnsw* hnsw) {
+void vector_hnsw_destroy(LVHnsw* hnsw) {
     if (hnsw) {
         free(hnsw->frontier_heap->entries);
         free(hnsw->frontier_heap);

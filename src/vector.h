@@ -151,8 +151,8 @@ static int cmp_i32_entry(const void* a, const void* b)
     return (ea->dis.i32 > eb->dis.i32) - (ea->dis.i32 < eb->dis.i32);
 }
 
-LVHnsw* create_hnsw(const LVVectorType vector_type, const LVDim32_t dim);
-void destroy_hnsw(LVHnsw* hnsw);
+LVHnsw* vector_hnsw_create(const LVVectorType vector_type, const LVDim32_t dim);
+void vector_hnsw_destroy(LVHnsw* hnsw);
 
 LVStatus vector_write_f32_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, const float* vector);
 LVStatus vector_read_f32_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, float* vector_out);

@@ -297,13 +297,13 @@ static void test_insert_invariants(void)
 
     lv_rand_seed(12345);
 
-    LVHnsw* hnsw = create_hnsw(LV_VEC_FLOAT32, INS_DIM);
-    expect_ptr_not_null(hnsw, "create_hnsw");
+    LVHnsw* hnsw = vector_hnsw_create(LV_VEC_FLOAT32, INS_DIM);
+    expect_ptr_not_null(hnsw, "vector_hnsw_create");
     if (!hnsw) return;
 
     float (*vectors)[INS_DIM] = malloc(sizeof(*vectors) * INS_N);
     expect_ptr_not_null(vectors, "alloc input vectors");
-    if (!vectors) { destroy_hnsw(hnsw); return; }
+    if (!vectors) { vector_hnsw_destroy(hnsw); return; }
 
     for (int i = 0; i < INS_DIM; ++i) {
         make_clustered_vector(vectors[i], INS_DIM, i);
@@ -378,7 +378,7 @@ static void test_insert_invariants(void)
 #endif
 
     free(vectors);
-    destroy_hnsw(hnsw);
+    vector_hnsw_destroy(hnsw);
 }
 
 int main(void)
