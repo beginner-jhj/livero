@@ -7,7 +7,7 @@
 #include "crc.h"
 #include <ctype.h>
 
-LVSchema* create_schema(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVVectorMetric vector_metric, const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
+LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVVectorMetric vector_metric, const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
 {
     int flag = 0;
     LVSchema* schema = NULL;
@@ -92,7 +92,7 @@ LVSchema* create_schema(const LVDim32_t vector_dim, const LVVectorType vector_ty
 cleanup:
     if (flag)
     {
-        destroy_schema(schema);
+        schema_destroy(schema);
         schema = NULL;
     }
     return schema;
@@ -121,7 +121,7 @@ void schema_destroy_field_hashes(LVMetaFieldHash** hashes)
     }
 }
 
-void destroy_schema(LVSchema* schema)
+void schema_destroy(LVSchema* schema)
 {
     if (schema)
     {
