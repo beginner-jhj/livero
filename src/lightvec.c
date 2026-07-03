@@ -38,7 +38,7 @@ struct LightVec
     int32_t magic;
 };
 
-static LVStatus lv_prepare_db_dir(char* db_path_out, const char* path);
+static LVStatus lv_prepare_db_dir_internal(char* db_path_out, const char* path);
 static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     const LVSize32_t flush_threshold,
     LVSchema* schema, int schema_fd);
@@ -75,7 +75,7 @@ LVStatus lv_create(LightVec** db, const char* path, const LVSize32_t flush_thres
     int schema_fd = -1;
 
     char db_path[LV_PATH_MAX];
-    if ((result = lv_prepare_db_dir(db_path, path)) != LV_OK)
+    if ((result = lv_prepare_db_dir_internal(db_path, path)) != LV_OK)
         return result;
 
     char schema_path[LV_PATH_MAX];
@@ -87,7 +87,7 @@ LVStatus lv_create(LightVec** db, const char* path, const LVSize32_t flush_thres
         return LV_ERR_EXISTS;
 
     /* build the in-memory schema (validates names, reserved words, masks) */
-    schema = create_schema(vector_dim, vector_type, vector_metric, field_count, field_defs);
+    schema = schema_create(vector_dim, vector_type, vector_metric, field_count, field_defs);
     if (!schema)
         return LV_ERR_INVALID;
 
@@ -95,13 +95,13 @@ LVStatus lv_create(LightVec** db, const char* path, const LVSize32_t flush_thres
     schema_fd = open(schema_path, O_RDWR | O_CREAT, 0644);
     if (schema_fd < 0)
     {
-        destroy_schema(schema);
+        schema_destroy(schema);
         return LV_ERR_IO;
     }
 
     if ((result = schema_write(schema_fd, schema)) != LV_OK)
     {
-        destroy_schema(schema);
+        schema_destroy(schema);
         close(schema_fd);
         return result;
     }
@@ -124,7 +124,7 @@ LVStatus lv_open(LightVec** db, const char* path, const LVSize32_t flush_thresho
     int schema_fd = -1;
 
     char db_path[LV_PATH_MAX];
-    if ((result = lv_prepare_db_dir(db_path, path)) != LV_OK)
+    if ((result = lv_prepare_db_dir_internal(db_path, path)) != LV_OK)
         return result;
 
     char schema_path[LV_PATH_MAX];
@@ -149,7 +149,7 @@ LVStatus lv_open(LightVec** db, const char* path, const LVSize32_t flush_thresho
     /* load + verify (magic, version, per-field hashes, CRC) */
     if ((result = schema_read(schema_fd, schema)) != LV_OK)
     {
-        destroy_schema(schema);
+        schema_destroy(schema);
         close(schema_fd);
         return result;
     }
@@ -792,7 +792,7 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         }
     }
 
-    parser = create_parser();
+    parser = query_create_parser();
     if (!parser) {
         result = LV_ERR_OOM;
         goto _return;
@@ -907,8 +907,8 @@ _return:
     lv_light_destory_qvset_internal(memtable_qvset);
     lv_destory_qvset_internal(sst_qvset);
     lv_light_destory_qvset_internal(merged_qvset);
-    destory_parser(parser);
-    destroy_ast(query_tree);
+    query_destroy_parser(parser);
+    query_destroy_ast(query_tree);
     return result;
 }
 
@@ -924,10 +924,10 @@ void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
 }
 
 /* ============================================================================
- * lv_prepare_db_dir — shared: build the ".../LV" directory path and mkdir it.
+ * lv_prepare_db_dir_internal — shared: build the ".../LV" directory path and mkdir it.
  * Both create and open need the directory to exist before touching files.
  * ========================================================================== */
-static LVStatus lv_prepare_db_dir(char* db_path_out, const char* path)
+static LVStatus lv_prepare_db_dir_internal(char* db_path_out, const char* path)
 {
     LVStatus result = LV_OK;
 
@@ -1095,7 +1095,7 @@ cleanup:
              * function still owns schema + schema_fd and must release them —
              * the contract is: hand schema/schema_fd to lv_open_internal and
              * it takes care of cleanup on every path, success or failure. */
-            if (schema)        destroy_schema(schema);
+            if (schema)        schema_destroy(schema);
             if (schema_fd >= 0) close(schema_fd);
         }
     }
@@ -1810,7 +1810,7 @@ LVStatus lv_close(LightVec* db) {
     if (db->vector_index_fd >= 0) close(db->vector_index_fd);
 
     destroy_table(db->memtable);
-    destroy_schema(db->schema);
+    schema_destroy(db->schema);
     destroy_hnsw(db->hnsw);
     free(db);
 
