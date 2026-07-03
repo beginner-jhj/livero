@@ -64,7 +64,7 @@ long g_shrink_count = 0;
 
 #define DB_DIR     "./lvtest_flush"  /* lv_open appends "/LV" under this */
 #define DIM        32                /* multiple of 32 (SIMD-safe)       */
-#define N_RECORDS  500               /* > several flush thresholds       */
+#define N_RECORDS  1500               /* > several flush thresholds       */
 #define RECALL_MIN 0.90              /* loose ANN recall floor           */
 
  /* The key knob that separates this file from test_table.c.
@@ -72,7 +72,7 @@ long g_shrink_count = 0;
   * ~7 times, so by the end the data is spread across the SST (merged several
   * times over) AND a partially-filled MemTable. That is exactly the mixed
   * state we want every query to read correctly. */
-#define FLUSH_LOW  64
+#define FLUSH_LOW  100
 
  /* Field layout — every record carries all three, so any filter over them
   * touches every record's field_mask (same as test_table.c). */
