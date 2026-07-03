@@ -8,58 +8,27 @@
 #include "schema.h"
 #include "vector.h"
 
-LVMemTable* create_table()
+LVMemTable* table_create()
 {
-    int flag = 0;
-    LVNode* head = NULL;
-    LVNode* tail = NULL;
-    LVArena* arena = NULL;
-    LVMemTable* table = NULL;
+    LVMemTable* table = malloc(sizeof(LVMemTable));
+    if (!table) goto cleanup;
 
-    LVMemTable* table_temp = malloc(sizeof(LVMemTable));
+    table->arena         = NULL;
+    table->head          = NULL;
+    table->tail          = NULL;
+    table->current_level = 1;
+    table->node_count    = 0;
 
-    if (!table_temp)
-    {
-        flag = 1;
-        goto cleanup;
-    }
+    table->arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    if (!table->arena) goto cleanup;
 
-    table = table_temp;
+    table->head = node_create(table->arena, LV_NODE_HEAD, 0, LV_PUT,
+                              LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+    if (!table->head) goto cleanup;
 
-    LVArena* arena_temp = arena_create(LV_DEFAULT_BLOCK_SIZE);
-
-    if (!arena_temp)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    arena = arena_temp;
-
-    table->arena = arena;
-
-    LVNode* head_temp = node_create(table->arena, LV_NODE_HEAD, 0, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
-
-    if (!head_temp)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    head = head_temp;
-
-    LVNode* tail_temp = node_create(table->arena, LV_NODE_TAIL, 0, LV_PUT, LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
-
-    if (!tail_temp)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    tail = tail_temp;
-
-    table->head = head;
-    table->tail = tail;
+    table->tail = node_create(table->arena, LV_NODE_TAIL, 0, LV_PUT,
+                              LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+    if (!table->tail) goto cleanup;
 
     for (int i = 0; i < LV_SKIPLIST_MAX_LEVEL; ++i)
     {
@@ -67,21 +36,14 @@ LVMemTable* create_table()
         table->tail->levels[i] = NULL;
     }
 
-    table->current_level = 1;
-    table->node_count = 0;
+    return table;          
 
-cleanup:
-    if (flag)
-    {
-        arena_destroy(arena);
-        free(table);
-        table = NULL;
-    }
-
-    return table;
+cleanup:                  
+    table_destroy(table);  
+    return NULL;
 }
 
-void destroy_table(LVMemTable* table) {
+void table_destroy(LVMemTable* table) {
     if (table) {
         arena_destroy(table->arena);
         free(table);
@@ -138,8 +100,6 @@ LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, 
     table->node_count += 1;
 
     result = new_node;
-
-    LVNode* n = table->head->levels[0];
 _return:
     return result;
 }
