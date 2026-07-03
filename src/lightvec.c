@@ -994,7 +994,7 @@ static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     LV_DB->schema_fd = schema_fd;
 
     /* MemTable */
-    LV_MTABLE = create_table();
+    LV_MTABLE = table_create();
     if (!LV_MTABLE)
     {
         flag = 1;
@@ -1379,9 +1379,9 @@ static LVStatus lv_flush_internal(LightVec* db) {
     }
 
     // memtable reset
-    destroy_table(db->memtable);
+    table_destroy(db->memtable);
 
-    db->memtable = create_table();
+    db->memtable = table_create();
     if (!db->memtable) {
         result = LV_ERR_OOM;
         goto _return;
@@ -1809,7 +1809,7 @@ LVStatus lv_close(LightVec* db) {
     if (db->vectors_fd >= 0)       close(db->vectors_fd);
     if (db->vector_index_fd >= 0) close(db->vector_index_fd);
 
-    destroy_table(db->memtable);
+    table_destroy(db->memtable);
     schema_destroy(db->schema);
     destroy_hnsw(db->hnsw);
     free(db);
