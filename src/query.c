@@ -96,9 +96,7 @@ LVAstNode* query_create_filter_node(const char* field_name, const LVQueryOp op, 
 
 cleanup:
     free(filter_node);
-    filter_node = NULL;
-
-    return filter_node;
+    return NULL;
 }
 
 int query_eval_ast(const LVAstNode* ast_node, const LVNode* record, const LVSchema* schema)
@@ -634,9 +632,7 @@ LVSQLParser* query_create_parser() {
     return parser;
 cleanup:
     query_destroy_parser(parser);
-    parser = NULL;
-
-    return parser;
+    return NULL;
 }
 
 void query_destroy_parser(LVSQLParser* parser) {
