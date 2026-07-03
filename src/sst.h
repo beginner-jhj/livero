@@ -35,7 +35,7 @@ LVStatus sst_write_record_with_node(const int fd, const LVNode* node);
 LVStatus sst_write_record_with_old_sst(const int new_fd, const int old_fd, const uint64_t read_offset);
 
 LVStatus sst_indexblockset_append(LVSSTIndexBlockSet* index_buffer, const LVKeyLen32_t key_len, const void* key, const LVSeq64_t seq, const LVVectorId64_t vector_id, const uint64_t offset);
-void destroy_indexblockset(LVSSTIndexBlockSet* index_block);
+void sst_destroy_indexblockset(LVSSTIndexBlockSet* index_block);
 
 LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAstNode* query, const LVSize32_t query_field_mask, const LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask, const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set);
 

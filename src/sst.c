@@ -328,7 +328,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     if ((result = write_helper(new_fd, BUF_64, 8)) != LV_OK) goto _return;
 
 _return:
-    destroy_indexblockset(index_set);
+    sst_destroy_indexblockset(index_set);
     return result;
 }
 
@@ -595,7 +595,7 @@ LVStatus sst_indexblockset_append(LVSSTIndexBlockSet* index_buffer, const LVKeyL
     return LV_OK;
 }
 
-void destroy_indexblockset(LVSSTIndexBlockSet* index_block) {
+void sst_destroy_indexblockset(LVSSTIndexBlockSet* index_block) {
     if (index_block) {
         for (int i = 0; i < index_block->size; ++i) {
             free(index_block->entries[i].key);
