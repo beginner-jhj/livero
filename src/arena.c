@@ -36,9 +36,7 @@ LVArena* arena_create(const LVSize32_t block_capacity)
 
 cleanup:
     arena_destroy(arena);
-    arena = NULL;
-
-    return arena;
+    return NULL;
 }
 
 void arena_destroy(LVArena* arena)
@@ -114,6 +112,5 @@ void* arena_allocate(LVArena* arena, const LVSize32_t total, int32_t align)
 cleanup:
     free(new_block);
     free(new_block_buffer);
-    result = NULL;
-    return result;
+    return NULL;
 }
