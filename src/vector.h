@@ -17,6 +17,8 @@
 #define HNSW_EF_CONSTRUCTION 200
 #define HNSW_EF_DEFAULT 100
 
+#define LV_HNSW_ID_HASH_MAP_INIT_CAPACITY 1024
+
 typedef struct LVHnswNode
 {
     LVVectorId64_t external_id;

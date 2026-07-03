@@ -39,23 +39,9 @@
 
 LVHnsw* vector_hnsw_create(const LVVectorType vector_type, const LVDim32_t dim)
 {
-    int flag = 0;
-    LVHnsw* hnsw = NULL;
-    LVArena* node_arena = NULL;
-    LVArena* vector_arena = NULL;
-    LVHnswIDMap* id_node_map = NULL;
-    LVHnswIDMap* id_vector_map = NULL;
-    LVHnswHeap* frontier_heap = NULL;
-    LVHnswHeap* result_heap = NULL;
-    LVHnswIDHashMap* id_hash_map = NULL;
 
-    LVHnsw* hnsw_tmp = malloc(sizeof(LVHnsw));
-    if (!hnsw_tmp)
-    {
-        goto cleanup;
-    }
-
-    hnsw = hnsw_tmp;
+    LVHnsw* hnsw = malloc(sizeof(LVHnsw));
+    if (!hnsw) goto cleanup;
 
     hnsw->current_max_layer = 0;
     hnsw->dim = dim;
@@ -65,151 +51,106 @@ LVHnsw* vector_hnsw_create(const LVVectorType vector_type, const LVDim32_t dim)
     hnsw->m_l = 1 / logf(HNSW_M);
     hnsw->node_count = 0;
     hnsw->vector_type = vector_type;
+    hnsw->node_arena = NULL;
+    hnsw->vector_arena = NULL;
+    hnsw->frontier_heap = NULL;
+    hnsw->result_heap = NULL;
+    hnsw->id_node_map = NULL;
+    hnsw->id_vector_map = NULL;
+    hnsw->id_hash_map = NULL;
 
-    node_arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
-    if (!node_arena)
-    {
-        flag = 1;
-        goto cleanup;
-    }
 
-    hnsw->node_arena = node_arena;
+    hnsw->node_arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    if (!hnsw->node_arena) goto cleanup;
 
-    vector_arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
-    if (!vector_arena)
-    {
-        flag = 1;
-        goto cleanup;
-    }
+    hnsw->vector_arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
+    if (!hnsw->vector_arena) goto cleanup;
 
-    hnsw->vector_arena = vector_arena;
 
-    id_node_map = malloc(sizeof(LVHnswIDMap));
-    if (!id_node_map)
-    {
-        flag = 1;
-        goto cleanup;
-    }
+    hnsw->id_node_map = malloc(sizeof(LVHnswIDMap));
+    if (!hnsw->id_node_map) goto cleanup;
+    hnsw->id_node_map->capacity = LV_DEFAULT_CAPACITY;
+    hnsw->id_node_map->size = 0;
+    hnsw->id_node_map->map = NULL;
+    hnsw->id_node_map->map = malloc(sizeof(void*) * hnsw->id_node_map->capacity);
+    if (!hnsw->id_node_map->map) goto cleanup;
 
-    id_node_map->capacity = LV_DEFAULT_CAPACITY;
-    id_node_map->size = 0;
+    hnsw->id_vector_map = malloc(sizeof(LVHnswIDMap));
+    if (!hnsw->id_vector_map) goto cleanup;
+    hnsw->id_vector_map->capacity = LV_DEFAULT_CAPACITY;
+    hnsw->id_vector_map->size = 0;
+    hnsw->id_vector_map->map = NULL;
 
-    id_node_map->map = malloc(sizeof(void*) * id_node_map->capacity);
+    hnsw->id_vector_map->map = malloc(sizeof(void*) * hnsw->id_vector_map->capacity);
+    if (!hnsw->id_vector_map->map) goto cleanup;
 
-    if (!id_node_map->map)
-    {
-        flag = 1;
-        goto cleanup;
-    }
+    hnsw->frontier_heap = malloc(sizeof(LVHnswHeap));
+    if (!hnsw->frontier_heap) goto cleanup;
 
-    hnsw->id_node_map = id_node_map;
+    hnsw->frontier_heap->capacity = LV_DEFAULT_CAPACITY;
+    hnsw->frontier_heap->size = 0;
+    hnsw->frontier_heap->type = LV_HEAP_MIN;
+    hnsw->frontier_heap->cmp_fn = vector_type == LV_VEC_FLOAT32 ? cmp_min_f32 : cmp_min_i32;
+    hnsw->frontier_heap->entries = NULL;
 
-    id_vector_map = malloc(sizeof(LVHnswIDMap));
-    if (!id_vector_map)
-    {
-        flag = 1;
-        goto cleanup;
-    }
+    hnsw->frontier_heap->entries = malloc(sizeof(LVHnswEntry) * hnsw->frontier_heap->capacity);
+    if (!hnsw->frontier_heap->entries) goto cleanup;
 
-    id_vector_map->capacity = LV_DEFAULT_CAPACITY;
-    id_vector_map->size = 0;
+    hnsw->result_heap = malloc(sizeof(LVHnswHeap));
+    if (!hnsw->result_heap) goto cleanup;
 
-    id_vector_map->map = malloc(sizeof(void*) * id_vector_map->capacity);
-    if (!id_vector_map->map)
-    {
-        flag = 1;
-        goto cleanup;
-    }
+    hnsw->result_heap->capacity = LV_DEFAULT_CAPACITY;
+    hnsw->result_heap->size = 0;
+    hnsw->result_heap->type = LV_HEAP_MAX;
+    hnsw->result_heap->cmp_fn = vector_type == LV_VEC_FLOAT32 ? cmp_max_f32 : cmp_max_i32;
+    hnsw->result_heap->entries = NULL;
 
-    hnsw->id_vector_map = id_vector_map;
+    hnsw->result_heap->entries = malloc(sizeof(LVHnswEntry) * hnsw->result_heap->capacity);
+    if (!hnsw->result_heap->entries) goto cleanup;
 
-    frontier_heap = malloc(sizeof(LVHnswHeap));
-    if (!frontier_heap)
-    {
-        flag = 1;
-        goto cleanup;
-    }
+    hnsw->id_hash_map = malloc(sizeof(LVHnswIDHashMap));
+    if (!hnsw->id_hash_map) goto cleanup;
 
-    frontier_heap->capacity = LV_DEFAULT_CAPACITY;
-    frontier_heap->size = 0;
-    frontier_heap->type = LV_HEAP_MIN;
-    frontier_heap->cmp_fn = vector_type == LV_VEC_FLOAT32 ? cmp_min_f32 : cmp_min_i32;
+    hnsw->id_hash_map->capacity = LV_HNSW_ID_HASH_MAP_INIT_CAPACITY;
+    hnsw->id_hash_map->size = 0;
+    hnsw->id_hash_map->map = NULL;
 
-    frontier_heap->entries = malloc(sizeof(LVHnswEntry) * frontier_heap->capacity);
-    if (!frontier_heap->entries)
-    {
-        flag = 1;
-        goto cleanup;
-    }
+    hnsw->id_hash_map->map = calloc(hnsw->id_hash_map->capacity, sizeof(LVHnswIDHash*));
+    if (!hnsw->id_hash_map->map) goto cleanup;
 
-    hnsw->frontier_heap = frontier_heap;
-
-    result_heap = malloc(sizeof(LVHnswHeap));
-    if (!result_heap)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    result_heap->capacity = LV_DEFAULT_CAPACITY;
-    result_heap->size = 0;
-    result_heap->type = LV_HEAP_MAX;
-    result_heap->cmp_fn = vector_type == LV_VEC_FLOAT32 ? cmp_max_f32 : cmp_max_i32;
-
-    result_heap->entries = malloc(sizeof(LVHnswEntry) * result_heap->capacity);
-    if (!result_heap->entries)
-    {
-        flag = 1;
-        goto cleanup;
-    }
-
-    hnsw->result_heap = result_heap;
-
-    id_hash_map = malloc(sizeof(LVHnswIDHashMap));
-    if (!id_hash_map) {
-        flag = 1;
-        goto cleanup;
-    }
-
-    id_hash_map->capacity = 1000;
-    id_hash_map->size = 0;
-    id_hash_map->map = NULL;
-
-    id_hash_map->map = calloc(id_hash_map->capacity, sizeof(LVHnswIDHash*));
-    if (!id_hash_map->map) {
-        flag = 1;
-        goto cleanup;
-    }
-
-    hnsw->id_hash_map = id_hash_map;
-cleanup:
-    if (flag)
-
-        //todo: resource deallocation refactor
-    {
-        free(frontier_heap);
-        free(result_heap);
-        free(id_node_map);
-        free(id_vector_map);
-        arena_destroy(node_arena);
-        arena_destroy(vector_arena);
-
-        free(hnsw);
-        hnsw = NULL;
-    }
     return hnsw;
+cleanup:
+
+    vector_hnsw_destroy(hnsw);
+    return NULL;
 }
 
 void vector_hnsw_destroy(LVHnsw* hnsw) {
     if (hnsw) {
-        free(hnsw->frontier_heap->entries);
-        free(hnsw->frontier_heap);
-        free(hnsw->result_heap->entries);
-        free(hnsw->result_heap);
-        free(hnsw->id_node_map->map);
-        free(hnsw->id_node_map);
-        free(hnsw->id_vector_map->map);
-        free(hnsw->id_vector_map);
+        if (hnsw->frontier_heap) {
+            free(hnsw->frontier_heap->entries);
+            free(hnsw->frontier_heap);
+        }
+
+        if (hnsw->result_heap) {
+            free(hnsw->result_heap->entries);
+            free(hnsw->result_heap);
+        }
+
+        if (hnsw->id_node_map) {
+            free(hnsw->id_node_map->map);
+            free(hnsw->id_node_map);
+        }
+
+        if (hnsw->id_vector_map) {
+            free(hnsw->id_vector_map->map);
+            free(hnsw->id_vector_map);
+        }
+
+        if (hnsw->id_hash_map) {
+            free(hnsw->id_hash_map->map);
+            free(hnsw->id_hash_map);
+        }
         arena_destroy(hnsw->node_arena);
         arena_destroy(hnsw->vector_arena);
         free(hnsw);
@@ -1203,43 +1144,20 @@ _return:
     return result;
 }
 
-LVStatus vector_hnsw_insert_id_hash_value(LVHnswIDHash** map, const LVSize32_t capacity, const LVVectorId64_t external_id, const LVVectorId64_t internal_id) {
-    LVStatus result = LV_OK;
-
+LVStatus vector_hnsw_insert_id_hash_value(LVHnswIDHash** map, const LVSize32_t capacity, const LVVectorId64_t external_id, const LVVectorId64_t internal_id)
+{
     const LVHash32_t hash = fnv1a_hash(&external_id, sizeof(LVVectorId64_t));
     const int index = hash % capacity;
 
-    if (map[index] == NULL) {
-        LVHnswIDHash* id_hash = malloc(sizeof(LVHnswIDHash));
-        if (!id_hash) {
-            result = LV_ERR_OOM;
-            goto _return;
-        }
-        id_hash->external_id = external_id;
-        id_hash->internal_id = internal_id;
-        id_hash->next = NULL;
+    LVHnswIDHash* id_hash = malloc(sizeof(LVHnswIDHash));
+    if (!id_hash) return LV_ERR_OOM;
+    id_hash->external_id = external_id;
+    id_hash->internal_id = internal_id;
 
-        map[index] = id_hash;
-    }
-    else {
-        LVHnswIDHash* current = map[index];
-        while (current->next) {
-            current = current->next;
-        }
-        LVHnswIDHash* id_hash = malloc(sizeof(LVHnswIDHash));
-        if (!id_hash) {
-            result = LV_ERR_OOM;
-            goto _return;
-        }
-        id_hash->external_id = external_id;
-        id_hash->internal_id = internal_id;
-        id_hash->next = NULL;
+    id_hash->next = map[index];
+    map[index] = id_hash;
 
-        current->next = id_hash;
-    }
-
-_return:
-    return result;
+    return LV_OK;
 }
 
 LVStatus vector_hnsw_insert_id_hash_map(LVHnswIDHashMap* id_hash_map, const LVVectorId64_t external_id, const LVVectorId64_t internal_id) {
@@ -1258,7 +1176,6 @@ _return:
 
 LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
     LVStatus result = LV_OK;
-    int flag = 0;
 
     const LVSize32_t new_capacity = id_hash_map->capacity * 2;
     LVHnswIDHash** old_map = id_hash_map->map;
@@ -1267,7 +1184,6 @@ LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
 
     if (!new_map) {
         result = LV_ERR_OOM;
-        flag = 1;
         goto cleanup;
     }
 
@@ -1277,7 +1193,6 @@ LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
         LVHnswIDHash* current = id_hash_map->map[i];
         while (current) {
             if ((result = vector_hnsw_insert_id_hash_value(new_map, new_capacity, current->external_id, current->internal_id)) != LV_OK) {
-                flag = 1;
                 goto cleanup;
             }
             new_size += 1;
@@ -1288,9 +1203,9 @@ LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
     for (int i = 0; i < id_hash_map->capacity; ++i) {
         LVHnswIDHash* current = id_hash_map->map[i];
         while (current) {
-            LVHnswIDHash* tmp = current->next;
+            LVHnswIDHash* next = current->next;
             free(current);
-            current = tmp;
+            current = next;
         }
     }
 
@@ -1298,23 +1213,20 @@ LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
     id_hash_map->size = new_size;
     id_hash_map->map = new_map;
 
+    free(old_map);
+    return result;
+
 cleanup:
-    if (flag) {
-        if (new_map) {
-            for (int i = 0; i < new_capacity; ++i) {
-                LVHnswIDHash* current = new_map[i];
-                while (current) {
-                    LVHnswIDHash* tmp = current->next;
-                    free(current);
-                    current = tmp;
-                }
+    if (new_map) {
+        for (int i = 0; i < new_capacity; ++i) {
+            LVHnswIDHash* current = new_map[i];
+            while (current) {
+                LVHnswIDHash* next = current->next;
+                free(current);
+                current = next;
             }
-            free(new_map);
         }
-    }
-    else {
-        // if there is no error, dealloc old map
-        free(old_map);
+        free(new_map);
     }
     return result;
 }
