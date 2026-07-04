@@ -193,6 +193,11 @@ LVStatus wal_recover(const int fd, LVMemTable* table, LVSeq64_t* next_seq_out, L
 
         LVNode* reserved_node = node_reserve(table->arena, saved_level, saved_key_len, saved_value_len, saved_field_size);
 
+        if (!reserved_node) {
+            result = LV_ERR_OOM;
+            goto _return;
+        }
+
         reserved_node->type = LV_NODE_DATA;
         reserved_node->op = (LVNodeOp)saved_op;
         reserved_node->seq = saved_seq;
