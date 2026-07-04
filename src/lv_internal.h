@@ -5,58 +5,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
-/* ── Base types ─────────────────────────────────────────────────────────────
- * Explicit-width types used throughout LightVec.
- * size_t and int are avoided in persistent structures and public interfaces.
- * C standard library calls (malloc, memcpy, etc.) cast to/from these as needed.
- */
-typedef uint32_t LVSize32_t;     /* general in-memory sizes                  */
-typedef uint64_t LVOffset64_t;   /* file offsets                             */
-typedef uint64_t LVSeq64_t;      /* monotonically increasing sequence number */
-typedef uint32_t LVKeyLen32_t;   /* key length in bytes                      */
-typedef uint32_t LVValueLen32_t; /* value length in bytes                    */
-typedef uint32_t LVDim32_t;      /* vector dimension                         */
-typedef float LVFloat32_t;       /* 32-bit float vector element              */
-typedef int8_t LVInt8_t;         /* quantized int8 vector element            */
-typedef uint8_t LVLevel8_t;      /*skiplist level*/
-typedef uint32_t LVCount32_t;    /* general counts                           */
-typedef uint64_t LVBigCount64_t; /* large counts (e.g. total record count)   */
-typedef uint64_t LVVectorId64_t; /* internal vector identifier               */
-typedef uint32_t LVHash32_t;     /*hash*/
-
-#define LV_MAX_KEY_LEN    (1u << 10)   /* 1 KB — keys stay small */
-#define LV_MAX_VALUE_LEN  (1u << 24)   /* 16 MB — generous upper bound for values   */
-
-/* ── Status codes ───────────────────────────────────────────────────────────
- * Returned by all functions except lifecycle constructors.
- * Constructors return a pointer + write status to an output parameter.
- */
-typedef enum
-{
-    LV_OK = 2,
-    LV_QFILTER_T = 1,      // query filter true
-    LV_QFILTER_F = 0,      // query filter false
-    LV_ERR_IO = -1,        /* file I/O failure                          */
-    LV_ERR_OOM = -2,       /* out of memory                             */
-    LV_ERR_NOT_FOUND = -3, /* key does not exist                        */
-    LV_ERR_CORRUPT = -4,   /* checksum mismatch or invalid magic        */
-    LV_ERR_INVALID = -5,   /* bad argument (NULL, out-of-range, etc.)   */
-    LV_ERR_FULL = -6,      /* capacity exceeded                         */
-    LV_ERR_DUPLICATE = -7, /* key already exists (if uniqueness required)*/
-    LV_ERR_INVALID_DB = -8,
-    LV_ERR_INVALID_QUERY = -9,
-    LV_ERR_UNSUP_QOP = -10,
-    LV_ERR_EXISTS = -11,
-} LVStatus;
-
-/* ── Vector type ────────────────────────────────────────────────────────────
- * Fixed at lv_open via the schema. Cannot be changed after creation.
- */
-typedef enum
-{
-    LV_VEC_FLOAT32 = 0,
-    LV_VEC_INT8 = 1,
-} LVVectorType;
+#include "lightvec_types.h"
 
 /* ── WAL operation ──────────────────────────────────────────────────────────*/
 typedef enum
@@ -65,17 +14,6 @@ typedef enum
     LV_DELETE = 1,
     LV_UPDATE = 2
 } LVNodeOp;
-
-/* ── Metadata field type ────────────────────────────────────────────────────
- * Determines how each metadata field is encoded on disk and compared
- * during filter evaluation.
- */
-typedef enum
-{
-    LV_META_STRING = 0,
-    LV_META_INT = 1, //i64
-    LV_META_FLOAT = 2, //f64 double
-} LVMetaType;
 
 /* ── LVNode type ──────────────────────────────────────────────────────────────*/
 typedef enum
@@ -91,8 +29,6 @@ typedef enum
 typedef struct LVArenaBlock LVArenaBlock;
 typedef struct LVArena LVArena;
 
-typedef struct LVMetaField LVMetaField;
-typedef struct LVMetaFieldDef LVMetaFieldDef;
 typedef struct LVMetaFieldHash LVMetaFieldHash;
 typedef struct LVSchema LVSchema;
 
@@ -112,26 +48,6 @@ typedef struct LVHnswQueryCtx LVHnswQueryCtx;
 
 typedef struct LVAstNode LVAstNode;
 typedef struct LVQueryOption LVQueryOption;
-
-typedef enum LVOrdbyType {
-    LV_ORDBY_VEC = 0,
-    LV_ORDBY_FLOAT = 1,
-    LV_ORDBY_INT = 2,
-    LV_ORDBY_NONE = 3,
-} LVOrdbyType;
-
-typedef enum {
-    LV_SCORE_ABOVE, // score >= threshold
-    LV_SCORE_BELOW, // score <= threshold
-} LVScoreBound;
-
-
-typedef union 
-{
-   float score;
-   double f64;
-   int64_t i64;
-} LVOrdbyValue;
 
 typedef struct LVQueryValue
 {
@@ -155,33 +71,10 @@ typedef struct LVQVSet
 
 typedef LVStatus(*LVQVSetAppendFn)(LVQVSet*, const LVSeq64_t, const LVVectorId64_t, const void*, const LVKeyLen32_t, const void*, const LVValueLen32_t, const float, const LVOrdbyValue, const int);
 
-typedef struct LVQueryResult {
-    LVSeq64_t node_seq;
-    LVVectorId64_t vector_id;
-    void* key;
-    LVKeyLen32_t key_len;
-    void* value;
-    LVValueLen32_t value_len;
-    float vector_score;
-} LVQueryResult;
-
-typedef struct LVQueryResultSet {
-    LVSize32_t size;
-    LVQueryResult* results;
-} LVQueryResultSet;
-
-
-
 // i8
 typedef int32_t(*LVI8DistFn)(const int8_t*, const int8_t*, LVDim32_t);
 // f32
 typedef float (*LVF32DistFn)(const float*, const float*, LVDim32_t);
-
-typedef enum LVVectorMetric
-{
-    LV_METRIC_L2 = 0,
-    LV_METRIC_DOT = 1,
-} LVVectorMetric;
 
 #define LV_MAX_DIMENSION 4096      // vector max dimension
 #define LV_NO_VECTOR_ID UINT64_MAX // sentinel: no vector

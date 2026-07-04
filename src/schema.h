@@ -3,28 +3,6 @@
 
 #include "lv_internal.h"
 
-typedef struct LVMetaFieldDef
-{
-    char name[LV_META_NAME_MAX];
-    LVMetaType type;
-} LVMetaFieldDef;
-
-typedef struct LVMetaField
-{
-    char name[LV_META_NAME_MAX];
-    LVMetaType type;
-    union
-    {
-        int64_t i64;
-        double f64;
-        struct
-        {
-            uint32_t len;
-            char* string;
-        } str;
-    } value;
-} LVMetaField;
-
 typedef struct LVMetaFieldHash
 {
     LVHash32_t hash;

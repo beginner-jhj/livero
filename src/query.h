@@ -33,38 +33,6 @@ typedef enum LVQueryOp
     LV_QOP_LTE = 5, // <=
 } LVQueryOp;
 
-typedef enum LVQueryOptionFlag
-{
-    LV_QOPT_NONE = 0,
-    LV_QOPT_LIMIT = 1 << 0,        // universal 
-    LV_QOPT_ORDER_BY = 1 << 1,     // universal (field) / "VECTOR" 
-    LV_QOPT_SCORE_FILTER = 1 << 2, // vector only 
-} LVQueryOptionFlag;
-
-typedef enum LVQueryOrderDir
-{
-    LV_ORDER_ASC = 0,
-    LV_ORDER_DESC = 1,
-} LVQueryOrderDir;
-
-typedef struct LVQueryOption
-{
-    uint32_t flags;
-    LVSize32_t limit;
-    LVSize32_t top_k;
-    struct
-    {
-        char by[LV_META_NAME_MAX];
-        LVQueryOrderDir dir;
-    } order;
-    struct
-    {
-        float score;
-        LVScoreBound bound;
-    } vector_score_filter;
-    LVVectorMetric vector_metric;
-} LVQueryOption;
-
 typedef struct LVFilterValue
 {
     LVMetaType type;

@@ -1,7 +1,9 @@
 #ifndef LV
 #define LV
 
-#include "lv_internal.h"
+#include "lightvec_types.h"
+
+struct LightVec;
 
 LVStatus lv_create(LightVec** db, const char* path, const LVSize32_t flush_threshold,
     const LVDim32_t vector_dim, const LVVectorType vector_type,
