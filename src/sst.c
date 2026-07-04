@@ -13,6 +13,9 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
 
+    LVSSTIndexBlockEntry old_entry;
+    old_entry.key = NULL;
+
     LVSSTIndexBlockSet* index_set = malloc(sizeof(LVSSTIndexBlockSet));
     if (!index_set) {
         result = LV_ERR_OOM;
@@ -23,14 +26,12 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     index_set->size = 0;
     index_set->entries = NULL;
 
-    LVSSTIndexBlockEntry* entries = malloc(sizeof(LVSSTIndexBlockEntry) * index_set->capacity);
-    if (!entries) {
+    index_set->entries = malloc(sizeof(LVSSTIndexBlockEntry) * index_set->capacity);
+    if (!index_set->entries) {
         result = LV_ERR_OOM;
         goto _return;
     }
-
-    index_set->entries = entries;
-
+    
     //check old sst corruption
     if (old_fd >= 0) {
         lseek(old_fd, 0, SEEK_SET);
@@ -93,7 +94,8 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
         if ((result = sst_read_footer(old_fd, &index_block_offset, &saved_record_count, NULL, NULL)) != LV_OK) goto _return;
 
         uint64_t old_entry_offset = index_block_offset;
-        LVSSTIndexBlockEntry old_entry;
+        /* old_entry declared at function top; first read populates it. On
+         * failure sst_read leaves old_entry.key == NULL, so _return is safe. */
         if ((result = sst_read_index_entry_at_offset(old_fd, old_entry_offset, &old_entry, &old_entry_offset)) != LV_OK) {
             goto _return;
         }
@@ -113,6 +115,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 if (node_key_equal(current_key, current_key_len, old_entry.key, old_entry.key_len)) {
                     //drop both
                     free(old_entry.key);
+                    old_entry.key = NULL;  /* freed; null so the _return cleanup can't double-free */
                     record_read += 1;
                     if (record_read < saved_record_count) {
                         if ((result = sst_read_index_entry_at_offset(old_fd, old_entry_offset, &old_entry, &old_entry_offset)) != LV_OK) goto _return;
@@ -142,6 +145,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                     record_read += 1;
                     record_count += 1;
                     free(old_entry.key);
+                    old_entry.key = NULL;  /* freed; null so the _return cleanup can't double-free */
                     if (record_read < saved_record_count) {
                         if ((result = sst_read_index_entry_at_offset(old_fd, old_entry_offset, &old_entry, &old_entry_offset)) != LV_OK) goto _return;
                         has_old_entry = 1;
@@ -181,6 +185,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 last_seq = current_node->seq;
 
                 free(old_entry.key);
+                old_entry.key = NULL;  /* freed; null so the _return cleanup can't double-free */
                 record_read += 1;
                 if (record_read < saved_record_count) {
                     if ((result = sst_read_index_entry_at_offset(old_fd, old_entry_offset, &old_entry, &old_entry_offset)) != LV_OK) goto _return;
@@ -207,6 +212,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
                 record_read += 1;
                 free(old_entry.key);
+                old_entry.key = NULL;  /* freed; null so the _return cleanup can't double-free */
 
                 if (record_read < saved_record_count) {
                     if ((result = sst_read_index_entry_at_offset(old_fd, old_entry_offset, &old_entry, &old_entry_offset)) != LV_OK) goto _return;
@@ -278,6 +284,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
             record_read += 1;
             record_count += 1;
             free(old_entry.key);
+            old_entry.key = NULL;  /* freed; null so the _return cleanup can't double-free */
 
             if (record_read < saved_record_count) {
                 if ((result = sst_read_index_entry_at_offset(old_fd, old_entry_offset, &old_entry, &old_entry_offset)) != LV_OK) goto _return;
@@ -328,6 +335,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     if ((result = write_helper(new_fd, BUF_64, 8)) != LV_OK) goto _return;
 
 _return:
+    free(old_entry.key);
     sst_destroy_indexblockset(index_set);
     return result;
 }
@@ -383,6 +391,8 @@ LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVS
     uint8_t BUF_64[8];
     uint64_t off = offset;
 
+    entry->key = NULL;
+
     if ((result = pread_helper(fd, BUF_32, 4, off)) != LV_OK) return result;
     const LVKeyLen32_t saved_key_len = get_fixed_32(BUF_32);
     entry->key_len = saved_key_len;
@@ -394,31 +404,32 @@ LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVS
     }
     if ((result = pread_helper(fd, saved_key, saved_key_len, off)) != LV_OK) {
         free(saved_key);
-        return result;
+        return result;   
     }
-    entry->key = saved_key;
     off += saved_key_len;
 
     if ((result = pread_helper(fd, BUF_64, 8, off)) != LV_OK) {
         free(saved_key);
-        return result;
+        return result;   
     }
     entry->seq = get_fixed_64(BUF_64);
     off += 8;
 
     if ((result = pread_helper(fd, BUF_64, 8, off)) != LV_OK) {
         free(saved_key);
-        return result;
+        return result;  
     }
     entry->vector_id = get_fixed_64(BUF_64);
     off += 8;
 
     if ((result = pread_helper(fd, BUF_64, 8, off)) != LV_OK) {
         free(saved_key);
-        return result;
+        return result;   
     }
     entry->offset = get_fixed_64(BUF_64);
     off += 8;
+
+    entry->key = saved_key;
 
     if (next_offset) {
         *next_offset = off;
@@ -573,7 +584,7 @@ LVStatus sst_write_record_with_old_sst(const int new_fd, const int old_fd, const
 LVStatus sst_indexblockset_append(LVSSTIndexBlockSet* index_buffer, const LVKeyLen32_t key_len, const void* key, const LVSeq64_t seq, const LVVectorId64_t vector_id, const uint64_t offset) {
     if (index_buffer->size >= index_buffer->capacity) {
         const LVSize32_t new_capacity = index_buffer->capacity * 2;
-        const LVSSTIndexBlockEntry* tmp = realloc(index_buffer->entries, new_capacity * sizeof(LVSSTIndexBlockEntry));
+        LVSSTIndexBlockEntry* tmp = realloc(index_buffer->entries, new_capacity * sizeof(LVSSTIndexBlockEntry));
         if (!tmp) {
             return LV_ERR_OOM;
         }
@@ -597,10 +608,12 @@ LVStatus sst_indexblockset_append(LVSSTIndexBlockSet* index_buffer, const LVKeyL
 
 void sst_destroy_indexblockset(LVSSTIndexBlockSet* index_block) {
     if (index_block) {
-        for (int i = 0; i < index_block->size; ++i) {
-            free(index_block->entries[i].key);
+        if (index_block->entries) {
+            for (int i = 0; i < index_block->size; ++i) {
+                free(index_block->entries[i].key);
+            }
+            free(index_block->entries);
         }
-        free(index_block->entries);
         free(index_block);
     }
 
@@ -682,7 +695,7 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
                     break;
                 }
 
-                if ((result = qv_append_fn(qv_set, dummy_node->seq, vector_id, key, key_len, value, value_len, vector_score, ordbyvalue, 0)) != LV_OK) return result;
+                if ((result = qv_append_fn(qv_set, dummy_node->seq, vector_id, key, key_len, value, value_len, vector_score, ordbyvalue, 0)) != LV_OK) goto _return;
             }
         }
 
