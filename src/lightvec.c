@@ -38,6 +38,7 @@ struct LightVec
     int32_t magic;
 };
 
+static LVStatus lv_mkdir_p_internal(const char* dir_path);
 static LVStatus lv_prepare_db_dir_internal(char* db_path_out, const char* path);
 static LVStatus lv_open_internal(LightVec** db, const char* db_path,
     const LVSize32_t flush_threshold,
@@ -959,21 +960,74 @@ LVStatus lv_close(LightVec* db)
     return result;
 }
 
-/* ============================================================================
- * lv_prepare_db_dir_internal — shared: build the ".../LV" directory path and mkdir it.
- * Both create and open need the directory to exist before touching files.
- * ========================================================================== */
+/* Create every directory along `dir_path`, like `mkdir -p`.
+ *
+ * WHY we need this: mkdir(2) only creates the FINAL path component and requires
+ * every parent to already exist. So mkdir("/a/b/c/LV") fails with ENOENT if any
+ * of /a, /a/b, /a/b/c is missing. To let a user call lv_create with a path whose
+ * parents don't exist yet, we walk the path front-to-back and mkdir each prefix.
+ *
+ * HOW it works: we copy the path into a mutable buffer (we can't modify the
+ * caller's const string, and we need to poke '\0' into it temporarily). Then we
+ * scan for each '/'. At every '/', we temporarily terminate the string there,
+ * giving us a prefix like "/a" then "/a/b" then "/a/b/c"; we mkdir that prefix,
+ * then restore the '/' and continue. Finally we mkdir the whole string (the last
+ * component after the last '/'). EEXIST is not an error — it just means that
+ * directory was already there, which is fine.
+ */
+static LVStatus lv_mkdir_p_internal(const char* dir_path)
+{
+    char tmp[LV_PATH_MAX];
+
+    /* Copy into a writable buffer. We must null-terminate manually because
+     * strncpy does NOT guarantee termination if the source fills the buffer. */
+    size_t len = strlen(dir_path);
+    if (len >= LV_PATH_MAX) return LV_ERR_IO;   /* path too long for our buffer */
+    memcpy(tmp, dir_path, len);
+    tmp[len] = '\0';
+
+    /* Walk each character. When we hit a '/', the substring BEFORE it is a
+     * directory prefix we should ensure exists.
+     *
+     * We start at i = 1, not 0, on purpose: if the path is absolute it begins
+     * with '/', and a prefix of "" (or trying to mkdir "/") is meaningless — we
+     * don't want to mkdir the empty string or the filesystem root. Starting at 1
+     * skips that leading slash. */
+    for (size_t i = 1; i < len; ++i)
+    {
+        if (tmp[i] == '/')
+        {
+            tmp[i] = '\0';                         /* temporarily end the string here */
+
+            /* mkdir this prefix. EEXIST means "already there" — not an error. */
+            if (mkdir(tmp, 0755) == -1 && errno != EEXIST)
+                return LV_ERR_IO;
+
+            tmp[i] = '/';                          /* restore and keep scanning */
+        }
+    }
+
+    /* The loop handled every prefix ending in '/', but not the FINAL component
+     * (the part after the last '/', which has no trailing slash to trigger the
+     * mkdir above). Create it now. */
+    if (mkdir(tmp, 0755) == -1 && errno != EEXIST)
+        return LV_ERR_IO;
+
+    return LV_OK;
+}
+
 static LVStatus lv_prepare_db_dir_internal(char* db_path_out, const char* path)
 {
     LVStatus result = LV_OK;
 
+    /* Build "<path>/LV" — the actual directory that holds the DB files. */
     if ((result = path_join(db_path_out, LV_PATH_MAX, path, "LV")) != LV_OK)
         return result;
 
-    if (mkdir(db_path_out, 0755) == -1 && errno != EEXIST)
-        return LV_ERR_IO;
-
-    return LV_OK;
+    /* Create the whole chain, so callers don't have to pre-create parents.
+     * (Previously this was a single mkdir that required all parents to exist,
+     * which is why lv_create failed with LV_ERR_IO when they didn't.) */
+    return lv_mkdir_p_internal(db_path_out);
 }
 
 /* ============================================================================
