@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(ROOT, "build", "cffi"))
 
 # `lib` holds the C functions and constants: lib.lv_create, lib.LV_OK, ...
 # `ffi` holds tools to build/convert C data from Python: ffi.new, ffi.string, ...
-from _lightvec_cffi import lib, ffi
+from _lightvec_cffi import lib, ffi # type: ignore
 import shutil
 
 
