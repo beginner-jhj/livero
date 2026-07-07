@@ -892,6 +892,7 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
     }
 
     if (is_limit_on || is_top_k_on) {
+        printf("is_limit_on:%d is_top_k_on:%d \n", is_limit_on, is_top_k_on);
         LVSize32_t limit = option->limit;
         if (is_top_k_on && is_limit_on) {
             limit = option->top_k < option->limit ? option->top_k : option->limit;
@@ -916,6 +917,16 @@ _return:
     query_destroy_parser(parser);
     query_destroy_ast(query_tree);
     return result;
+}
+
+LVDim32_t lv_get_vector_dim(const LightVec* db)
+{
+    return db->schema->vector_dim;
+}
+
+LVVectorType lv_get_vector_type(const LightVec* db)
+{
+    return db->schema->vector_type;
 }
 
 void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
