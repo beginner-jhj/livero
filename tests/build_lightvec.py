@@ -183,6 +183,10 @@ ffibuilder.cdef("""
                       const LVQueryOption* option, LVQueryResultSet** outputs);
 
     LVStatus lv_close(LightVec* db);
+                
+    LVDim32_t lv_get_vector_dim(const LightVec* db);
+    
+    LVVectorType lv_get_vector_type(const LightVec* db);
 
     void lv_destroy_query_result_set(LVQueryResultSet* qrset);
 """)
