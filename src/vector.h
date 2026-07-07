@@ -202,6 +202,17 @@ void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t internal_id);
 void vector_hnsw_mark_deleted(LVHnsw* hnsw, const LVVectorId64_t internal_id);
 void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_internal_id);
 
+
+LVStatus vector_hnsw_eval_and_collect(
+    LVHnsw* hnsw,
+    const LVSchema* schema,
+    const LVAstNode* query,
+    const LVHnswQueryCtx* query_ctx,
+    const LVHnswEntry* entry,
+    float score,
+    int insert_into_result_heap,
+    LVSize32_t EF);
+
 LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema,
     const LVAstNode* query, const void* query_vector, const LVHnswQueryCtx* query_ctx);
 
