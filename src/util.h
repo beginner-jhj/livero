@@ -12,4 +12,6 @@ uint32_t get_fixed_32(const uint8_t* buf);
 void put_fixed_64(uint8_t* buf, uint64_t value);
 uint64_t get_fixed_64(const uint8_t *buf);
 
+uint32_t xorshift(void);
+
 #endif

@@ -1,4 +1,5 @@
 #include "util.h"
+#include <time.h>
 
 LVStatus path_join(char* buf, uint32_t buf_size, const char* path, const char* dir)
 {
@@ -72,4 +73,15 @@ uint64_t get_fixed_64(const uint8_t* buf)
     }
 
     return result;
+}
+
+uint32_t xorshift(void)
+{
+    static uint32_t state = 0;
+    if (state == 0) state = (uint32_t)time(NULL);
+
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
 }
