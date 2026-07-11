@@ -144,14 +144,3 @@ LVStatus pwrite_helper(const int fd, const void* buf, const uint32_t len, const 
 
     return LV_OK;
 }
-
-uint32_t xorshift(void)
-{
-    static uint32_t state = 0;
-    if (state == 0) state = (uint32_t)time(NULL);
-
-    state ^= state << 13;
-    state ^= state >> 17;
-    state ^= state << 5;
-    return state;
-}
