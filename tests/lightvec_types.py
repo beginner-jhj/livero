@@ -6,6 +6,7 @@ LV_META_NAME_MAX = 64
 LV_MAX_META_FIELDS = 32
 LV_MAX_KEY_LEN = 1024
 LV_MAX_VALUE_LEN = 2**24
+LV_NO_VECTOR_ID = 0xFFFFFFFFFFFFFFFF
 
 class LVStatus(Enum):
     LV_OK = 2
@@ -83,14 +84,14 @@ class LVOrdbyValue:
 
 @dataclass
 class LVQueryOption:
-    flags:int
-    limit:int
-    top_k:int
-    order_by:str
-    order_dir:LVQueryOrderDir
-    vector_score_filter_score:float
-    vector_score_filter_bound:LVScoreBound
-    vector_metric:LVVectorMetric
+    flags:int=0
+    limit:int=0
+    top_k:int=0
+    order_by:str=""
+    order_dir:LVQueryOrderDir=LVQueryOrderDir.LV_ORDER_ASC
+    vector_score_filter_score:float=0.0
+    vector_score_filter_bound:LVScoreBound=LVScoreBound.LV_SCORE_ABOVE
+    vector_metric:LVVectorMetric=LVVectorMetric.LV_METRIC_L2
 
 @dataclass
 class LVQueryResult:
@@ -106,3 +107,15 @@ class LVQueryResult:
 class LVQueryResultSet:
     size:int
     results:list[LVQueryResult]
+
+@dataclass
+class Record:
+    tombstone:bool
+    node_seq:int
+    key:bytes
+    key_len:int
+    value:bytes
+    value_len:int
+    vector_id:int
+    vector:list[float | int ] | None
+    fields:list[LVMetaField] | None

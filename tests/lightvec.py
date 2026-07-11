@@ -9,11 +9,14 @@ from _lightvec_cffi import lib, ffi  # type: ignore
 
 from lightvec_types import *
 import test_helper as helper
+import random
+import datetime
 
 
 class LightVec:
     def __init__(self):
         self.db = ffi.NULL
+        self.field_defs: list[LVMetaFieldDef] | None = None
         self.__vector_type: LVVectorType = LVVectorType.LV_VEC_FLOAT32
         self.__vector_dim: int = 0
 
@@ -47,6 +50,7 @@ class LightVec:
         self.__check_status_is_ok("lv_create", create_status)
 
         self.db = db_ptr[0]
+        self.field_defs = field_defs
         self.__vector_type = vector_type
         self.__vector_dim = vector_dim
 
@@ -212,3 +216,203 @@ class LightVec:
             raise RuntimeError(
                 f"{caller_fn_name} failed: {helper.STATUS_STRING[status]}"
             )
+
+
+class MetaFieldManager:
+    def __init__(
+        self,
+        int_field_count: int = 1,
+        float_field_count: int = 1,
+        string_field_count: int = 1,
+    ):
+        self.int_field_count = int_field_count
+        self.float_field_count = float_field_count
+        self.string_field_count = string_field_count
+        self.total_field_count = (
+            int_field_count + float_field_count + string_field_count
+        )
+        self.int_field_defs: list[LVMetaFieldDef] = []
+        self.float_field_defs: list[LVMetaFieldDef] = []
+        self.string_field_defs: list[LVMetaFieldDef] = []
+        self.total_field_defs: list[LVMetaFieldDef] = []
+
+        field_def: LVMetaFieldDef | None = None
+        for i in range(int_field_count):
+            field_def = LVMetaFieldDef(
+                name=f"int_category_{i}", type=LVMetaType.LV_META_INT
+            )
+            self.int_field_defs.append(field_def)
+            self.total_field_defs.append(field_def)
+
+        for i in range(float_field_count):
+            field_def = LVMetaFieldDef(
+                name=f"float_category_{i}", type=LVMetaType.LV_META_FLOAT
+            )
+            self.float_field_defs.append(field_def)
+            self.total_field_defs.append(field_def)
+
+        for i in range(string_field_count):
+            field_def = LVMetaFieldDef(
+                name=f"string_category_{i}", type=LVMetaType.LV_META_STRING
+            )
+            self.string_field_defs.append(field_def)
+            self.total_field_defs.append(field_def)
+
+    def create_int_field(self, field_id: int = 0, value: int | None = None):
+        if self.int_field_count <= 0:
+            raise ValueError("No INT field def")
+        if field_id >= self.int_field_count:
+            raise ValueError(f"ID:{field_id} int field does not exist")
+        if value is not None and (not isinstance(value, int)):
+            raise ValueError("The type of value is not INT")
+
+        _value = value if value is not None else random.randint(-1000, 1000)
+
+        return LVMetaField(
+            name=f"int_category_{field_id}",
+            type=LVMetaType.LV_META_INT,
+            value=lv_meta_field_value(i64=_value),
+        )
+
+    def create_float_field(self, field_id: int = 0, value: float | None = None):
+        if self.float_field_count <= 0:
+            raise ValueError("No FLOAT field def")
+        if field_id >= self.float_field_count:
+            raise ValueError(f"ID:{field_id} float field does not exist")
+        if value is not None and (not isinstance(value, float)):
+            raise ValueError("The type of value is not FLOAT")
+
+        _value = value if value is not None else random.uniform(-10, 10)
+
+        return LVMetaField(
+            name=f"float_category_{field_id}",
+            type=LVMetaType.LV_META_FLOAT,
+            value=lv_meta_field_value(f64=_value),
+        )
+
+    def create_string_field(self, field_id: int = 0, value: str | None = None):
+        if self.string_field_count <= 0:
+            raise ValueError("No STRING field def")
+        if field_id >= self.string_field_count:
+            raise ValueError(f"ID:{field_id} string field does not exist")
+        if value is not None and (not isinstance(value, str)):
+            raise ValueError("The type of value is not STR")
+
+        _value = (
+            value
+            if value is not None
+            else f"string_value_{field_id}"
+        )
+        return LVMetaField(
+            name=f"string_category_{field_id}",
+            type=LVMetaType.LV_META_STRING,
+            value=lv_meta_field_value(
+                str_string=_value, str_len=len(bytes(_value.encode("utf-8")))
+            ),
+        )
+
+    def create_field_set(self):
+        field_set: list[LVMetaField] = []
+        if self.int_field_count > 0:
+            field_set.append(self.create_int_field())
+
+        if self.float_field_count > 0:
+            field_set.append(self.create_float_field())
+
+        if self.string_field_count > 0:
+            field_set.append(self.create_string_field())
+
+        return field_set
+
+
+class RecordManager:
+    def __init__(self, db: LightVec):
+        self.db = db
+        self.seq: int = 0
+        self.vector_id: int = 0
+        self.records: dict[bytes, Record] = {}
+
+    def create_record(
+        self,
+        key: bytes | None = None,
+        value: bytes | None = None,
+        vector: list[float | int] | None = None,
+        fields: list[LVMetaField] | None = None,
+    ):
+        KEY = key if key is not None else f"key_{self.seq}".encode("utf-8")
+        KEY_LEN = len(KEY)
+        VALUE = value if value is not None else f"value_{self.seq}".encode("utf-8")
+        VALUE_LEN = len(VALUE)
+        seq = self.seq
+        vector_id = self.vector_id if vector is not None else LV_NO_VECTOR_ID
+        record = Record(
+            tombstone=False,
+            node_seq=seq,
+            key=KEY,
+            key_len=KEY_LEN,
+            value=VALUE,
+            value_len=VALUE_LEN,
+            vector_id=vector_id,
+            vector=vector,
+            fields=fields,
+        )
+        self.records[KEY] = record
+        self.seq += 1
+        if vector is not None:
+            self.vector_id += 1
+        return record
+
+    def put(self, record: Record | None):
+        if record is not None:
+            self.__check_record_is_valid(record.key)
+
+        _record: Record = record if record is not None else self.create_record()
+
+        return self.db.put(_record.key, _record.value, _record.vector, _record.fields)
+    
+
+    def update_value(self, key:bytes, value:bytes):
+        self.__check_record_is_valid(key)
+
+        self.records[key].value = value
+        self.records[key].value_len = len(value)
+
+        return self.db.update_value(key, value)
+
+    def update_vector(self, key: bytes, vector: list[float | int]):
+        self.__check_record_is_valid(key)
+        self.records[key].vector = vector
+        return self.db.update_vector(key, vector)
+    
+
+    def update_field(self, key:bytes, fields:list[LVMetaField]):
+        self.__check_record_is_valid(key)
+        new_fields = {f.name:f for f in self.records[key].fields}
+        for new_field in fields:
+            new_fields[new_field.name] = new_field
+        self.records[key].fields = list(new_fields.values())
+        return self.db.update_field(key, fields)
+    
+    def delete(self, key:bytes):
+        self.__check_record_is_valid(key)
+        self.records[key].tombstone = True
+        return self.db.delete(key)
+    
+    def get_alive_record_keys(self):
+        return [v.key for k,v in self.records.items() if not v.tombstone]
+
+    def get_field_value(self, key:bytes, field_name:str):
+        record = self.records[key]
+        for f in record.fields:
+            if f.name == field_name:
+                if f.type == LVMetaType.LV_META_INT:
+                    return f.value.i64
+                elif f.type == LVMetaType.LV_META_FLOAT:
+                    return f.value.f64
+                else:
+                    return f.value.str_string
+        return None
+    
+    def __check_record_is_valid(self, key:bytes):
+        if not self.records.get(key, None):
+            raise RuntimeError("record is invalid")        
