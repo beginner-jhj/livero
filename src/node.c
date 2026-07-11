@@ -47,7 +47,7 @@ LVNode* node_create(LVArena* arena, const LVNodeType type, const LVSeq64_t seq, 
 
     // copy value
 
-    if (node->value_len > 0 && op == LV_PUT)
+    if (node->value_len > 0)
     {
         memcpy((char*)node + node_value_offset(node->level, node->key_len), value, node->value_len);
     }
