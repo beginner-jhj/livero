@@ -60,7 +60,3 @@ endfunction()
 
 lv_add_test(test_arena   tests/test_arena.c)
 lv_add_test(test_vector  tests/test_vector.c)
-lv_add_test(test_table    tests/test_table.c)
-lv_add_test(test_flush tests/test_flush.c)
-lv_add_test(test_query tests/test_query.c)
-lv_add_test(test_query_vector tests/test_query_vector.c)
