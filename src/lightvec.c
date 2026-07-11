@@ -770,21 +770,22 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
     }
 
     if (is_ordby_on) {
-        const LVMetaFieldHash* hash = schema_search_field_hash(db->schema->field_hashes, option->order.by, strlen(option->order.by));
-
-        if (!hash) {
-            result = LV_ERR_INVALID_QUERY;
-            goto _return;
-        }
-
-        if (hash->type != LV_META_STRING) {
-            ordby_field_mask = hash->mask;
-        }
-
+        // "vector" is a special order key (order by similarity score), NOT a schema
+        // field — so short-circuit before the field-hash lookup, which would reject
+        // it as an unknown field.
         if (is_ordby_vec) {
             ordbytype = LV_ORDBY_VEC;
         }
         else {
+            const LVMetaFieldHash* hash = schema_search_field_hash(
+                db->schema->field_hashes, option->order.by, strlen(option->order.by));
+            if (!hash) {
+                result = LV_ERR_INVALID_QUERY;
+                goto _return;
+            }
+            if (hash->type != LV_META_STRING) {
+                ordby_field_mask = hash->mask;
+            }
             if (hash->type == LV_META_FLOAT) {
                 ordbytype = LV_ORDBY_FLOAT;
             }
@@ -892,7 +893,6 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
     }
 
     if (is_limit_on || is_top_k_on) {
-        printf("is_limit_on:%d is_top_k_on:%d \n", is_limit_on, is_top_k_on);
         LVSize32_t limit = option->limit;
         if (is_top_k_on && is_limit_on) {
             limit = option->top_k < option->limit ? option->top_k : option->limit;
