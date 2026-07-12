@@ -13,21 +13,21 @@ LVMemTable* table_create()
     LVMemTable* table = malloc(sizeof(LVMemTable));
     if (!table) goto cleanup;
 
-    table->arena         = NULL;
-    table->head          = NULL;
-    table->tail          = NULL;
+    table->arena = NULL;
+    table->head = NULL;
+    table->tail = NULL;
     table->current_level = 1;
-    table->node_count    = 0;
+    table->node_count = 0;
 
     table->arena = arena_create(LV_DEFAULT_BLOCK_SIZE);
     if (!table->arena) goto cleanup;
 
     table->head = node_create(table->arena, LV_NODE_HEAD, 0, LV_PUT,
-                              LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+        LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
     if (!table->head) goto cleanup;
 
     table->tail = node_create(table->arena, LV_NODE_TAIL, 0, LV_PUT,
-                              LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
+        LV_SKIPLIST_MAX_LEVEL, 0, NULL, 0, NULL, 0, 0, 0, 0, NULL);
     if (!table->tail) goto cleanup;
 
     for (int i = 0; i < LV_SKIPLIST_MAX_LEVEL; ++i)
@@ -36,10 +36,10 @@ LVMemTable* table_create()
         table->tail->levels[i] = NULL;
     }
 
-    return table;          
+    return table;
 
-cleanup:                  
-    table_destroy(table);  
+cleanup:
+    table_destroy(table);
     return NULL;
 }
 
@@ -154,32 +154,23 @@ LVNode* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_
     LVNode* current_candidate = table->head;
     LVNode* current_cmp_node = current_candidate->levels[current_level];
 
+
     while (current_level >= 0)
     {
         while (node_cmp(current_cmp_node->type, node_access_key(current_cmp_node), current_cmp_node->key_len, current_cmp_node->seq, LV_NODE_DATA, key, key_len, seq_for_search) < 0)
         {
+
             current_candidate = current_cmp_node;
             current_cmp_node = current_candidate->levels[current_level];
         }
-        if (node_key_equal(node_access_key(current_cmp_node), current_cmp_node->key_len, key, key_len))
-        {
-            // if (current_cmp_node->op != LV_DELETE)
-            // {
-            //     result = current_cmp_node;
-            //     goto _return;
-            // }
-            // else
-            // {
-            //     break;
-            // }
-            result = current_cmp_node;
-            goto _return;
-        }
-
-        if (current_level == 0)
-            break;
+        if (current_level == 0) break;
         --current_level;
         current_cmp_node = current_candidate->levels[current_level];
+    }
+
+    if (node_key_equal(node_access_key(current_cmp_node), current_cmp_node->key_len, key, key_len))
+    {
+        result = current_cmp_node;
     }
 
 _return:
