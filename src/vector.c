@@ -329,13 +329,14 @@ float vector_score_i32_l2(const int32_t dist) {
 }
 
 float vector_score_f32_dot(const float dist) {
-    float abs_dist = dist > 0.0f ? dist : -dist;
-    return 0.5f * (1.0f + (dist / (1.0f + abs_dist)));
+    const float actual_dist = -dist; //dot production returns negated distance
+    return 1.0f / (1.0f + expf(-actual_dist * 0.01f));
 }
 
 float vector_score_i32_dot(const int32_t dist) {
-    float abs_dist = dist > 0 ? dist : -dist;
-    return 0.5f * (1.0f + (dist / (1.0f + abs_dist)));
+
+    const float actual_dist = -dist; //dot production returns negated distance
+    return 1.0f / (1.0f + expf(-actual_dist * 0.01f));
 }
 
 LVLevel8_t vector_hnsw_layer(const float ml)
