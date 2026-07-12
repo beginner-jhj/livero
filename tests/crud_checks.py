@@ -20,11 +20,9 @@ values and can be composed in any order / any data condition.
 from lightvec_types import LVQueryOption, LVQueryOptionFlag, LVStatus
 
 
-def _none_option(top_k: int = 0) -> LVQueryOption:
-    # A neutral option. top_k>0 turns on the HNSW vector-search path (needed
-    # whenever we pass a query vector and want vector_score computed); leave it 0
-    # for pure filter queries.
-    return LVQueryOption(flags=LVQueryOptionFlag.LV_QOPT_NONE.value, top_k=top_k)
+def _none_option() -> LVQueryOption:
+    # A neutral option.
+    return LVQueryOption(flags=LVQueryOptionFlag.LV_QOPT_NONE.value)
 
 
 def _alive_keys_matching(rm, predicate) -> set:

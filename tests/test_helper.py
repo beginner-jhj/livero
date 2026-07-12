@@ -96,7 +96,6 @@ def p2c_query_option(query_option: LVQueryOption):
 
     c_query_option.flags = query_option.flags
     c_query_option.limit = query_option.limit
-    c_query_option.top_k = query_option.top_k
     c_query_option.order.by = query_option.order_by.encode("utf-8")
     c_query_option.order.dir = (
         lib.LV_ORDER_ASC

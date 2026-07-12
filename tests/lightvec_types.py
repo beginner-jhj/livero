@@ -86,7 +86,6 @@ class LVOrdbyValue:
 class LVQueryOption:
     flags:int=0
     limit:int=0
-    top_k:int=0
     order_by:str=""
     order_dir:LVQueryOrderDir=LVQueryOrderDir.LV_ORDER_ASC
     vector_score_filter_score:float=0.0

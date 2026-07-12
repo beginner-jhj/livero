@@ -3,7 +3,7 @@ Query verification helpers (reusable, assert internally — same philosophy as
 crud_checks.py).
 
 Two families:
-  - vector search: determinism, top_k count, distance ordering, recall
+  - vector search: determinism, result count, distance ordering, recall
   - filter: correctness of the SQL-ish filter against a known ground truth
 
 Ground truth:
@@ -19,18 +19,48 @@ import math
 from lightvec_types import LVQueryOption, LVQueryOptionFlag, LVVectorMetric, LVStatus
 
 
-def _vec_option(top_k: int) -> LVQueryOption:
-    # top_k>0 turns on the HNSW path (is_top_k_on -> needs_hnsw). Without it a
-    # query vector is ignored and vector_score stays 0.
-    return LVQueryOption(flags=LVQueryOptionFlag.LV_QOPT_NONE.value, top_k=top_k)
-
+def _vec_option(limit: int = 0) -> LVQueryOption:
+    # Vector search is triggered by ORDER_BY "vector" (there is no top_k anymore).
+    # An optional limit caps how many nearest results come back — the role top_k
+    # used to play. flags carries LIMIT only when a positive limit is given.
+    flags = LVQueryOptionFlag.LV_QOPT_ORDER_BY.value
+    if limit > 0:
+        flags |= LVQueryOptionFlag.LV_QOPT_LIMIT.value
+    from lightvec_types import LVQueryOrderDir
+    return LVQueryOption(
+        flags=flags,
+        limit=limit,
+        order_by="vector",
+        order_dir=LVQueryOrderDir.LV_ORDER_DESC,  # nearest (highest score) first
+    )
 
 def _filter_option() -> LVQueryOption:
     return LVQueryOption(flags=LVQueryOptionFlag.LV_QOPT_NONE.value)
 
-
 def _l2_sq(a, b) -> float:
     return sum((x - y) * (x - y) for x, y in zip(a, b))
+
+
+def _neg_dot(a, b) -> float:
+    # Dot is returned NEGATED by the DB so "smaller is nearer", matching L2.
+    # The reference mirrors that: -sum(a*b), same ranking direction as L2.
+    return -sum(x * y for x, y in zip(a, b))
+
+
+def make_vector(dim: int, vector_type) -> list:
+    """Random vector of the right element type: float32 -> floats [-1,1],
+    int8 -> ints [-127,127]. get_vector_type infers type from elements."""
+    import random
+    from lightvec_types import LVVectorType
+    if vector_type == LVVectorType.LV_VEC_INT8:
+        return [random.randint(-127, 127) for _ in range(dim)]
+    return [random.uniform(-1, 1) for _ in range(dim)]
+
+
+def reference_distance(metric):
+    """Brute-force distance matching the DB metric; both 'smaller = nearer'."""
+    from lightvec_types import LVVectorMetric
+    return _neg_dot if metric == LVVectorMetric.LV_METRIC_DOT else _l2_sq
 
 
 def _is_nan(x) -> bool:
@@ -42,7 +72,7 @@ def _is_nan(x) -> bool:
 # Vector search
 # ---------------------------------------------------------------------------
 
-def check_vector_determinism(db, query_vector, top_k: int, repeats: int = 5,
+def check_vector_determinism(db, query_vector, repeats: int = 5,
                              filter_str: str = ""):
     """
     Run the SAME vector query `repeats` times and assert:
@@ -61,7 +91,7 @@ def check_vector_determinism(db, query_vector, top_k: int, repeats: int = 5,
     """
     maps = []
     for _ in range(repeats):
-        qrset = db.query(filter_str, query_vector, _vec_option(top_k))
+        qrset = db.query(filter_str, query_vector, _vec_option())
         m = {}
         for qr in qrset.results:
             assert not _is_nan(qr.vector_score), f"nan score for {qr.key!r}"
@@ -81,38 +111,26 @@ def check_vector_determinism(db, query_vector, top_k: int, repeats: int = 5,
             )
 
 
-def check_topk_count(db, query_vector, n_records: int, filter_str: str):
+def check_vector_count(db, query_vector, n_records: int, filter_str: str):
     """
-    With `n_records` records present and top_k == n_records, expect exactly
-    n_records results (every record reachable). This is the regression guard for
-    the entry-point-missing bug, which dropped one record (usually the first).
+    With `n_records` records present and a vector search limited to n_records,
+    expect exactly n_records results (every record reachable). Regression guard
+    for the entry-point-missing bug, which dropped one record (usually the first).
     """
-    qrset = db.query(filter_str, query_vector, _vec_option(top_k=n_records))
+    qrset = db.query(filter_str, query_vector, _vec_option(limit=n_records))
     assert qrset.size == n_records, (
-        f"top_k count mismatch: got {qrset.size}, expected {n_records} "
+        f"vector result count mismatch: got {qrset.size}, expected {n_records} "
         f"(entry point or a node likely missing from results)"
     )
 
 
-def _ordby_vec_option(top_k: int, desc: bool = True) -> LVQueryOption:
-    # Order results by vector score. Without ORDER_BY the HNSW result order is
-    # arbitrary, so any test that checks ordering MUST turn this on.
-    from lightvec_types import LVQueryOrderDir
-    return LVQueryOption(
-        flags=LVQueryOptionFlag.LV_QOPT_ORDER_BY.value,
-        top_k=top_k,
-        order_by="vector",
-        order_dir=LVQueryOrderDir.LV_ORDER_DESC if desc else LVQueryOrderDir.LV_ORDER_ASC,
-    )
-
-
-def check_distance_ordering(db, query_vector, top_k: int, filter_str: str):
+def check_distance_ordering(db, query_vector, filter_str: str, limit: int = 0):
     """
-    With ORDER_BY vector (DESC), results must come back score-sorted
-    (non-increasing). Without ORDER_BY, HNSW order is arbitrary, so ordering is
-    only meaningful with the option on.
+    Vector search (ORDER_BY vector, DESC) must return results score-sorted
+    (non-increasing). Ordering is only defined with ORDER_BY on, which
+    _vec_option always sets.
     """
-    qrset = db.query(filter_str, query_vector, _ordby_vec_option(top_k, desc=True))
+    qrset = db.query(filter_str, query_vector, _vec_option(limit=limit))
     scores = [qr.vector_score for qr in qrset.results]
     for i in range(1, len(scores)):
         assert scores[i] <= scores[i - 1] + 1e-6, (
@@ -120,27 +138,27 @@ def check_distance_ordering(db, query_vector, top_k: int, filter_str: str):
         )
 
 
-def check_recall(db, rm, query_vector, top_k: int, filter_str: str,
-                 min_recall: float = 0.9):
+def check_recall(db, rm, query_vector, k: int, filter_str: str,
+                 min_recall: float = 0.9, metric=None):
     """
-    Grade approximate HNSW results against a brute-force top_k computed in Python
-    over rm's stored vectors. Because HNSW is approximate, we require recall >=
-    min_recall rather than an exact match.
+    Grade approximate HNSW results against a brute-force top-k. The reference
+    distance follows the DB's metric (L2 or negated-dot), both ranking
+    "smaller = nearer". HNSW is approximate, so recall >= min_recall.
+    """
+    from lightvec_types import LVVectorMetric
+    dist = reference_distance(metric if metric is not None else LVVectorMetric.LV_METRIC_L2)
 
-    recall = |returned ∩ true_topk| / |true_topk|
-    """
-    # Brute-force reference: distance from query to every alive record with a vector.
     scored = []
     for key, rec in rm.records.items():
         if rec.tombstone or rec.vector is None:
             continue
-        scored.append((key, _l2_sq(query_vector, rec.vector)))
+        scored.append((key, dist(query_vector, rec.vector)))
     scored.sort(key=lambda kv: kv[1])
-    true_topk = {key for key, _ in scored[:top_k]}
+    true_topk = {key for key, _ in scored[:k]}
     if not true_topk:
         return  # nothing to grade
 
-    qrset = db.query(filter_str, query_vector, _vec_option(top_k))
+    qrset = db.query(filter_str, query_vector, _vec_option(limit=k))
     returned = {qr.key for qr in qrset.results}
 
     hit = len(returned & true_topk)
@@ -230,16 +248,20 @@ def check_order_by_field(db, rm, filter_str: str, field_name: str,
     )
 
 
-def check_score_filter(db, query_vector, top_k: int, filter_str: str,
-                       threshold: float, above: bool):
+def check_score_filter(db, query_vector, filter_str: str,
+                       threshold: float, above: bool, limit: int = 0):
     """
     LV_QOPT_SCORE_FILTER keeps only rows whose vector_score passes the bound.
-    ABOVE -> score >= threshold; BELOW -> score <= threshold. (Vector required.)
+    ABOVE -> score >= threshold; BELOW -> score <= threshold. (Vector required;
+    SCORE_FILTER itself turns on the HNSW path.)
     """
     from lightvec_types import LVScoreBound
+    flags = LVQueryOptionFlag.LV_QOPT_SCORE_FILTER.value
+    if limit > 0:
+        flags |= LVQueryOptionFlag.LV_QOPT_LIMIT.value
     option = LVQueryOption(
-        flags=LVQueryOptionFlag.LV_QOPT_SCORE_FILTER.value,
-        top_k=top_k,
+        flags=flags,
+        limit=limit,
         vector_score_filter_score=threshold,
         vector_score_filter_bound=LVScoreBound.LV_SCORE_ABOVE if above else LVScoreBound.LV_SCORE_BELOW,
     )

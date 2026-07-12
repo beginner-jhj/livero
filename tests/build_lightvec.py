@@ -130,7 +130,6 @@ ffibuilder.cdef("""
     typedef struct {
         uint32_t flags;
         LVSize32_t limit;
-        LVSize32_t top_k;
         struct { char by[64]; LVQueryOrderDir dir; } order;
         struct { float score; LVScoreBound bound; } vector_score_filter;
         LVVectorMetric vector_metric;
