@@ -211,6 +211,142 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
     return result;
 }
 
+LVStatus lv_get(const LightVec* db, const void* key, const LVKeyLen32_t key_len, LVGetResult** output) {
+    LVStatus result = LV_OK;
+
+    LVGetResult* output_result = malloc(sizeof(LVGetResult));
+    if (!output_result) {
+        return LV_ERR_OOM;
+    }
+
+    output_result->node_seq = 0;
+    output_result->value = NULL;
+    output_result->value_len = 0;
+    output_result->vector_id = LV_NO_VECTOR_ID;
+    output_result->vector = NULL;
+    output_result->field_count = 0;
+    output_result->fields = NULL;
+
+    const LVNode* mtnode = table_search(db->memtable, key, key_len);
+
+    if (mtnode) {
+        // printf("key:%s key_len:%d seq:%d op:%d level:%d \n", node_access_key(mtnode), mtnode->key_len,mtnode->seq,mtnode->op, mtnode->level);
+        if (mtnode->op == LV_DELETE) {
+            result = LV_ERR_NOT_FOUND;
+            return result;
+        }
+        output_result->node_seq = mtnode->seq;
+
+        output_result->value_len = mtnode->value_len;
+        if (output_result->value_len > 0) {
+            output_result->value = malloc(mtnode->value_len);
+            if (!output_result->value) {
+                result = LV_ERR_OOM;
+                goto cleanup;
+            }
+            memcpy(output_result->value, node_access_value(mtnode), output_result->value_len);
+        }
+
+        output_result->vector_id = mtnode->vector_id;
+        if (output_result->vector_id != LV_NO_VECTOR_ID) {
+            LVVectorType type = lv_get_vector_type(db);
+            LVSize32_t size = type == LV_VEC_FLOAT32 ? sizeof(float) * db->hnsw->aligned_dim : sizeof(int8_t) * db->hnsw->aligned_dim;
+
+            output_result->vector = malloc(size);
+            if (!output_result->vector) {
+                result = LV_ERR_OOM;
+                goto cleanup;
+            }
+            memcpy(output_result->vector, db->hnsw->id_vector_map->map[mtnode->hnsw_node->internal_id], size);
+        }
+
+        output_result->field_count = mtnode->field_count;
+        if (output_result->field_count > 0) {
+            if ((output_result->fields = schema_deserialize_field(db->schema->field_hashes, mtnode->field_mask, output_result->field_count, node_access_field(mtnode, 0), 0)) == NULL) {
+                result = LV_ERR_OOM;
+                goto cleanup;
+            };
+        }
+    }
+    else if (db->sst_fd < 0) {
+        result = LV_ERR_NOT_FOUND;
+        return result;
+    }
+    else {
+        LVSSTIndexBlockEntry entry;
+
+        if ((result = sst_search_index_block(db->sst_fd, &entry, key, key_len)) != LV_OK) goto cleanup;
+
+        free(entry.key);
+
+        LVSeq64_t seq;
+        LVValueLen32_t value_len;
+        LVVectorId64_t vector_id;
+        LVSize32_t field_size;
+        LVCount32_t field_mask;
+        LVCount32_t field_count;
+        uint64_t read_offset = 0;
+        if ((result = sst_read_record_head(db->sst_fd, entry.offset, &seq, NULL, NULL, NULL, &value_len, &vector_id, &field_mask, &field_count, &field_size, &read_offset)) != LV_OK) goto cleanup;
+
+        output_result->node_seq = seq;
+        output_result->value_len = value_len;
+        output_result->value = malloc(value_len);
+        if (!output_result->value) {
+            result = LV_ERR_OOM;
+            goto cleanup;
+        };
+
+
+        if (field_size > 0) {
+            char field_buffer[field_size];
+
+            if ((result = sst_read_record_tail(db->sst_fd, entry.offset + read_offset, NULL, key_len, output_result->value, value_len, field_buffer, field_size, NULL)) != LV_OK) goto cleanup;
+
+            output_result->field_count = field_count;
+            if ((output_result->fields = schema_deserialize_field(db->schema->field_hashes, field_mask, field_count, field_buffer, 1)) == NULL) {
+                result = LV_ERR_OOM;
+                goto cleanup;
+            };
+        }
+        else {
+            if ((result = sst_read_record_tail(db->sst_fd, entry.offset + read_offset, NULL, key_len, output_result->value, value_len, NULL, field_size, NULL)) != LV_OK) goto cleanup;
+        }
+
+
+        output_result->vector_id = vector_id;
+        if (output_result->vector_id != LV_NO_VECTOR_ID) {
+            LVVectorType type = lv_get_vector_type(db);
+            LVSize32_t size = type == LV_VEC_FLOAT32 ? sizeof(float) * db->hnsw->aligned_dim : sizeof(int8_t) * db->hnsw->aligned_dim;
+
+            output_result->vector = malloc(size);
+            if (!output_result->vector) {
+                result = LV_ERR_OOM;
+                goto cleanup;
+            };
+
+            LVVectorId64_t internal_vector_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, output_result->vector_id);
+            memcpy(output_result->vector, db->hnsw->id_vector_map->map[internal_vector_id], size);
+        }
+    }
+
+    *output = output_result;
+
+    return LV_OK;
+
+cleanup:
+    lv_destroy_get_result(output_result);
+
+    return result;
+}
+
+void lv_destroy_get_result(LVGetResult* result) {
+    if (result) {
+        free(result->value);
+        free(result->vector);
+        schema_destroy_fields(result->field_count, result->fields);
+    }
+}
+
 LVStatus lv_update_value(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len) {
     LVStatus result = LV_OK;
 
