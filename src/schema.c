@@ -57,7 +57,7 @@ LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_ty
         schema->field_defs[i] = *current_def;
 
         if (schema_insert_field_hash(schema->field_hashes, current_def->name, current_def->type, current_field_mask) != LV_OK) goto cleanup;
-        
+
         current_field_mask <<= 1;
     }
 
@@ -686,3 +686,101 @@ void schema_field_disk_to_memory(const void* src, const LVSize32_t field_size, v
     }
 }
 
+LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVCount32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk) {
+    uint8_t BUF_32[4];
+    uint8_t BUF_64[8];
+    LVMetaField* result = calloc(field_count, sizeof(LVMetaField));
+    if (!result) goto cleanup;
+
+    char* src_ptr = (char*)src;
+
+    LVCount32_t remaining = field_mask;
+    for (int i = 0; i < field_count; ++i) {
+        LVCount32_t single_bit = remaining & (~remaining + 1);
+        remaining &= ~single_bit;
+
+        for (int j = 0; j < LV_MAX_META_FIELDS; ++j) {
+            LVMetaFieldHash* hash = hashes[j];
+            while (hash) {
+                if (hash->mask == single_bit) {
+                    memcpy(result[i].name, hash->field_name, LV_META_NAME_MAX);
+                    result[i].name[LV_META_NAME_MAX - 1] = '\0';
+                }
+                hash = hash->next;
+            }
+        }
+
+        uint8_t saved_type;
+        memcpy(&saved_type, src_ptr, sizeof(uint8_t));
+        LVMetaType type = (LVMetaType)saved_type;
+
+        result[i].type = type;
+        src_ptr += sizeof(uint8_t);
+
+        if (type == LV_META_STRING) {
+            LVSize32_t saved_len = 0;
+            if (is_on_disk == 1) {
+                memcpy(BUF_32, src_ptr, 4);
+                saved_len = get_fixed_32(BUF_32);
+            }
+            else {
+                memcpy(&saved_len, src_ptr, 4);
+            }
+
+            result[i].value.str.len = saved_len;
+            src_ptr += 4;
+
+            char* string = malloc(saved_len);
+            if (!string) goto cleanup;
+            memcpy(string, src_ptr, saved_len);
+
+            result[i].value.str.string = string;
+            src_ptr += saved_len;
+        }
+
+        else if (type == LV_META_FLOAT) {
+            double value = 0.0;
+            if (is_on_disk == 1) {
+                memcpy(BUF_64, src_ptr, 8);
+                uint64_t bits = get_fixed_64(BUF_64);
+                memcpy(&value, &bits, sizeof(double));
+            }
+            else {
+                memcpy(&value, src_ptr, sizeof(double));
+            }
+            result[i].value.f64 = value;
+            src_ptr += sizeof(double);
+        }
+
+        else {
+            int64_t value = 0;
+            if (is_on_disk == 1) {
+                memcpy(BUF_64, src_ptr, 8);
+                value = get_fixed_64(BUF_64);
+            }
+            else {
+                memcpy(&value, src_ptr, sizeof(int64_t));
+            }
+            result[i].value.i64 = value;
+            src_ptr += sizeof(int64_t);
+        }
+    }
+
+    return result;
+
+cleanup:
+    schema_destroy_fields(field_count, result);
+    return NULL;
+}
+
+void schema_destroy_fields(const LVCount32_t field_count, LVMetaField* fields) {
+    if (fields) {
+        for (int i = 0; i < field_count; ++i) {
+            LVMetaField* field = fields + i;
+            if (field->type == LV_META_STRING && field->value.str.string) {
+                free(field->value.str.string);
+            }
+        }
+        free(fields);
+    }
+}
