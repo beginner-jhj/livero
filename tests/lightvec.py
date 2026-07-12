@@ -101,6 +101,73 @@ class LightVec:
 
         return LVStatus(put_status)
 
+    def get(self, key: bytes):
+        self.__check_db_init()
+
+        get_result_out_ptr = ffi.new("LVGetResult**")
+        get_status = lib.lv_get(self.db, key, len(key), get_result_out_ptr)
+
+        if get_status == lib.LV_ERR_NOT_FOUND: return None
+        self.__check_status_is_ok("lv_get", get_status)
+
+        result = get_result_out_ptr[0]
+
+        node_seq = result.node_seq
+        vector_id = result.vector_id
+
+        if result.value_len > 0:
+            value = ffi.buffer(result.value, result.value_len)[:]
+        else:
+            value = b""
+        value_len = result.value_len
+
+        vector = None
+        if vector_id != LV_NO_VECTOR_ID and result.vector != ffi.NULL:
+            if self.__vector_type == LVVectorType.LV_VEC_FLOAT32:
+                vec_ptr = ffi.cast("float*", result.vector)
+            else:
+                vec_ptr = ffi.cast("int8_t*", result.vector)
+
+            vector = [vec_ptr[i] for i in range(self.__vector_dim)]
+
+        fields: list[LVMetaField] = []
+        for i in range(result.field_count):
+            c_field = result.fields[i]
+
+            if c_field.type == lib.LV_META_INT:
+                ftype = LVMetaType.LV_META_INT
+                fvalue = lv_meta_field_value(i64=c_field.value.i64)
+            elif c_field.type == lib.LV_META_FLOAT:
+                ftype = LVMetaType.LV_META_FLOAT
+                fvalue = lv_meta_field_value(f64=c_field.value.f64)
+            else:
+                ftype = LVMetaType.LV_META_STRING
+                s = ffi.string(
+                    c_field.value.str.string, c_field.value.str.len
+                ).decode("utf-8")
+                fvalue = lv_meta_field_value(str_string=s, str_len=c_field.value.str.len)
+
+            fields.append(
+                LVMetaField(
+                    name=ffi.string(c_field.name).decode("utf-8"),
+                    type=ftype,
+                    value=fvalue,
+                )
+            )
+        field_count = result.field_count
+
+        lib.lv_destroy_get_result(result)
+
+        return LVGetResult(
+            node_seq=node_seq,
+            value=value,
+            value_len=value_len,
+            vector_id=vector_id,
+            vector=vector,
+            field_count=field_count,
+            fields=fields,
+        )
+
     def update_value(self, key: bytes, value: bytes):
         self.__check_db_init()
 
@@ -298,11 +365,7 @@ class MetaFieldManager:
         if value is not None and (not isinstance(value, str)):
             raise ValueError("The type of value is not STR")
 
-        _value = (
-            value
-            if value is not None
-            else f"string_value_{field_id}"
-        )
+        _value = value if value is not None else f"string_value_{field_id}"
         return LVMetaField(
             name=f"string_category_{field_id}",
             type=LVMetaType.LV_META_STRING,
@@ -369,9 +432,8 @@ class RecordManager:
         _record: Record = record if record is not None else self.create_record()
 
         return self.db.put(_record.key, _record.value, _record.vector, _record.fields)
-    
 
-    def update_value(self, key:bytes, value:bytes):
+    def update_value(self, key: bytes, value: bytes):
         self.__check_record_is_valid(key)
 
         self.records[key].value = value
@@ -383,25 +445,24 @@ class RecordManager:
         self.__check_record_is_valid(key)
         self.records[key].vector = vector
         return self.db.update_vector(key, vector)
-    
 
-    def update_field(self, key:bytes, fields:list[LVMetaField]):
+    def update_field(self, key: bytes, fields: list[LVMetaField]):
         self.__check_record_is_valid(key)
-        new_fields = {f.name:f for f in self.records[key].fields}
+        new_fields = {f.name: f for f in self.records[key].fields}
         for new_field in fields:
             new_fields[new_field.name] = new_field
         self.records[key].fields = list(new_fields.values())
         return self.db.update_field(key, fields)
-    
-    def delete(self, key:bytes):
+
+    def delete(self, key: bytes):
         self.__check_record_is_valid(key)
         self.records[key].tombstone = True
         return self.db.delete(key)
-    
-    def get_alive_record_keys(self):
-        return [v.key for k,v in self.records.items() if not v.tombstone]
 
-    def get_field_value(self, key:bytes, field_name:str):
+    def get_alive_record_keys(self):
+        return [v.key for k, v in self.records.items() if not v.tombstone]
+
+    def get_field_value(self, key: bytes, field_name: str):
         record = self.records[key]
         for f in record.fields:
             if f.name == field_name:
@@ -412,7 +473,7 @@ class RecordManager:
                 else:
                     return f.value.str_string
         return None
-    
-    def __check_record_is_valid(self, key:bytes):
+
+    def __check_record_is_valid(self, key: bytes):
         if not self.records.get(key, None):
-            raise RuntimeError("record is invalid")        
+            raise RuntimeError("record is invalid")

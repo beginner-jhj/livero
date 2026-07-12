@@ -109,6 +109,16 @@ class LVQueryResultSet:
     results:list[LVQueryResult]
 
 @dataclass
+class LVGetResult:
+    node_seq:int
+    value:bytes
+    value_len:int
+    vector_id:int
+    vector:list[float|int] | None
+    field_count:int
+    fields:list[LVMetaField] | None
+
+@dataclass
 class Record:
     tombstone:bool
     node_seq:int

@@ -71,87 +71,89 @@ def check_put_query(fm, db, rm, count: int, filter_field: str = "int_category_0"
 
 def check_update_value(db, rm, key: bytes, new_value: bytes = b"UPDATED_VALUE"):
     """
-    Update one record's value and verify the query returns the new value.
-    The record is located via a unique int field set on it beforehand.
+    Update one record's value and verify it via a direct key lookup (lv_get).
 
-    Precondition: `key` already exists and carries int_category_0 == <some int>.
-    We re-query by that field to isolate this record.
+    Using get instead of a marker-field query means we check exactly this key,
+    with no need to plant a unique int to isolate it. Cross-checked against rm's
+    tracked value.
     """
-    # Locate the record by its known int field value (unique per this helper's use).
-    marker = rm.get_field_value(key, "int_category_0")
-
     status = rm.update_value(key, new_value)
     assert status == LVStatus.LV_OK, f"update_value failed with {status}"
 
-    qrset = db.query(f"int_category_0 == {marker}", None, _none_option())
-    hit = [qr for qr in qrset.results if qr.key == key]
-    assert len(hit) == 1, f"expected exactly one record for key {key!r}, got {len(hit)}"
-    assert hit[0].value == rm.records[key].value, (
-        f"value not updated: got {hit[0].value!r}, "
-        f"expected {rm.records[key].value!r}"
+    got = db.get(key)
+    assert got is not None, f"get({key!r}) returned None after update_value"
+    assert got.value == rm.records[key].value, (
+        f"value not updated: got {got.value!r}, expected {rm.records[key].value!r}"
     )
 
 
 def check_update_vector(db, rm, key: bytes, new_vector: list):
     """
-    Update one record's vector, then query WITH that vector (top_k on) and verify
-    the record comes back as a near-perfect match (score ~1) while its value is
-    preserved.
-
-    Precondition: `key` exists, has a vector, and carries int_category_0.
+    Update one record's vector, then verify via lv_get that the stored vector
+    matches the new one (element-wise, within float32 slack) AND the value is
+    preserved. Direct key lookup — no marker/query needed.
     """
-    marker = rm.get_field_value(key, "int_category_0")
     preserved_value = rm.records[key].value  # value must survive a vector update
 
     status = rm.update_vector(key, new_vector)
     assert status == LVStatus.LV_OK, f"update_vector failed with {status}"
 
-    qrset = db.query(f"int_category_0 == {marker}", new_vector, _none_option(top_k=10))
-    hit = [qr for qr in qrset.results if qr.key == key]
-    assert len(hit) == 1, f"expected exactly one record for key {key!r}, got {len(hit)}"
-    # Same vector as stored -> distance ~0 -> L2 score ~1 (float32 slack).
-    assert hit[0].vector_score > 0.99, (
-        f"vector not updated (score {hit[0].vector_score} too low for a self-match)"
+    got = db.get(key)
+    assert got is not None, f"get({key!r}) returned None after update_vector"
+    assert got.vector is not None, "record has no vector after update_vector"
+    # Element-wise compare (float32 rounding slack). get returns exactly dim
+    # elements (padding already stripped).
+    assert len(got.vector) == len(new_vector), (
+        f"vector dim mismatch: got {len(got.vector)}, expected {len(new_vector)}"
     )
-    assert hit[0].value == preserved_value, (
-        f"value clobbered by update_vector: got {hit[0].value!r}, "
-        f"expected {preserved_value!r}"
+    for i, (a, b) in enumerate(zip(got.vector, new_vector)):
+        assert abs(a - b) < 1e-5, (
+            f"vector[{i}] mismatch: got {a}, expected {b}"
+        )
+    assert got.value == preserved_value, (
+        f"value clobbered by update_vector: got {got.value!r}, expected {preserved_value!r}"
     )
 
 
 def check_update_field(db, rm, key: bytes, new_fields: list):
     """
-    Update a record's fields (modify existing + possibly add new), then verify:
-      - new field values match via filter,
-      - old field values no longer match,
-      - preserved value is intact.
-
-    `new_fields` is a list of LVMetaField built by the caller (so this helper
-    stays generic about which fields change).
+    Update a record's fields (modify existing + possibly add new), then verify
+    via lv_get that each updated field carries the new value AND the record's
+    value is preserved. Also cross-checks the old values no longer match via a
+    filter query (proves the change actually replaced them).
     """
-    preserved_value = rm.records[key].value
+    from lightvec_types import LVMetaType
 
-    # Build old/new filter clauses from the record's fields BEFORE updating.
+    preserved_value = rm.records[key].value
     old_clauses = _field_filter_clauses(rm, key, only_names={f.name for f in new_fields})
 
     status = rm.update_field(key, new_fields)
     assert status == LVStatus.LV_OK, f"update_field failed with {status}"
 
-    # New values must match now.
-    new_clauses = _field_filter_clauses(rm, key, only_names={f.name for f in new_fields})
-    new_query = " AND ".join(new_clauses)
-    qrset = db.query(new_query, None, _none_option())
-    hit = [qr for qr in qrset.results if qr.key == key]
-    assert len(hit) == 1, (
-        f"record not found by NEW field values: query={new_query!r}"
-    )
-    assert hit[0].value == preserved_value, (
-        f"value clobbered by update_field: got {hit[0].value!r}, "
-        f"expected {preserved_value!r}"
+    # Direct lookup: every updated field must read back with its new value.
+    got = db.get(key)
+    assert got is not None, f"get({key!r}) returned None after update_field"
+    got_by_name = {f.name: f for f in (got.fields or [])}
+    for nf in new_fields:
+        assert nf.name in got_by_name, f"field {nf.name!r} missing after update_field"
+        gf = got_by_name[nf.name]
+        if nf.type == LVMetaType.LV_META_INT:
+            assert gf.value.i64 == nf.value.i64, (
+                f"{nf.name}: got {gf.value.i64}, expected {nf.value.i64}"
+            )
+        elif nf.type == LVMetaType.LV_META_FLOAT:
+            assert abs(gf.value.f64 - nf.value.f64) < 1e-9, (
+                f"{nf.name}: got {gf.value.f64}, expected {nf.value.f64}"
+            )
+        else:
+            assert gf.value.str_string == nf.value.str_string, (
+                f"{nf.name}: got {gf.value.str_string!r}, expected {nf.value.str_string!r}"
+            )
+    assert got.value == preserved_value, (
+        f"value clobbered by update_field: got {got.value!r}, expected {preserved_value!r}"
     )
 
-    # Old values must NOT match anymore (only meaningful for modified fields that
-    # actually changed; new-added fields have no old clause).
+    # Old field values must no longer match (change really replaced them).
     if old_clauses:
         old_query = " AND ".join(old_clauses)
         qrset_old = db.query(old_query, None, _none_option())
@@ -163,18 +165,18 @@ def check_update_field(db, rm, key: bytes, new_fields: list):
 def check_delete(db, rm, key: bytes, filter_field: str = "int_category_0"):
     """
     Delete one record and verify:
+      - a direct get(key) now returns None (gone from the store),
       - it no longer appears in query results,
       - all other alive records still do (exact-set comparison).
-
-    Requires records to share a common filter value so a single query returns
-    the whole live set. Caller should have put records with the same
-    int_category_0 value (see check flow in the test).
     """
     # Capture the value we filter the whole set on (must be shared by all records).
     common = rm.get_field_value(key, filter_field)
 
     status = rm.delete(key)
     assert status == LVStatus.LV_OK, f"delete failed with {status}"
+
+    # Direct lookup should now miss.
+    assert db.get(key) is None, f"deleted key {key!r} still returned by get"
 
     qrset = db.query(f"{filter_field} == {common}", None, _none_option())
     actual = {qr.key for qr in qrset.results}

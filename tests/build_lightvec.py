@@ -150,6 +150,16 @@ ffibuilder.cdef("""
         LVSize32_t size;
         LVQueryResult* results;
     } LVQueryResultSet;
+                
+    typedef struct LVGetResult{
+    LVSeq64_t node_seq;
+    void* value;
+    LVValueLen32_t value_len;
+    LVVectorId64_t vector_id;
+    void* vector;
+    LVSize32_t field_count;
+    LVMetaField* fields;
+} LVGetResult;
 
     /* opaque handle: Python only ever holds a pointer to this */
     typedef struct LightVec LightVec;
@@ -167,6 +177,9 @@ ffibuilder.cdef("""
                     const void* value, LVValueLen32_t value_len,
                     const void* vector, LVCount32_t field_count,
                     const LVMetaField* fields);
+                
+    LVStatus lv_get(const LightVec* db, const void* key, const LVKeyLen32_t key_len, LVGetResult** output);
+    void lv_destroy_get_result(LVGetResult* result);
 
     LVStatus lv_update_value(LightVec* db, const void* key, LVKeyLen32_t key_len,
                              const void* value, LVValueLen32_t value_len);
@@ -198,16 +211,28 @@ ffibuilder.cdef("""
 # against the cdef above. `sources=` lists LightVec's .c files so they compile
 # directly into this module (the self-contained choice; no external .dylib).
 LV_SOURCES = [
-    os.path.join(SRC_DIR, name) for name in [
-        "arena.c", "crc.c", "wal.c", "schema.c", "storage.c", "vector.c",
-        "lightvec.c", "util.c", "helper.c", "node.c", "hash.c", "query.c", "sst.c",
+    os.path.join(SRC_DIR, name)
+    for name in [
+        "arena.c",
+        "crc.c",
+        "wal.c",
+        "schema.c",
+        "storage.c",
+        "vector.c",
+        "lightvec.c",
+        "util.c",
+        "helper.c",
+        "node.c",
+        "hash.c",
+        "query.c",
+        "sst.c",
     ]
 ]
 
 ffibuilder.set_source(
-    "_lightvec_cffi",              # generated module name
-    '#include "lightvec.h"',      # real C: preprocessor handles this
-    sources=LV_SOURCES,           # compile LightVec's sources into the module
+    "_lightvec_cffi",  # generated module name
+    '#include "lightvec.h"',  # real C: preprocessor handles this
+    sources=LV_SOURCES,  # compile LightVec's sources into the module
     include_dirs=[INCLUDE_DIR, SRC_DIR],  # so #include finds public + internal headers
     # No `libraries=`: we compile sources in rather than linking a shared lib.
     # NOTE: we intentionally do NOT pass -fsanitize=address here. The CMake Debug
