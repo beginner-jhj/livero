@@ -136,7 +136,6 @@ typedef struct LVQueryOption
 {
     uint32_t flags;
     LVSize32_t limit;
-    LVSize32_t top_k;
     struct
     {
         char by[LV_META_NAME_MAX];

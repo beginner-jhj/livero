@@ -892,18 +892,13 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
     }
 
     const int is_limit_on = option && (option->flags & LV_QOPT_LIMIT) && option->limit > 0;
-    const int is_top_k_on = option && option->top_k > 0;
     const int is_score_filter_on = option && query_vector && (option->flags & LV_QOPT_SCORE_FILTER);
     const int is_ordby_on = (option && (option->flags & LV_QOPT_ORDER_BY));
-    const int is_ordby_vec = is_ordby_on && query_vector && ((strncasecmp(option->order.by, "vector", strlen("vector")) == 0) || is_top_k_on);
-    const int needs_hnsw = is_score_filter_on || is_ordby_vec || is_top_k_on;
+    const int is_ordby_vec = is_ordby_on && query_vector && ((strncasecmp(option->order.by, "vector", strlen("vector")) == 0));
+    const int needs_hnsw = is_score_filter_on || is_ordby_vec;
 
     uint32_t ordby_field_mask = 0;
     LVOrdbyType ordbytype = LV_ORDBY_NONE;
-
-    if (is_top_k_on) {
-        ordbytype = LV_ORDBY_VEC;
-    }
 
     if (is_ordby_on) {
         // "vector" is a special order key (order by similarity score), NOT a schema
@@ -976,8 +971,8 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
     if (needs_hnsw) {
         const int is_f32 = db->schema->vector_type == LV_VEC_FLOAT32;
         LVSize32_t search_ef = HNSW_EF_DEFAULT + parser->complexity_score * 10;
-        if (option->top_k > 0) {
-            search_ef = option->top_k > search_ef ? option->top_k : search_ef;
+        if (is_limit_on ) {
+            search_ef = option->limit > search_ef ? option->limit : search_ef;
         }
 
         LVF32DistFn f32_dist_fn = NULL;
@@ -1024,20 +1019,12 @@ LVStatus lv_query(const LightVec* db, const char* query, const void* query_vecto
         lv_apply_score_filter_internal(merged_qvset, option->vector_score_filter.score, option->vector_score_filter.bound);
     }
 
-    if (is_ordby_on || is_top_k_on) {
-        lv_apply_ordby_internal(merged_qvset, ordbytype, is_top_k_on ? LV_ORDER_DESC : option->order.dir);
+    if (is_ordby_on) {
+        lv_apply_ordby_internal(merged_qvset, ordbytype, option->order.dir);
     }
 
-    if (is_limit_on || is_top_k_on) {
-        LVSize32_t limit = option->limit;
-        if (is_top_k_on && is_limit_on) {
-            limit = option->top_k < option->limit ? option->top_k : option->limit;
-        }
-        else if (!is_limit_on && is_top_k_on) {
-            limit = option->top_k;
-        }
-
-        lv_apply_limit_internal(merged_qvset, limit);
+    if (is_limit_on) {
+        lv_apply_limit_internal(merged_qvset, option->limit);
     }
 
     *outputs = lv_create_query_result_set_internal(merged_qvset);
