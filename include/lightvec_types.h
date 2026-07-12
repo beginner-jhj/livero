@@ -168,6 +168,16 @@ typedef struct LVQueryResultSet {
     LVQueryResult* results;
 } LVQueryResultSet;
 
+typedef struct LVGetResult{
+    LVSeq64_t node_seq;
+    void* value;
+    LVValueLen32_t value_len;
+    LVVectorId64_t vector_id;
+    void* vector;
+    LVSize32_t field_count;
+    LVMetaField* fields;
+} LVGetResult;
+
 typedef struct LightVec LightVec;
 
 #endif /* LIGHTVEC_TYPES_H */
