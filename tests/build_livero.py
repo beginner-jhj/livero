@@ -81,6 +81,7 @@ ffibuilder.cdef("""
     typedef int8_t   LVInt8_t;
     typedef uint8_t  LVLevel8_t;
     typedef uint32_t LVCount32_t;
+    typedef uint32_t LVFieldMask32_t; /* bitmask of schema fields */
     typedef uint64_t LVBigCount64_t;
     typedef uint64_t LVVectorId64_t;
     typedef uint32_t LVHash32_t;
@@ -192,7 +193,7 @@ ffibuilder.cdef("""
     LVStatus lv_delete(Livero* db, const void* key, LVKeyLen32_t key_len);
 
     LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
-                      const LVQueryOption* option, LVQueryResultSet** outputs);
+                      const LVQueryOption* option, LVQueryResultSet** output);
 
     LVStatus lv_close(Livero* db);
                 
