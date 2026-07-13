@@ -209,10 +209,10 @@ LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema
 
                 switch (ordbytype) {
                 case LV_ORDBY_FLOAT:
-                    ordbyvalue.f64 = node_get_f64_field(current_node, ordby_field_mask);
+                    ordbyvalue.f64 = node_get_double_field(current_node, ordby_field_mask);
                     break;
                 case LV_ORDBY_INT:
-                    ordbyvalue.i64 = node_get_i64_field(current_node, ordby_field_mask);
+                    ordbyvalue.i64 = node_get_int64_field(current_node, ordby_field_mask);
                     break;
                 case LV_ORDBY_VEC:
                     ordbyvalue.score = 0.0f;

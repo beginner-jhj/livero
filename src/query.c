@@ -325,14 +325,14 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
             const char* start = lexer.sql + start_index;
             if (is_float)
             {
-                if ((result = query_append_tokenviewer(parser, LV_TOKEN_FLOAT, start, size)) != LV_OK)
+                if ((result = query_append_token(parser, LV_TOKEN_FLOAT, start, size)) != LV_OK)
                 {
                     goto _return;
                 }
             }
             else
             {
-                if ((result = query_append_tokenviewer(parser, LV_TOKEN_INT, start, size)) != LV_OK)
+                if ((result = query_append_token(parser, LV_TOKEN_INT, start, size)) != LV_OK)
                 {
                     goto _return;
                 }
@@ -343,7 +343,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
             switch (lexer.current_char)
             {
             case '(':
-                if ((result = query_append_tokenviewer(parser, LV_TOKEN_LPAREN, lexer.sql + lexer.current_index, 1)) != LV_OK)
+                if ((result = query_append_token(parser, LV_TOKEN_LPAREN, lexer.sql + lexer.current_index, 1)) != LV_OK)
                 {
                     goto _return;
                 }
@@ -354,7 +354,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                 break;
 
             case ')':
-                if ((result = query_append_tokenviewer(parser, LV_TOKEN_RPAREN, lexer.sql + lexer.current_index, 1)) != LV_OK)
+                if ((result = query_append_token(parser, LV_TOKEN_RPAREN, lexer.sql + lexer.current_index, 1)) != LV_OK)
                 {
                     goto _return;
                 }
@@ -368,7 +368,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
             {
                 if (query_lexer_expect_next(&lexer, '='))
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_GTE, lexer.sql + lexer.current_index, 2)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_GTE, lexer.sql + lexer.current_index, 2)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -379,7 +379,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                 }
                 else
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_GT, lexer.sql + lexer.current_index, 1)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_GT, lexer.sql + lexer.current_index, 1)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -395,7 +395,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
             {
                 if (query_lexer_expect_next(&lexer, '='))
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_LTE, lexer.sql + lexer.current_index, 2)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_LTE, lexer.sql + lexer.current_index, 2)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -406,7 +406,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                 }
                 else
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_LT, lexer.sql + lexer.current_index, 1)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_LT, lexer.sql + lexer.current_index, 1)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -421,7 +421,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
             {
                 if (query_lexer_expect_next(&lexer, '='))
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_EQ, lexer.sql + lexer.current_index, 2)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_EQ, lexer.sql + lexer.current_index, 2)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -447,7 +447,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
             {
                 if (query_lexer_expect_next(&lexer, '='))
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_NEQ, lexer.sql + lexer.current_index, 2)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_NEQ, lexer.sql + lexer.current_index, 2)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -482,7 +482,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                     goto _return;
                 }
                 LVSize32_t size = lexer.current_index - start_index;
-                if ((result = query_append_tokenviewer(parser, LV_TOKEN_STR, lexer.sql + start_index, size)) != LV_OK)
+                if ((result = query_append_token(parser, LV_TOKEN_STR, lexer.sql + start_index, size)) != LV_OK)
                 {
                     goto _return;
                 }
@@ -500,7 +500,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                 LVSize32_t size = lexer.current_index - start_index;
                 if (size == 3 && strncasecmp(lexer.sql + start_index, "and", 3) == 0)
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_AND, lexer.sql + start_index, size)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_AND, lexer.sql + start_index, size)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -508,7 +508,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
 
                 else if (size == 2 && strncasecmp(lexer.sql + start_index, "or", 2) == 0)
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_OR, lexer.sql + start_index, size)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_OR, lexer.sql + start_index, size)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -516,7 +516,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
 
                 else
                 {
-                    if ((result = query_append_tokenviewer(parser, LV_TOKEN_IDENT, lexer.sql + start_index, size)) != LV_OK)
+                    if ((result = query_append_token(parser, LV_TOKEN_IDENT, lexer.sql + start_index, size)) != LV_OK)
                     {
                         goto _return;
                     }
@@ -531,7 +531,7 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
         goto _return;
     }
 
-    if ((result = query_append_tokenviewer(parser, LV_TOKEN_EOF, NULL, 0)) != LV_OK)
+    if ((result = query_append_token(parser, LV_TOKEN_EOF, NULL, 0)) != LV_OK)
     {
         goto _return;
     }
@@ -540,23 +540,23 @@ _return:
     return result;
 }
 
-LVStatus query_append_tokenviewer(LVSQLParser* parser, const LVQueryToken token, const char* start, const LVSize32_t size)
+LVStatus query_append_token(LVSQLParser* parser, const LVQueryToken token, const char* start, const LVSize32_t size)
 {
     if (parser->size >= parser->capacity)
     {
         LVSize32_t new_capacity = parser->capacity * 2;
-        LVSQLTokenViewer* tmp = realloc(parser->viewers, sizeof(LVSQLTokenViewer) * new_capacity);
+        LVSQLToken* tmp = realloc(parser->tokens, sizeof(LVSQLToken) * new_capacity);
         if (!tmp)
         {
             return LV_ERR_FULL;
         }
         parser->capacity = new_capacity;
-        parser->viewers = tmp;
+        parser->tokens = tmp;
     }
 
-    parser->viewers[parser->size].token = token;
-    parser->viewers[parser->size].start = start;
-    parser->viewers[parser->size].size = size;
+    parser->tokens[parser->size].token = token;
+    parser->tokens[parser->size].start = start;
+    parser->tokens[parser->size].size = size;
 
     parser->size += 1;
     return LV_OK;
@@ -612,9 +612,8 @@ int query_lexer_is_stop_char(char c)
 }
 
 LVSQLParser* query_create_parser() {
-    int flag = 0;
     LVSQLParser* parser = NULL;
-    LVSQLTokenViewer* viewers = NULL;
+    LVSQLToken* tokens = NULL;
     parser = malloc(sizeof(LVSQLParser));
     if (!parser) {
         goto cleanup;
@@ -622,12 +621,12 @@ LVSQLParser* query_create_parser() {
     parser->capacity = LV_DEFAULT_CAPACITY;
     parser->size = 0;
     parser->cursor = 0;
-    parser->current_viewer = NULL;
+    parser->current_token = NULL;
     parser->complexity_score = 0;
 
-    viewers = malloc(sizeof(LVSQLTokenViewer) * LV_DEFAULT_CAPACITY);
-    if (!viewers)  goto cleanup;
-    parser->viewers = viewers;
+    tokens = malloc(sizeof(LVSQLToken) * LV_DEFAULT_CAPACITY);
+    if (!tokens)  goto cleanup;
+    parser->tokens = tokens;
 
     return parser;
 cleanup:
@@ -637,7 +636,7 @@ cleanup:
 
 void query_destroy_parser(LVSQLParser* parser) {
     if (parser) {
-        free(parser->viewers);
+        free(parser->tokens);
         free(parser);
     }
 }
@@ -645,9 +644,9 @@ LVAstNode* query_parse(LVSQLParser* parser, const LVSchema* schema)
 {
     if (parser->size == 0)return NULL;
     parser->cursor = 0;
-    parser->current_viewer = &parser->viewers[0];
+    parser->current_token = &parser->tokens[0];
     LVAstNode* ast = query_parse_or(parser, schema);
-    if (ast && parser->current_viewer->token != LV_TOKEN_EOF) {
+    if (ast && parser->current_token->token != LV_TOKEN_EOF) {
         query_destroy_ast(ast);
         return NULL;
     }
@@ -695,12 +694,12 @@ LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema)
         return NULL;
     }
 
-    if (parser->current_viewer->token != LV_TOKEN_IDENT || !query_is_op_token(parser->viewers[parser->cursor + 1].token) || !query_is_value_token(parser->viewers[parser->cursor + 2].token))
+    if (parser->current_token->token != LV_TOKEN_IDENT || !query_is_op_token(parser->tokens[parser->cursor + 1].token) || !query_is_value_token(parser->tokens[parser->cursor + 2].token))
     {
         return NULL;
     }
 
-    LVMetaFieldHash* hash = schema_search_field_hash(schema->field_hashes, parser->current_viewer->start, parser->current_viewer->size);
+    LVMetaFieldHash* hash = schema_search_field_hash(schema->field_hashes, parser->current_token->start, parser->current_token->size);
     if (!hash)
     { // invalid ident, not found
         return NULL;
@@ -709,7 +708,7 @@ LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema)
     if (query_parser_consume(parser, LV_TOKEN_IDENT) != LV_OK) return NULL;
 
     LVQueryOp filter_op;
-    switch (parser->current_viewer->token)
+    switch (parser->current_token->token)
     {
     case LV_TOKEN_GT:
         filter_op = LV_QOP_GT;
@@ -738,7 +737,7 @@ LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema)
         return NULL;
     }
 
-    if (query_parser_consume(parser, parser->current_viewer->token) != LV_OK) return NULL;
+    if (query_parser_consume(parser, parser->current_token->token) != LV_OK) return NULL;
 
     LVFilterValue filter_value;
 
@@ -746,22 +745,22 @@ LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema)
     switch (filter_value.type)
     {
     case LV_META_FLOAT:
-        filter_value.value.f64 = query_strtod(parser->current_viewer->start, parser->current_viewer->size);
+        filter_value.value.f64 = query_strtod(parser->current_token->start, parser->current_token->size);
         break;
 
     case LV_META_INT:
-        filter_value.value.i64 = query_strtol(parser->current_viewer->start, parser->current_viewer->size);
+        filter_value.value.i64 = query_strtol(parser->current_token->start, parser->current_token->size);
         break;
 
     case LV_META_STRING:
-        filter_value.value.str.len = parser->current_viewer->size;
-        filter_value.value.str.string = parser->current_viewer->start;
+        filter_value.value.str.len = parser->current_token->size;
+        filter_value.value.str.string = parser->current_token->start;
         break;
     default:
         break;
     }
 
-    if (query_parser_consume(parser, parser->current_viewer->token) != LV_OK) return NULL;
+    if (query_parser_consume(parser, parser->current_token->token) != LV_OK) return NULL;
 
     return query_create_filter_node(hash->field_name, filter_op, &filter_value);
 }
@@ -819,16 +818,16 @@ double query_strtod(const char* ptr, const LVSize32_t size)
 
 void query_advance_parser(LVSQLParser* parser)
 {
-    if (parser->current_viewer->token != LV_TOKEN_EOF)
+    if (parser->current_token->token != LV_TOKEN_EOF)
     {
         parser->cursor += 1;
-        parser->current_viewer = &parser->viewers[parser->cursor];
+        parser->current_token = &parser->tokens[parser->cursor];
     }
 }
 
 LVStatus query_parser_consume(LVSQLParser* parser, const LVQueryToken token)
 {
-    if (parser->current_viewer->token == token)
+    if (parser->current_token->token == token)
     {
         query_advance_parser(parser);
         return LV_OK;
@@ -840,7 +839,7 @@ LVStatus query_parser_consume(LVSQLParser* parser, const LVQueryToken token)
 
 int query_parser_match(LVSQLParser* parser, const LVQueryToken expected)
 {
-    int match = parser->current_viewer->token == expected;
+    int match = parser->current_token->token == expected;
     if (match)
     {
         query_advance_parser(parser);

@@ -54,8 +54,8 @@ LVNode* node_create(LVArena* arena, const LVNodeType type, const LVSeq64_t seq, 
 
     //copy field
     if (node->field_count > 0) {
-        char* field_cpy_ptr = (char*)node + node_field_offset(node->level, node->key_len, node->value_len);
-        memcpy(field_cpy_ptr, field_buffer, field_size);
+        char* field_copy_ptr = (char*)node + node_field_offset(node->level, node->key_len, node->value_len);
+        memcpy(field_copy_ptr, field_buffer, field_size);
     }
 
 _return:
@@ -212,20 +212,20 @@ void* node_field_buffer_access(const void* field_buffer, const int field_number)
 }
 
 
-double node_get_f64_field(const LVNode* node, const LVSize32_t mask) {
+double node_get_double_field(const LVNode* node, const LVSize32_t mask) {
     int number = node_field_number_of_mask(node->field_mask, mask);
-    char* f64_field = (char*)node_access_field(node, number);
-    f64_field += sizeof(uint8_t);
+    char* double_field = (char*)node_access_field(node, number);
+    double_field += sizeof(uint8_t);
     double value = 0.0;
-    memcpy(&value, f64_field, sizeof(double));
+    memcpy(&value, double_field, sizeof(double));
     return value;
 }
-int64_t node_get_i64_field(const LVNode* node, const LVSize32_t mask) {
+int64_t node_get_int64_field(const LVNode* node, const LVSize32_t mask) {
     int number = node_field_number_of_mask(node->field_mask, mask);
-    char* i64_field = (char*)node_access_field(node, number);
-    i64_field += sizeof(uint8_t);
+    char* int64_field = (char*)node_access_field(node, number);
+    int64_field += sizeof(uint8_t);
     int64_t value = 0;
-    memcpy(&value, i64_field, sizeof(int64_t));
+    memcpy(&value, int64_field, sizeof(int64_t));
     return value;
 }
 

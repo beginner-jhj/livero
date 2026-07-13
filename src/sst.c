@@ -678,12 +678,12 @@ LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAst
                 switch (ordbytype)
                 {
                 case LV_ORDBY_FLOAT: {
-                    double value = node_get_f64_field(dummy_node, ordby_field_mask);
+                    double value = node_get_double_field(dummy_node, ordby_field_mask);
                     ordbyvalue.f64 = value;
                     break;
                 }
                 case LV_ORDBY_INT: {
-                    int64_t value = node_get_i64_field(dummy_node, ordby_field_mask);
+                    int64_t value = node_get_int64_field(dummy_node, ordby_field_mask);
                     ordbyvalue.i64 = value;
                     break;
                 }
@@ -858,12 +858,12 @@ LVStatus sst_query_with_hnsw(const int fd, const int vector_index_fd, const LVVe
             switch (query_ctx->ordbytype)
             {
             case LV_ORDBY_FLOAT: {
-                double value = node_get_f64_field(dummy_node, query_ctx->ordby_field_mask);
+                double value = node_get_double_field(dummy_node, query_ctx->ordby_field_mask);
                 ordbyvalue.f64 = value;
                 break;
             }
             case LV_ORDBY_INT: {
-                int64_t value = node_get_i64_field(dummy_node, query_ctx->ordby_field_mask);
+                int64_t value = node_get_int64_field(dummy_node, query_ctx->ordby_field_mask);
                 ordbyvalue.i64 = value;
                 break;
             }

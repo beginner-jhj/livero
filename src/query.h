@@ -86,20 +86,20 @@ typedef struct LVSQLLexer
     LVSize32_t lparen_count;
 } LVSQLLexer;
 
-typedef struct LVSQLTokenViewer
+typedef struct LVSQLToken
 {
     LVQueryToken token;
     char* start;
     LVSize32_t size;
 
-} LVSQLTokenViewer;
+} LVSQLToken;
 
 typedef struct LVSQLParser
 {
     LVSize32_t capacity;
     LVSize32_t size;
-    LVSQLTokenViewer* viewers;
-    LVSQLTokenViewer* current_viewer;
+    LVSQLToken* tokens;
+    LVSQLToken* current_token;
     LVSize32_t cursor;
     LVSize32_t complexity_score;
 } LVSQLParser;
@@ -135,7 +135,7 @@ LVAstNode* query_parse_and(LVSQLParser* parser, const LVSchema* schema);
 LVAstNode* query_parse_term(LVSQLParser* parser, const LVSchema* schema);
 LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema);
 
-LVStatus query_append_tokenviewer(LVSQLParser* parser, const LVQueryToken token, const char* start, const LVSize32_t size);
+LVStatus query_append_token(LVSQLParser* parser, const LVQueryToken token, const char* start, const LVSize32_t size);
 void query_advance_parser(LVSQLParser* parser);
 LVStatus query_parser_consume(LVSQLParser* parser, const LVQueryToken token);
 int query_parser_match(LVSQLParser* parser, const LVQueryToken expected);
