@@ -1,21 +1,21 @@
 """
-build_lightvec.py — builds the CFFI extension module that lets Python call
-LightVec's C functions.
+build_livero.py — builds the CFFI extension module that lets Python call
+Livero's C functions.
 
-Run ONCE before the Python tests:   python tests/build_lightvec.py
-It produces a compiled module named _lightvec_cffi that the tests import.
+Run ONCE before the Python tests:   python tests/build_livero.py
+It produces a compiled module named _livero_cffi that the tests import.
 
 We use CFFI's *API mode* (not ABI mode). The difference matters:
 
   - API mode compiles a small C "glue" layer with a REAL C compiler. That means
-    a REAL preprocessor runs over set_source() below, so #include "lightvec.h"
+    a REAL preprocessor runs over set_source() below, so #include "livero.h"
     actually works, struct padding is computed by the compiler (never guessed),
     and — crucially — our cdef() is CHECKED against the real header at compile
     time. If cdef and the header disagree, we get a COMPILE ERROR instead of a
     silent, hard-to-debug runtime crash.
 
-  - We compile LightVec's own .c sources straight INTO this extension module
-    (see `sources=` below) rather than linking a separate liblightvec.dylib.
+  - We compile Livero's own .c sources straight INTO this extension module
+    (see `sources=` below) rather than linking a separate liblivero.dylib.
     That makes the module self-contained: Python just imports it, with no
     external shared library to locate at runtime — so we never touch @rpath /
     DYLD_LIBRARY_PATH. (When we later add a Swift/iOS binding we'll build a real
@@ -28,7 +28,7 @@ from cffi import FFI
 ffibuilder = FFI()
 
 # Resolve paths relative to THIS file so the script runs from any working dir.
-# __file__ = <root>/tests/build_lightvec.py  ->  HERE = <root>/tests, ROOT = <root>
+# __file__ = <root>/tests/build_livero.py  ->  HERE = <root>/tests, ROOT = <root>
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 INCLUDE_DIR = os.path.join(ROOT, "include")
@@ -51,7 +51,7 @@ SRC_DIR = os.path.join(ROOT, "src")
 #     enumerators and the real integer values come from the header." So we don't
 #     have to copy LV_OK=2, LV_ERR_IO=-1, etc. by hand; CFFI reads them.
 #
-# We mirror lightvec_types.h closely so it's easy to keep in sync.
+# We mirror livero_types.h closely so it's easy to keep in sync.
 ffibuilder.cdef("""
     /* Array-size constants.
      *
@@ -66,7 +66,7 @@ ffibuilder.cdef("""
      * These mirror the header:
      *   LV_META_NAME_MAX   = 64
      *   LV_MAX_META_FIELDS = 32
-     * If they ever change in lightvec_types.h, update them here too. (They're
+     * If they ever change in livero_types.h, update them here too. (They're
      * on-disk format constants, so they rarely change.)
      */
 
@@ -161,44 +161,44 @@ ffibuilder.cdef("""
 } LVGetResult;
 
     /* opaque handle: Python only ever holds a pointer to this */
-    typedef struct LightVec LightVec;
+    typedef struct Livero Livero;
 
-    /* ── public functions (verbatim from lightvec.h, minus the `const`s that
+    /* ── public functions (verbatim from livero.h, minus the `const`s that
        CFFI ignores anyway — kept here for readability) ── */
-    LVStatus lv_create(LightVec** db, const char* path, LVSize32_t flush_threshold,
+    LVStatus lv_create(Livero** db, const char* path, LVSize32_t flush_threshold,
                        LVDim32_t vector_dim, LVVectorType vector_type,
                        LVVectorMetric vector_metric,
                        LVCount32_t field_count, const LVMetaFieldDef* field_defs);
 
-    LVStatus lv_open(LightVec** db, const char* path, LVSize32_t flush_threshold);
+    LVStatus lv_open(Livero** db, const char* path, LVSize32_t flush_threshold);
 
-    LVStatus lv_put(LightVec* db, const void* key, LVKeyLen32_t key_len,
+    LVStatus lv_put(Livero* db, const void* key, LVKeyLen32_t key_len,
                     const void* value, LVValueLen32_t value_len,
                     const void* vector, LVCount32_t field_count,
                     const LVMetaField* fields);
                 
-    LVStatus lv_get(const LightVec* db, const void* key, const LVKeyLen32_t key_len, LVGetResult** output);
+    LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, LVGetResult** output);
     void lv_destroy_get_result(LVGetResult* result);
 
-    LVStatus lv_update_value(LightVec* db, const void* key, LVKeyLen32_t key_len,
+    LVStatus lv_update_value(Livero* db, const void* key, LVKeyLen32_t key_len,
                              const void* value, LVValueLen32_t value_len);
 
-    LVStatus lv_update_vector(LightVec* db, const void* key, LVKeyLen32_t key_len,
+    LVStatus lv_update_vector(Livero* db, const void* key, LVKeyLen32_t key_len,
                               const void* vector);
 
-    LVStatus lv_update_field(LightVec* db, const void* key, LVKeyLen32_t key_len,
+    LVStatus lv_update_field(Livero* db, const void* key, LVKeyLen32_t key_len,
                              LVSize32_t field_count, const LVMetaField* fields);
 
-    LVStatus lv_delete(LightVec* db, const void* key, LVKeyLen32_t key_len);
+    LVStatus lv_delete(Livero* db, const void* key, LVKeyLen32_t key_len);
 
-    LVStatus lv_query(const LightVec* db, const char* query, const void* query_vector,
+    LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
                       const LVQueryOption* option, LVQueryResultSet** outputs);
 
-    LVStatus lv_close(LightVec* db);
+    LVStatus lv_close(Livero* db);
                 
-    LVDim32_t lv_get_vector_dim(const LightVec* db);
+    LVDim32_t lv_get_vector_dim(const Livero* db);
     
-    LVVectorType lv_get_vector_type(const LightVec* db);
+    LVVectorType lv_get_vector_type(const Livero* db);
 
     void lv_destroy_query_result_set(LVQueryResultSet* qrset);
 """)
@@ -207,7 +207,7 @@ ffibuilder.cdef("""
 #
 # Here #include works for real (a genuine preprocessor runs). Including the
 # public header gives the compiler the true definitions, which CFFI cross-checks
-# against the cdef above. `sources=` lists LightVec's .c files so they compile
+# against the cdef above. `sources=` lists Livero's .c files so they compile
 # directly into this module (the self-contained choice; no external .dylib).
 LV_SOURCES = [
     os.path.join(SRC_DIR, name)
@@ -218,7 +218,7 @@ LV_SOURCES = [
         "schema.c",
         "storage.c",
         "vector.c",
-        "lightvec.c",
+        "livero.c",
         "util.c",
         "helper.c",
         "node.c",
@@ -229,9 +229,9 @@ LV_SOURCES = [
 ]
 
 ffibuilder.set_source(
-    "_lightvec_cffi",  # generated module name
-    '#include "lightvec.h"',  # real C: preprocessor handles this
-    sources=LV_SOURCES,  # compile LightVec's sources into the module
+    "_livero_cffi",  # generated module name
+    '#include "livero.h"',  # real C: preprocessor handles this
+    sources=LV_SOURCES,  # compile Livero's sources into the module
     include_dirs=[INCLUDE_DIR, SRC_DIR],  # so #include finds public + internal headers
     # No `libraries=`: we compile sources in rather than linking a shared lib.
     # NOTE: we intentionally do NOT pass -fsanitize=address here. The CMake Debug
@@ -241,7 +241,7 @@ ffibuilder.set_source(
 )
 
 if __name__ == "__main__":
-    # Generate the glue C, compile sources + glue, link into _lightvec_cffi.*.so.
+    # Generate the glue C, compile sources + glue, link into _livero_cffi.*.so.
     # verbose=True prints the compiler/linker commands — invaluable when an
     # include path or a symbol is wrong.
     build_dir = os.path.join(ROOT, "build", "cffi")

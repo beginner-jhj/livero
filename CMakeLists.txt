@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(lightvec C)
+project(livero C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -31,7 +31,7 @@ set(LV_SOURCES
     src/schema.c
     src/storage.c
     src/vector.c
-    src/lightvec.c
+    src/livero.c
     src/util.c
     src/helper.c
     src/node.c
@@ -40,9 +40,9 @@ set(LV_SOURCES
     src/sst.c
 )
 
-add_library(lightvec STATIC ${LV_SOURCES})
+add_library(livero STATIC ${LV_SOURCES})
 
-target_include_directories(lightvec
+target_include_directories(livero
     PUBLIC  include
     PRIVATE src
 )
@@ -53,7 +53,7 @@ enable_testing()
 # Helper to add a test executable
 function(lv_add_test name file)
     add_executable(${name} ${file})
-    target_link_libraries(${name} PRIVATE lightvec)
+    target_link_libraries(${name} PRIVATE livero)
     target_include_directories(${name} PRIVATE src include)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()

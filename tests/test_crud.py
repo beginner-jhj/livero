@@ -13,7 +13,7 @@ functions are thin drivers so the same CRUD logic runs under many conditions.
 
 import pytest
 
-from lightvec_types import LVQueryOptionFlag, LVQueryOption
+from livero_types import LVQueryOptionFlag, LVQueryOption
 from test_helper import *
 from crud_checks import (
     check_put_query,
@@ -115,7 +115,7 @@ def test_crud_reopen_cycle(make_db_with_path, dim, int_f, float_f, string_f):
     the same on-disk path to reopen, and we must repoint the RecordManager at the
     freshly opened db object.
     """
-    from lightvec import MetaFieldManager, RecordManager
+    from livero import MetaFieldManager, RecordManager
 
     fm = MetaFieldManager(int_f, float_f, string_f)
     db, path = make_db_with_path(field_defs=fm.total_field_defs, dim=dim)
@@ -134,8 +134,8 @@ def test_crud_reopen_cycle(make_db_with_path, dim, int_f, float_f, string_f):
     db.close()
 
     # Reopen the SAME path into a fresh object, and repoint rm at it.
-    from lightvec import LightVec
-    db2 = LightVec()
+    from livero import Livero
+    db2 = Livero()
     db2.open(path, 1024)
     rm.db = db2  # rebind: rm's ground truth (records) persists; only the db changes
 

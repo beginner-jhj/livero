@@ -19,7 +19,7 @@ import random
 
 import pytest
 
-from lightvec_types import LVMetaType, LVStatus, LV_NO_VECTOR_ID
+from livero_types import LVMetaType, LVStatus, LV_NO_VECTOR_ID
 from test_helper import *
 
 
@@ -94,7 +94,7 @@ def test_get_deleted_after_flush(make_db_with_path):
     Must return None — verifies the SST read path handles deletion. This is the
     case the user flagged as unverified for get.
     """
-    from lightvec import MetaFieldManager, RecordManager, LightVec
+    from livero import MetaFieldManager, RecordManager, Livero
 
     dim = 4
     fm = MetaFieldManager(1, 0, 0)
@@ -108,7 +108,7 @@ def test_get_deleted_after_flush(make_db_with_path):
     rm.delete(b"r2")
     db.close()
 
-    db2 = LightVec()
+    db2 = Livero()
     db2.open(path, 1024)
 
     assert db2.get(b"r2") is None, "deleted key resurfaced via get after flush/reopen"
@@ -119,7 +119,7 @@ def test_get_deleted_after_flush(make_db_with_path):
 
 def test_get_after_reopen(make_db_with_path):
     """Record survives close/reopen and reads back correctly via get (SST path)."""
-    from lightvec import MetaFieldManager, RecordManager, LightVec
+    from livero import MetaFieldManager, RecordManager, Livero
 
     dim = 8
     fm = MetaFieldManager(1, 1, 1)
@@ -136,7 +136,7 @@ def test_get_after_reopen(make_db_with_path):
     ))
     db.close()
 
-    db2 = LightVec()
+    db2 = Livero()
     db2.open(path, 1024)
     got = db2.get(b"persist")
     assert got is not None

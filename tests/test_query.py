@@ -15,7 +15,7 @@ import random
 
 import pytest
 
-from lightvec_types import (
+from livero_types import (
     LVQueryOption, LVQueryOptionFlag, LVMetaType, LVStatus, LVQueryOrderDir,
 )
 from query_checks import (
@@ -40,7 +40,7 @@ def _put_vectors(fm, db, rm, n, dim, marker=7, vector_type=None):
     (each is a self-match candidate). vector_type picks the element type
     (float32 -> floats, int8 -> ints); defaults to float32.
     """
-    from lightvec_types import LVVectorType
+    from livero_types import LVVectorType
     from query_checks import make_vector
     vtype = vector_type if vector_type is not None else LVVectorType.LV_VEC_FLOAT32
     stored = []
@@ -314,7 +314,7 @@ def test_order_by_and_limit(harness):
 # same determinism/ordering/recall/self-match logic applies to every combo.
 # ---------------------------------------------------------------------------
 
-from lightvec_types import LVVectorType, LVVectorMetric, LVQueryOrderDir
+from livero_types import LVVectorType, LVVectorMetric, LVQueryOrderDir
 from query_checks import (
     check_vector_determinism,
     check_vector_count,
@@ -398,7 +398,7 @@ def test_self_match_score_configs(harness, vtype, metric):
 @pytest.mark.skip(reason="dot normalization is a v1.1 item")
 def test_get_vector_roundtrip_configs(make_db_with_path, vtype, metric):
     """get returns the stored vector correctly for each element type (int8 too)."""
-    from lightvec import MetaFieldManager, RecordManager, LightVec
+    from livero import MetaFieldManager, RecordManager, Livero
     from query_checks import make_vector
     dim = 8
     fm = MetaFieldManager(1, 0, 0)

@@ -17,7 +17,7 @@ tracked "ground truth" (rm.records), so the checks stay independent of hard-code
 values and can be composed in any order / any data condition.
 """
 
-from lightvec_types import LVQueryOption, LVQueryOptionFlag, LVStatus
+from livero_types import LVQueryOption, LVQueryOptionFlag, LVStatus
 
 
 def _none_option() -> LVQueryOption:
@@ -120,7 +120,7 @@ def check_update_field(db, rm, key: bytes, new_fields: list):
     value is preserved. Also cross-checks the old values no longer match via a
     filter query (proves the change actually replaced them).
     """
-    from lightvec_types import LVMetaType
+    from livero_types import LVMetaType
 
     preserved_value = rm.records[key].value
     old_clauses = _field_filter_clauses(rm, key, only_names={f.name for f in new_fields})
@@ -195,7 +195,7 @@ def _field_filter_clauses(rm, key: bytes, only_names: set = None) -> list:
     is exactly representable enough to == compare; callers should use exact
     float32 values (e.g. 1.5, 2.25).
     """
-    from lightvec_types import LVMetaType
+    from livero_types import LVMetaType
 
     record = rm.records[key]
     clauses = []

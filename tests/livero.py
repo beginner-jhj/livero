@@ -5,15 +5,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "build", "cffi"))
 
-from _lightvec_cffi import lib, ffi  # type: ignore
+from _livero_cffi import lib, ffi  # type: ignore
 
-from lightvec_types import *
+from livero_types import *
 import test_helper as helper
 import random
 import datetime
 
 
-class LightVec:
+class Livero:
     def __init__(self):
         self.db = ffi.NULL
         self.field_defs: list[LVMetaFieldDef] | None = None
@@ -29,7 +29,7 @@ class LightVec:
         vector_metric: LVVectorMetric,
         field_defs: list[LVMetaFieldDef] | None = None,
     ):
-        db_ptr = ffi.new("LightVec**")
+        db_ptr = ffi.new("Livero**")
         c_path = path.encode("utf-8")
         c_vector_type = helper.p2c_vector_type(vector_type)
         c_vector_metric = helper.p2c_vector_metric(vector_metric)
@@ -57,7 +57,7 @@ class LightVec:
         return LVStatus(create_status)
 
     def open(self, path: str, flush_threshold: int):
-        db_ptr = ffi.new("LightVec**")
+        db_ptr = ffi.new("Livero**")
         c_path = path.encode("utf-8")
         open_status = lib.lv_open(db_ptr, c_path, flush_threshold)
 
@@ -389,7 +389,7 @@ class MetaFieldManager:
 
 
 class RecordManager:
-    def __init__(self, db: LightVec):
+    def __init__(self, db: Livero):
         self.db = db
         self.seq: int = 0
         self.vector_id: int = 0

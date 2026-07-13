@@ -16,7 +16,7 @@ Ground truth:
 
 import math
 
-from lightvec_types import LVQueryOption, LVQueryOptionFlag, LVVectorMetric, LVStatus
+from livero_types import LVQueryOption, LVQueryOptionFlag, LVVectorMetric, LVStatus
 
 
 def _vec_option(limit: int = 0) -> LVQueryOption:
@@ -26,7 +26,7 @@ def _vec_option(limit: int = 0) -> LVQueryOption:
     flags = LVQueryOptionFlag.LV_QOPT_ORDER_BY.value
     if limit > 0:
         flags |= LVQueryOptionFlag.LV_QOPT_LIMIT.value
-    from lightvec_types import LVQueryOrderDir
+    from livero_types import LVQueryOrderDir
     return LVQueryOption(
         flags=flags,
         limit=limit,
@@ -51,7 +51,7 @@ def make_vector(dim: int, vector_type) -> list:
     """Random vector of the right element type: float32 -> floats [-1,1],
     int8 -> ints [-127,127]. get_vector_type infers type from elements."""
     import random
-    from lightvec_types import LVVectorType
+    from livero_types import LVVectorType
     if vector_type == LVVectorType.LV_VEC_INT8:
         return [random.randint(-127, 127) for _ in range(dim)]
     return [random.uniform(-1, 1) for _ in range(dim)]
@@ -59,7 +59,7 @@ def make_vector(dim: int, vector_type) -> list:
 
 def reference_distance(metric):
     """Brute-force distance matching the DB metric; both 'smaller = nearer'."""
-    from lightvec_types import LVVectorMetric
+    from livero_types import LVVectorMetric
     return _neg_dot if metric == LVVectorMetric.LV_METRIC_DOT else _l2_sq
 
 
@@ -145,7 +145,7 @@ def check_recall(db, rm, query_vector, k: int, filter_str: str,
     distance follows the DB's metric (L2 or negated-dot), both ranking
     "smaller = nearer". HNSW is approximate, so recall >= min_recall.
     """
-    from lightvec_types import LVVectorMetric
+    from livero_types import LVVectorMetric
     dist = reference_distance(metric if metric is not None else LVVectorMetric.LV_METRIC_L2)
 
     scored = []
@@ -209,7 +209,7 @@ def check_limit(db, rm, filter_str: str, limit: int, total_matching: int):
     satisfying filter_str, a limit of L returns min(L, total_matching) rows, and
     every returned row still satisfies the filter.
     """
-    from lightvec_types import LVQueryOrderDir
+    from livero_types import LVQueryOrderDir
     option = LVQueryOption(flags=LVQueryOptionFlag.LV_QOPT_LIMIT.value, limit=limit)
     qrset = db.query(filter_str, None, option)
 
@@ -232,7 +232,7 @@ def check_order_by_field(db, rm, filter_str: str, field_name: str,
     ORDER_BY a metadata field. Returned rows must be sorted by that field's value
     (ascending unless desc). Cross-checked against rm's stored field values.
     """
-    from lightvec_types import LVQueryOrderDir
+    from livero_types import LVQueryOrderDir
     option = LVQueryOption(
         flags=LVQueryOptionFlag.LV_QOPT_ORDER_BY.value,
         order_by=field_name,
@@ -255,7 +255,7 @@ def check_score_filter(db, query_vector, filter_str: str,
     ABOVE -> score >= threshold; BELOW -> score <= threshold. (Vector required;
     SCORE_FILTER itself turns on the HNSW path.)
     """
-    from lightvec_types import LVScoreBound
+    from livero_types import LVScoreBound
     flags = LVQueryOptionFlag.LV_QOPT_SCORE_FILTER.value
     if limit > 0:
         flags |= LVQueryOptionFlag.LV_QOPT_LIMIT.value
@@ -283,7 +283,7 @@ def check_order_by_and_limit(db, rm, filter_str: str, field_name: str,
     Combined flags: ORDER_BY | LIMIT. Rows are sorted by the field AND capped to
     `limit`. Verifies the result is the top-`limit` slice of the sorted matches.
     """
-    from lightvec_types import LVQueryOrderDir
+    from livero_types import LVQueryOrderDir
     flags = LVQueryOptionFlag.LV_QOPT_ORDER_BY.value | LVQueryOptionFlag.LV_QOPT_LIMIT.value
     option = LVQueryOption(
         flags=flags,

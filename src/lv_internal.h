@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#include "lightvec_types.h"
+#include "livero_types.h"
 
 /* ── WAL operation ──────────────────────────────────────────────────────────*/
 typedef enum
@@ -34,7 +34,7 @@ typedef struct LVSchema LVSchema;
 
 typedef struct LVNode LVNode;
 typedef struct LVMemTable LVMemTable;
-typedef struct LightVec LightVec;
+typedef struct Livero Livero;
 
 typedef struct LVHnswNode LVHnswNode;
 typedef struct LVHnsw LVHnsw;

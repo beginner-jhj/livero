@@ -462,7 +462,7 @@ static void test_destroy(void)
 int main(void)
 {
     printf("========================================\n");
-    printf("  LightVec — LVArena Allocator Unit Tests \n");
+    printf("  Livero — LVArena Allocator Unit Tests \n");
     printf("========================================\n");
 
     test_create_arena();

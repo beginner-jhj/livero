@@ -1,11 +1,11 @@
-#ifndef LIGHTVEC_TYPES_H
-#define LIGHTVEC_TYPES_H
+#ifndef LIVERO_TYPES_H
+#define LIVERO_TYPES_H
 
 #include <stdint.h>
 #include <stddef.h>
 
 /* ── Base types ─────────────────────────────────────────────────────────────
- * Explicit-width types used throughout LightVec.
+ * Explicit-width types used throughout Livero.
  * size_t and int are avoided in persistent structures and public interfaces.
  */
 typedef uint32_t LVSize32_t;     /* general in-memory sizes */
@@ -177,6 +177,6 @@ typedef struct LVGetResult{
     LVMetaField* fields;
 } LVGetResult;
 
-typedef struct LightVec LightVec;
+typedef struct Livero Livero;
 
-#endif /* LIGHTVEC_TYPES_H */
+#endif /* LIVERO_TYPES_H */

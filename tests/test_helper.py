@@ -5,10 +5,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "build", "cffi"))
 
-from _lightvec_cffi import lib, ffi  # type: ignore
-from lightvec_types import *
+from _livero_cffi import lib, ffi  # type: ignore
+from livero_types import *
 import pytest
-from lightvec import *
+from livero import *
 from collections.abc import Callable
 
 STATUS_STRING = {e.value: e.name for e in LVStatus}
@@ -167,7 +167,7 @@ def get_field_defs(
 
 @pytest.fixture
 def make_db(tmp_path):
-    created: list[LightVec] = []
+    created: list[Livero] = []
 
     def _make(
         flush_threshold: int = DEFAULT_FLUSH_THRESHOLD,
@@ -179,7 +179,7 @@ def make_db(tmp_path):
     ):
         _path = str(tmp_path / name)
 
-        db = LightVec()
+        db = Livero()
         db.create(_path, flush_threshold, dim, vector_type, vector_metric, field_defs)
         created.append(db)
         return db
@@ -191,10 +191,10 @@ def make_db(tmp_path):
 
 
 @pytest.fixture
-def harness(make_db) -> Callable[..., tuple[MetaFieldManager, LightVec, RecordManager]]:
+def harness(make_db) -> Callable[..., tuple[MetaFieldManager, Livero, RecordManager]]:
     def _make(
         int_fields=1, float_fields=1, string_fields=1, **db_kwargs
-    ) -> tuple[MetaFieldManager, LightVec, RecordManager]:
+    ) -> tuple[MetaFieldManager, Livero, RecordManager]:
         fm = MetaFieldManager(int_fields, float_fields, string_fields)
         db = make_db(field_defs=fm.total_field_defs, **db_kwargs)
         rm = RecordManager(db)
@@ -206,7 +206,7 @@ def harness(make_db) -> Callable[..., tuple[MetaFieldManager, LightVec, RecordMa
 @pytest.fixture
 def populated(
     harness,
-) -> Callable[..., tuple[MetaFieldManager, LightVec, RecordManager]]:
+) -> Callable[..., tuple[MetaFieldManager, Livero, RecordManager]]:
     def _populate(
         count: int = DEFAULT_N_RECORDS,
         with_vector: bool = False,
@@ -231,9 +231,9 @@ def populated(
 
 @pytest.fixture
 def make_db_with_path(tmp_path):
-    # Tracks every LightVec we hand out so we can best-effort close any that the
+    # Tracks every Livero we hand out so we can best-effort close any that the
     # test didn't close itself (e.g. if it failed mid-way). Closing an already
-    # closed db is a no-op because LightVec.close() guards on self.db == NULL.
+    # closed db is a no-op because Livero.close() guards on self.db == NULL.
     created: list = []
  
     def _make(
@@ -245,7 +245,7 @@ def make_db_with_path(tmp_path):
         name: str = "testdb",
     ):
         path = str(tmp_path / name)
-        db = LightVec()
+        db = Livero()
         db.create(path, flush_threshold, dim, vector_type, vector_metric, field_defs)
         created.append(db)
         return db, path

@@ -1,4 +1,4 @@
-#include "lightvec.h"
+#include "livero.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -14,7 +14,7 @@
 #include "node.h"
 #include "sst.h"
 
-struct LightVec
+struct Livero
 {
     char path[LV_PATH_MAX];
     LVSize32_t flush_threshold;
@@ -40,14 +40,14 @@ struct LightVec
 
 static LVStatus lv_mkdir_p_internal(const char* dir_path);
 static LVStatus lv_prepare_db_dir_internal(char* db_path_out, const char* path);
-static LVStatus lv_open_internal(LightVec** db, const char* db_path,
+static LVStatus lv_open_internal(Livero** db, const char* db_path,
     const LVSize32_t flush_threshold,
     LVSchema* schema, int schema_fd);
-static LVStatus lv_recover_internal(LightVec* db);
-static LVStatus lv_check_db_corruption_internal(const LightVec* db);
-static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer);
+static LVStatus lv_recover_internal(Livero* db);
+static LVStatus lv_check_db_corruption_internal(const Livero* db);
+static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer);
 static LVQVSet* lv_create_qvset_internal(void);
-static LVStatus lv_flush_internal(LightVec* db);
+static LVStatus lv_flush_internal(Livero* db);
 static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone);
 static LVStatus lv_qvset_light_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone);
 static void lv_destroy_qvset_internal(LVQVSet* qvset);
@@ -66,7 +66,7 @@ static LVQueryResultSet* lv_create_query_result_set_internal(const LVQVSet* resu
  * The schema is written to disk here and becomes authoritative; from this
  * point on nobody passes a schema in again.
  * ========================================================================== */
-LVStatus lv_create(LightVec** db, const char* path, const LVSize32_t flush_threshold,
+LVStatus lv_create(Livero** db, const char* path, const LVSize32_t flush_threshold,
     const LVDim32_t vector_dim, const LVVectorType vector_type,
     const LVVectorMetric vector_metric,
     const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
@@ -115,7 +115,7 @@ LVStatus lv_create(LightVec** db, const char* path, const LVSize32_t flush_thres
  *
  * Fails with LV_ERR_NOT_FOUND if schema.lv is missing (use lv_create instead).
  * ========================================================================== */
-LVStatus lv_open(LightVec** db, const char* path, const LVSize32_t flush_threshold)
+LVStatus lv_open(Livero** db, const char* path, const LVSize32_t flush_threshold)
 {
     LVStatus result = LV_OK;
     LVSchema* schema = NULL;
@@ -153,7 +153,7 @@ LVStatus lv_open(LightVec** db, const char* path, const LVSize32_t flush_thresho
     return lv_open_internal(db, db_path, flush_threshold, schema, schema_fd);
 }
 
-LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVCount32_t field_count, const LVMetaField* fields)
+LVStatus lv_put(Livero* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVCount32_t field_count, const LVMetaField* fields)
 {
     LVStatus result = LV_OK;
 
@@ -211,7 +211,7 @@ LVStatus lv_put(LightVec* db, const void* key, const LVKeyLen32_t key_len, const
     return result;
 }
 
-LVStatus lv_get(const LightVec* db, const void* key, const LVKeyLen32_t key_len, LVGetResult** output) {
+LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, LVGetResult** output) {
     LVStatus result = LV_OK;
 
     LVGetResult* output_result = malloc(sizeof(LVGetResult));
@@ -347,7 +347,7 @@ void lv_destroy_get_result(LVGetResult* result) {
     }
 }
 
-LVStatus lv_update_value(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len) {
+LVStatus lv_update_value(Livero* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len) {
     LVStatus result = LV_OK;
 
     if ((result = lv_check_db_corruption_internal(db)) != LV_OK) return result;
@@ -419,7 +419,7 @@ LVStatus lv_update_value(LightVec* db, const void* key, const LVKeyLen32_t key_l
     return LV_ERR_NOT_FOUND;
 }
 
-LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_len, const void* vector) {
+LVStatus lv_update_vector(Livero* db, const void* key, const LVKeyLen32_t key_len, const void* vector) {
     LVStatus result = LV_OK;
 
     if ((result = lv_check_db_corruption_internal(db)) != LV_OK) return result;
@@ -510,7 +510,7 @@ LVStatus lv_update_vector(LightVec* db, const void* key, const LVKeyLen32_t key_
     return result;
 }
 
-LVStatus lv_update_field(LightVec* db, const void* key, const LVKeyLen32_t key_len, const LVSize32_t field_count, const LVMetaField* fields) {
+LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len, const LVSize32_t field_count, const LVMetaField* fields) {
     LVStatus result = LV_OK;
 
     LVSize32_t field_count_to_add = 0;
@@ -828,7 +828,7 @@ _return:
     return result;
 }
 
-LVStatus lv_delete(LightVec* db, const void* key, const LVKeyLen32_t key_len) {
+LVStatus lv_delete(Livero* db, const void* key, const LVKeyLen32_t key_len) {
     LVStatus result = LV_OK;
 
     if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
@@ -871,7 +871,7 @@ _return:
 }
 
 
-LVStatus lv_query(const LightVec* db, const char* query, const void* query_vector, const LVQueryOption* option, LVQueryResultSet** outputs)
+LVStatus lv_query(const Livero* db, const char* query, const void* query_vector, const LVQueryOption* option, LVQueryResultSet** outputs)
 {
     LVStatus result = LV_OK;
 
@@ -1042,12 +1042,12 @@ _return:
     return result;
 }
 
-LVDim32_t lv_get_vector_dim(const LightVec* db)
+LVDim32_t lv_get_vector_dim(const Livero* db)
 {
     return db->schema->vector_dim;
 }
 
-LVVectorType lv_get_vector_type(const LightVec* db)
+LVVectorType lv_get_vector_type(const Livero* db)
 {
     return db->schema->vector_type;
 }
@@ -1065,7 +1065,7 @@ void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
     }
 }
 
-LVStatus lv_close(LightVec* db)
+LVStatus lv_close(Livero* db)
 {
     if (!db) return LV_OK;
 
@@ -1181,19 +1181,19 @@ static LVStatus lv_prepare_db_dir_internal(char* db_path_out, const char* path)
  * etc.), so ownership of schema/schema_fd transfers into LV_DB before any
  * fallible step that could trigger cleanup.
  * ========================================================================== */
-static LVStatus lv_open_internal(LightVec** db, const char* db_path,
+static LVStatus lv_open_internal(Livero** db, const char* db_path,
     const LVSize32_t flush_threshold,
     LVSchema* schema, int schema_fd)
 {
     LVStatus result = LV_OK;
 
-    LightVec* LV_DB = malloc(sizeof(LightVec));
+    Livero* LV_DB = malloc(sizeof(Livero));
     if (!LV_DB)
     {
         result = LV_ERR_OOM;
         goto cleanup;
     }
-    memset(LV_DB, 0, sizeof(LightVec));
+    memset(LV_DB, 0, sizeof(Livero));
 
     LV_DB->flush_threshold = flush_threshold > 0 ? flush_threshold : 1024;
     LV_DB->magic = LV_MAGIC;
@@ -1314,7 +1314,7 @@ cleanup:
 }
 
 //must be called after open wal, sst, vectors
-static LVStatus lv_recover_internal(LightVec* db) {
+static LVStatus lv_recover_internal(Livero* db) {
     LVStatus result = LV_OK;
 
     LVSeq64_t next_seq_from_wal = 0;
@@ -1445,11 +1445,11 @@ _return:
     return result;
 }
 
-static LVStatus lv_check_db_corruption_internal(const LightVec* db) {
+static LVStatus lv_check_db_corruption_internal(const Livero* db) {
     return db->magic == LV_MAGIC ? LV_OK : LV_ERR_CORRUPT;
 }
 
-static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer) {
+static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer) {
     LVStatus result = LV_OK;
 
     // append to vectors.lv and hnsw
@@ -1552,7 +1552,7 @@ static LVStatus lv_put_internal(LightVec* db, const LVNodeOp op, const LVSeq64_t
 
 
 
-static LVStatus lv_flush_internal(LightVec* db) {
+static LVStatus lv_flush_internal(Livero* db) {
     LVStatus result = LV_OK;
 
     char sst_path[LV_PATH_MAX];
