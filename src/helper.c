@@ -3,11 +3,11 @@
 #include <string.h>
 
 static char WRITE_BUFFER[WRITE_BUFFER_SIZE];
-static uint32_t write_helper_pos = 0;
-static uint64_t write_helper_current_offset = 0;
+static LVSize32_t write_helper_pos = 0;
+static LVOffset64_t write_helper_current_offset = 0;
 static int write_helper_last_fd = -1;
 
-LVStatus write_helper(const int fd, const void* buf, const uint32_t len)
+LVStatus write_helper(const int fd, const void* buf, const LVSize32_t len)
 {
     LVStatus result = LV_OK;
 
@@ -46,7 +46,7 @@ LVStatus write_helper(const int fd, const void* buf, const uint32_t len)
     return LV_OK;
 }
 
-uint64_t write_helper_get_offset(const int fd) {
+LVOffset64_t write_helper_get_offset(const int fd) {
     if (fd == write_helper_last_fd) {
         return write_helper_current_offset;
     }
@@ -95,7 +95,7 @@ void write_helper_reset(void)
 }
 
 
-LVStatus read_helper(const int fd, void* buf, const uint32_t len)
+LVStatus read_helper(const int fd, void* buf, const LVSize32_t len)
 {
     ssize_t _read = read(fd, buf, len);
     if (_read < 0)
@@ -114,7 +114,7 @@ LVStatus read_helper(const int fd, void* buf, const uint32_t len)
     return LV_OK;
 }
 
-LVStatus pread_helper(const int fd, void* buf, const uint32_t len, const uint64_t offset) {
+LVStatus pread_helper(const int fd, void* buf, const LVSize32_t len, const LVOffset64_t offset) {
     ssize_t _read = pread(fd, buf, len, offset);
     if (_read < 0) {
         return LV_ERR_IO;
@@ -131,7 +131,7 @@ LVStatus pread_helper(const int fd, void* buf, const uint32_t len, const uint64_
     return LV_OK;
 }
 
-LVStatus pwrite_helper(const int fd, const void* buf, const uint32_t len, const uint64_t offset) {
+LVStatus pwrite_helper(const int fd, const void* buf, const LVSize32_t len, const LVOffset64_t offset) {
     ssize_t _written = pwrite(fd, buf, len, offset);
     if (_written < 0) {
         return LV_ERR_IO;

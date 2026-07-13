@@ -27,7 +27,7 @@ static void create_crc_table(void)
     is_crc_table_initialized = 1;
 }
 
-uint32_t crc_calc(const void* data, const uint32_t size, const uint32_t seed){
+uint32_t crc_calc(const void* data, const LVSize32_t size, const uint32_t seed){
     create_crc_table();
     const uint8_t *p = (const uint8_t*)data;
     uint32_t crc = seed;

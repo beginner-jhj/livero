@@ -34,8 +34,8 @@ typedef struct LVHnswNode
 
 typedef struct LVHnswIDMap
 {
-    uint32_t capacity;
-    uint32_t size;
+    LVSize32_t capacity;
+    LVSize32_t size;
     void** map;
 } LVHnswIDMap;
 
@@ -109,14 +109,14 @@ typedef struct LVHnswQueryCtx {
     LVI8DistFn i8_dist_fn;
     LVVectorMetric vector_metric;
     LVOrdbyType ordbytype;
-    LVSize32_t ordby_field_mask;
+    LVFieldMask32_t ordby_field_mask;
     LVQVSet* memtable_qvset;
     LVQVSetAppendFn memtable_qvset_append_fn;
     LVQVSet* sst_qvset;
     LVQVSetAppendFn sst_qvset_append_fn;
     int sst_fd;
     int vector_index_fd;
-    LVSize32_t query_field_mask;
+    LVFieldMask32_t query_field_mask;
 } LVHnswQueryCtx;
 
 static int cmp_min_f32(const LVHnswEntry* a, const LVHnswEntry* b)

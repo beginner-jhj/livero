@@ -7,7 +7,7 @@
 #define LV_CRC32_SEED       0xFFFFFFFFu
 #define LV_CRC32_POLY       0xEDB88320u
 
-uint32_t crc_calc(const void* data, const uint32_t size, const uint32_t seed);
+uint32_t crc_calc(const void* data, const LVSize32_t size, const uint32_t seed);
 
 
 #endif

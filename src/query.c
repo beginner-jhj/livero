@@ -847,7 +847,7 @@ int query_parser_match(LVSQLParser* parser, const LVQueryToken expected)
     return match;
 }
 
-uint32_t query_get_field_mask(const LVAstNode* node, const LVSchema* schema)
+LVFieldMask32_t query_get_field_mask(const LVAstNode* node, const LVSchema* schema)
 {
     if (node->type == LV_AST_FILTER)
     {

@@ -8,7 +8,7 @@ typedef struct LVMetaFieldHash
     LVHash32_t hash;
     char field_name[LV_META_NAME_MAX];
     LVMetaType type;
-    uint32_t mask;
+    LVFieldMask32_t mask;
     struct LVMetaFieldHash* next;
 } LVMetaFieldHash;
 
@@ -30,7 +30,7 @@ LVStatus schema_write(const int fd, const LVSchema* schema);
 LVStatus schema_read(const int fd, LVSchema* schema);
 
 void schema_destroy_field_hashes(LVMetaFieldHash** hashes);
-LVStatus schema_insert_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVMetaType type, const uint32_t mask);
+LVStatus schema_insert_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVMetaType type, const LVFieldMask32_t mask);
 
 LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVSize32_t field_len);
 
@@ -41,7 +41,7 @@ void schema_serialize_field(const LVSchema* schema, void* buffer, const LVMetaFi
 void schema_field_memmory_to_disk(const void* src, const LVSize32_t field_size, void* dest);
 void schema_field_disk_to_memory(const void* src, const LVSize32_t field_size, void* dest);
 
-LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVCount32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk);
+LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk);
 
 void schema_destroy_fields(LVCount32_t field_count, LVMetaField* fields);
 #endif

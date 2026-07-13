@@ -50,7 +50,7 @@ void table_destroy(LVMemTable* table) {
     }
 }
 
-LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const uint64_t vector_id, const uint32_t field_mask, const uint32_t field_count, const LVSize32_t field_size, const void* field_buffer)
+LVNode* table_insert(LVMemTable* table, const LVNodeOp op, const LVSeq64_t seq, const LVLevel8_t level, const LVSize32_t key_len, const void* key, const LVSize32_t value_len, const void* value, const LVVectorId64_t vector_id, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const void* field_buffer)
 {
     LVNode* result = NULL;
     LVNode* update[LV_SKIPLIST_MAX_LEVEL];
@@ -177,8 +177,8 @@ LVNode* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_
 }
 
 LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema,
-    const LVAstNode* query, const LVSize32_t query_field_mask,
-    LVOrdbyType ordbytype, const LVSize32_t ordby_field_mask,
+    const LVAstNode* query, const LVFieldMask32_t query_field_mask,
+    LVOrdbyType ordbytype, const LVFieldMask32_t ordby_field_mask,
     const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set)
 {
     LVStatus result = LV_OK;
@@ -208,7 +208,7 @@ LVStatus table_query_filter_scan(const LVMemTable* table, const LVSchema* schema
 
                 switch (ordbytype) {
                 case LV_ORDBY_FLOAT:
-                    ordbyvalue.f64 = node_get_double_field(current_node, ordby_field_mask);
+                    ordbyvalue.f64 = node_get_f64_field(current_node, ordby_field_mask);
                     break;
                 case LV_ORDBY_INT:
                     ordbyvalue.i64 = node_get_int64_field(current_node, ordby_field_mask);

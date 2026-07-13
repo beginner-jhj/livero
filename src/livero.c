@@ -31,7 +31,7 @@ struct Livero
     // Vector
     int vectors_fd;                 // vectors.lv (O(1) access)
     int vector_index_fd; //vector_id to sst record offset
-    LVBigCount64_t next_vector_id;
+    LVVectorId64_t next_vector_id;
 
     LVHnsw* hnsw;
 
@@ -45,7 +45,7 @@ static LVStatus lv_open_internal(Livero** db, const char* db_path,
     LVSchema* schema, int schema_fd);
 static LVStatus lv_recover_internal(Livero* db);
 static LVStatus lv_check_db_corruption_internal(const Livero* db);
-static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer);
+static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer);
 static LVQVSet* lv_create_qvset_internal(void);
 static LVStatus lv_flush_internal(Livero* db);
 static LVStatus lv_qvset_append_internal(LVQVSet* qvset, const LVSeq64_t node_seq, const LVVectorId64_t vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const float vector_score, const LVOrdbyValue ordbyvalue, const int is_tombstone);
@@ -175,7 +175,7 @@ LVStatus lv_put(Livero* db, const void* key, const LVKeyLen32_t key_len, const v
         return result;
     }
 
-    uint32_t field_mask = 0;
+    LVFieldMask32_t field_mask = 0;
 
     for (int i = 0; i < field_count; ++i)
     {
@@ -282,7 +282,7 @@ LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, L
         LVValueLen32_t value_len;
         LVVectorId64_t vector_id;
         LVSize32_t field_size;
-        LVCount32_t field_mask;
+        LVFieldMask32_t field_mask;
         LVCount32_t field_count;
         uint64_t read_offset = 0;
         if ((result = sst_read_record_head(db->sst_fd, entry.offset, &seq, NULL, NULL, NULL, &value_len, &vector_id, &field_mask, &field_count, &field_size, &read_offset)) != LV_OK) goto cleanup;
@@ -358,7 +358,7 @@ LVStatus lv_update_value(Livero* db, const void* key, const LVKeyLen32_t key_len
     }
 
     LVVectorId64_t found_vector_id = LV_NO_VECTOR_ID;
-    LVCount32_t found_field_mask = 0;
+    LVFieldMask32_t found_field_mask = 0;
     LVCount32_t found_field_count = 0;
     LVSize32_t found_field_size = 0;
 
@@ -429,7 +429,7 @@ LVStatus lv_update_vector(Livero* db, const void* key, const LVKeyLen32_t key_le
     }
 
     LVVectorId64_t found_vector_id = LV_NO_VECTOR_ID;
-    LVCount32_t found_field_mask = 0;
+    LVFieldMask32_t found_field_mask = 0;
     LVCount32_t found_field_count = 0;
     LVSize32_t found_field_size = 0;
     LVValueLen32_t found_value_len = 0;
@@ -514,15 +514,15 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
 
     LVSize32_t field_count_to_add = 0;
     int new_fields_offsets[field_count];
-    uint32_t new_field_masks[field_count];
-    uint32_t field_mask_to_add = 0;
+    LVFieldMask32_t new_field_masks[field_count];
+    LVFieldMask32_t field_mask_to_add = 0;
 
     LVSize32_t field_count_to_update = 0;
     int update_fields_offsets[field_count];
-    uint32_t field_mask_to_update = 0;
+    LVFieldMask32_t field_mask_to_update = 0;
 
     LVValueLen32_t found_value_len = 0;
-    LVCount32_t found_field_mask = 0;
+    LVFieldMask32_t found_field_mask = 0;
     LVCount32_t found_field_count = 0;
     LVSize32_t found_field_size = 0;
     LVVectorId64_t found_vector_id = LV_NO_VECTOR_ID;
@@ -532,7 +532,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
     void* new_field = NULL;
     LVSize32_t* new_field_accrued_offsets = NULL;
     LVSize32_t new_field_size = 0;
-    LVCount32_t new_field_mask = 0;
+    LVFieldMask32_t new_field_mask = 0;
     LVCount32_t new_field_count = 0;
 
     if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
@@ -682,7 +682,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
     LVCount32_t new_cnt = 0;
     LVSize32_t acc_offset = 0;
     for (int new_field_number = 0; new_field_number < new_field_count; ++new_field_number) {
-        uint32_t current_field_mask = node_field_number_to_mask(new_field_mask, new_field_number); // field mask is always same.
+        LVFieldMask32_t current_field_mask = node_field_number_to_mask(new_field_mask, new_field_number); // field mask is always same.
         LVMetaType current_type = LV_META_FLOAT;
         uint32_t current_str_len = 0;
 
@@ -735,7 +735,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
 
     LVCount32_t update_done_count = 0;
     for (int i = 0; i < found_field_count; ++i) {
-        uint32_t current_field_mask = node_field_number_to_mask(new_field_mask, i);
+        LVFieldMask32_t current_field_mask = node_field_number_to_mask(new_field_mask, i);
         int prev_field_number = node_field_number_of_mask(found_field_mask, current_field_mask);
         char* prev_field_ptr = (char*)node_field_buffer_access(found_field, prev_field_number);
 
@@ -896,7 +896,7 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     const int is_ordby_vec = is_ordby_on && query_vector && ((strncasecmp(option->order.by, "vector", strlen("vector")) == 0));
     const int needs_hnsw = is_score_filter_on || is_ordby_vec;
 
-    uint32_t ordby_field_mask = 0;
+    LVFieldMask32_t ordby_field_mask = 0;
     LVOrdbyType ordbytype = LV_ORDBY_NONE;
 
     if (is_ordby_on) {
@@ -943,7 +943,7 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
         goto cleanup;
     }
 
-    const uint32_t query_field_mask = query_get_field_mask(query_tree, db->schema);
+    const LVFieldMask32_t query_field_mask = query_get_field_mask(query_tree, db->schema);
 
     //create qvsets
     memtable_qvset = lv_create_qvset_internal();
@@ -1450,7 +1450,7 @@ static LVStatus lv_check_db_corruption_internal(const Livero* db) {
     return db->magic == LV_MAGIC ? LV_OK : LV_ERR_CORRUPT;
 }
 
-static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVSize32_t field_mask, const LVSize32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer) {
+static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer) {
     LVStatus result = LV_OK;
 
     // append to vectors.lv and hnsw

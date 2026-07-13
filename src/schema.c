@@ -23,7 +23,7 @@ LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_ty
 
     schema->field_count = field_count;
 
-    uint32_t current_field_mask = 1;
+    LVFieldMask32_t current_field_mask = 1;
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
 
     static const char* LV_RESERVED_NAMES[] = {
@@ -315,7 +315,7 @@ LVStatus schema_read(const int fd, LVSchema* schema)
 
     int count = 0;
 
-    uint32_t current_field_mask = 1;
+    LVFieldMask32_t current_field_mask = 1;
 
     char saved_field_name[LV_META_NAME_MAX];
     memset(saved_field_name, 0, LV_META_NAME_MAX);
@@ -384,7 +384,7 @@ _return:
     return result;
 }
 
-LVStatus schema_insert_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVMetaType type, const uint32_t mask)
+LVStatus schema_insert_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVMetaType type, const LVFieldMask32_t mask)
 {
     LVStatus result = LV_OK;
     const LVHash32_t hash = fnv1a_hash(field_name, strlen(field_name));
@@ -686,7 +686,7 @@ void schema_field_disk_to_memory(const void* src, const LVSize32_t field_size, v
     }
 }
 
-LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVCount32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk) {
+LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk) {
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
     LVMetaField* result = calloc(field_count, sizeof(LVMetaField));

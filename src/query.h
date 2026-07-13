@@ -140,6 +140,6 @@ void query_advance_parser(LVSQLParser* parser);
 LVStatus query_parser_consume(LVSQLParser* parser, const LVQueryToken token);
 int query_parser_match(LVSQLParser* parser, const LVQueryToken expected);
 
-uint32_t query_get_field_mask(const LVAstNode* node, const LVSchema* schema);
+LVFieldMask32_t query_get_field_mask(const LVAstNode* node, const LVSchema* schema);
 
 #endif

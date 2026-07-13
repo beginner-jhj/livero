@@ -18,6 +18,7 @@ typedef float LVFloat32_t;       /* 32-bit float vector element */
 typedef int8_t LVInt8_t;         /* quantized int8 vector element */
 typedef uint8_t LVLevel8_t;      /* skiplist level */
 typedef uint32_t LVCount32_t;    /* general counts */
+typedef uint32_t LVFieldMask32_t; /* bitmask of schema fields */
 typedef uint64_t LVBigCount64_t; /* large counts (e.g. total record count) */
 typedef uint64_t LVVectorId64_t; /* internal vector identifier */
 typedef uint32_t LVHash32_t;     /* hash */

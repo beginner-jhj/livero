@@ -1131,7 +1131,7 @@ LVStatus vector_hnsw_eval_and_collect(
             ordbyvalue.i64 = 0;
             switch (query_ctx->ordbytype) {
             case LV_ORDBY_FLOAT:
-                ordbyvalue.f64 = node_get_double_field(memtable_node, query_ctx->ordby_field_mask);
+                ordbyvalue.f64 = node_get_f64_field(memtable_node, query_ctx->ordby_field_mask);
                 break;
             case LV_ORDBY_INT:
                 ordbyvalue.i64 = node_get_int64_field(memtable_node, query_ctx->ordby_field_mask);
