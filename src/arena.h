@@ -5,7 +5,6 @@
 
 typedef struct LVArenaBlock{
     void* buffer;
-    // LVSize32_t capacity;
     struct LVArenaBlock* prev;
 } LVArenaBlock;
 
