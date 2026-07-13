@@ -173,7 +173,6 @@ LVNode* table_search(const LVMemTable* table, const void* key, const LVKeyLen32_
         result = current_cmp_node;
     }
 
-_return:
     return result;
 }
 
