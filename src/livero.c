@@ -198,11 +198,11 @@ LVStatus lv_put(Livero* db, const void* key, const LVKeyLen32_t key_len, const v
 
     LVSize32_t field_size = schema_field_serialized_size(fields, field_count);
     if (field_size > 0) {
-        char memory_field_buffer[field_size];
+        char field_buffer[field_size];
 
-        schema_serialize_field(db->schema, memory_field_buffer, fields, field_count, 0);
+        schema_serialize_field(db->schema, field_buffer, fields, field_count, 0);
 
-        result = lv_put_internal(db, LV_PUT, current_seq, current_vector_id, key, key_len, value, value_len, vector, field_mask, field_count, field_size, memory_field_buffer);
+        result = lv_put_internal(db, LV_PUT, current_seq, current_vector_id, key, key_len, value, value_len, vector, field_mask, field_count, field_size, field_buffer);
     }
     else {
         result = lv_put_internal(db, LV_PUT, current_seq, current_vector_id, key, key_len, value, value_len, vector, 0, 0, 0, NULL);
@@ -227,27 +227,26 @@ LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, L
     output_result->field_count = 0;
     output_result->fields = NULL;
 
-    const LVNode* mtnode = table_search(db->memtable, key, key_len);
+    const LVNode* memtable_node = table_search(db->memtable, key, key_len);
 
-    if (mtnode) {
-        // printf("key:%s key_len:%d seq:%d op:%d level:%d \n", node_access_key(mtnode), mtnode->key_len,mtnode->seq,mtnode->op, mtnode->level);
-        if (mtnode->op == LV_DELETE) {
+    if (memtable_node) {
+        if (memtable_node->op == LV_DELETE) {
             result = LV_ERR_NOT_FOUND;
             return result;
         }
-        output_result->node_seq = mtnode->seq;
+        output_result->node_seq = memtable_node->seq;
 
-        output_result->value_len = mtnode->value_len;
+        output_result->value_len = memtable_node->value_len;
         if (output_result->value_len > 0) {
-            output_result->value = malloc(mtnode->value_len);
+            output_result->value = malloc(memtable_node->value_len);
             if (!output_result->value) {
                 result = LV_ERR_OOM;
                 goto cleanup;
             }
-            memcpy(output_result->value, node_access_value(mtnode), output_result->value_len);
+            memcpy(output_result->value, node_access_value(memtable_node), output_result->value_len);
         }
 
-        output_result->vector_id = mtnode->vector_id;
+        output_result->vector_id = memtable_node->vector_id;
         if (output_result->vector_id != LV_NO_VECTOR_ID) {
             LVVectorType type = lv_get_vector_type(db);
             LVSize32_t size = type == LV_VEC_FLOAT32 ? sizeof(float) * db->hnsw->aligned_dim : sizeof(int8_t) * db->hnsw->aligned_dim;
@@ -257,12 +256,12 @@ LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, L
                 result = LV_ERR_OOM;
                 goto cleanup;
             }
-            memcpy(output_result->vector, db->hnsw->id_vector_map->map[mtnode->hnsw_node->internal_id], size);
+            memcpy(output_result->vector, db->hnsw->id_vector_map->map[memtable_node->hnsw_node->internal_id], size);
         }
 
-        output_result->field_count = mtnode->field_count;
+        output_result->field_count = memtable_node->field_count;
         if (output_result->field_count > 0) {
-            if ((output_result->fields = schema_deserialize_field(db->schema->field_hashes, mtnode->field_mask, output_result->field_count, node_access_field(mtnode, 0), 0)) == NULL) {
+            if ((output_result->fields = schema_deserialize_field(db->schema->field_hashes, memtable_node->field_mask, output_result->field_count, node_access_field(memtable_node, 0), 0)) == NULL) {
                 result = LV_ERR_OOM;
                 goto cleanup;
             };
@@ -363,18 +362,18 @@ LVStatus lv_update_value(Livero* db, const void* key, const LVKeyLen32_t key_len
     LVCount32_t found_field_count = 0;
     LVSize32_t found_field_size = 0;
 
-    LVNode* mt_node = table_search(db->memtable, key, key_len);
+    LVNode* memtable_node = table_search(db->memtable, key, key_len);
 
-    if (mt_node) {
-        if (mt_node->op == LV_DELETE) {
+    if (memtable_node) {
+        if (memtable_node->op == LV_DELETE) {
             result = LV_ERR_NOT_FOUND;
             return result;
         }
-        found_vector_id = mt_node->vector_id;
-        found_field_mask = mt_node->field_mask;
-        found_field_count = mt_node->field_count;
-        found_field_size = node_field_size(mt_node);
-        result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, value, value_len, NULL, found_field_mask, found_field_count, found_field_size, node_access_field(mt_node, 0));
+        found_vector_id = memtable_node->vector_id;
+        found_field_mask = memtable_node->field_mask;
+        found_field_count = memtable_node->field_count;
+        found_field_size = node_field_size(memtable_node);
+        result = lv_put_internal(db, LV_UPDATE, db->next_seq, found_vector_id, key, key_len, value, value_len, NULL, found_field_mask, found_field_count, found_field_size, node_access_field(memtable_node, 0));
         return result;
     }
 
@@ -435,26 +434,26 @@ LVStatus lv_update_vector(Livero* db, const void* key, const LVKeyLen32_t key_le
     LVSize32_t found_field_size = 0;
     LVValueLen32_t found_value_len = 0;
 
-    LVNode* mt_node = table_search(db->memtable, key, key_len);
+    LVNode* memtable_node = table_search(db->memtable, key, key_len);
 
-    if (mt_node) {
-        if (mt_node->op == LV_DELETE) {
+    if (memtable_node) {
+        if (memtable_node->op == LV_DELETE) {
             result = LV_ERR_NOT_FOUND;
             return result;
         }
 
-        found_vector_id = mt_node->vector_id;
-        found_field_mask = mt_node->field_mask;
-        found_field_count = mt_node->field_count;
-        found_field_size = node_field_size(mt_node);
-        found_value_len = mt_node->value_len;
+        found_vector_id = memtable_node->vector_id;
+        found_field_mask = memtable_node->field_mask;
+        found_field_count = memtable_node->field_count;
+        found_field_size = node_field_size(memtable_node);
+        found_value_len = memtable_node->value_len;
 
         const LVSeq64_t current_seq = db->next_seq;
         const LVSeq64_t current_vector_id = db->next_vector_id;
 
         if ((result = lv_put_internal(db, LV_UPDATE, current_seq, current_vector_id, key, key_len,
-            node_access_value(mt_node), found_value_len, vector,
-            found_field_mask, found_field_count, found_field_size, node_access_field(mt_node, 0))) != LV_OK) return result;
+            node_access_value(memtable_node), found_value_len, vector,
+            found_field_mask, found_field_count, found_field_size, node_access_field(memtable_node, 0))) != LV_OK) return result;
     }
     else if (db->sst_fd < 0) {
         result = LV_ERR_NOT_FOUND;
@@ -503,8 +502,8 @@ LVStatus lv_update_vector(Livero* db, const void* key, const LVKeyLen32_t key_le
     }
 
     if (found_vector_id != LV_NO_VECTOR_ID) {
-        const LVVectorId64_t internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, found_vector_id);
-        vector_hnsw_mark_updated(db->hnsw, internal_id);
+        const LVVectorId64_t internal_vector_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, found_vector_id);
+        vector_hnsw_mark_updated(db->hnsw, internal_vector_id);
     }
 
     return result;
@@ -543,26 +542,26 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
         goto _return;
     }
 
-    LVNode* mt_node = table_search(db->memtable, key, key_len);
+    LVNode* memtable_node = table_search(db->memtable, key, key_len);
 
-    if (mt_node) {
-        if (mt_node->op == LV_DELETE) {
+    if (memtable_node) {
+        if (memtable_node->op == LV_DELETE) {
             result = LV_ERR_NOT_FOUND;
             goto _return;
         }
 
-        found_value_len = mt_node->value_len;
-        found_field_mask = mt_node->field_mask;
-        found_field_count = mt_node->field_count;
-        found_field_size = node_field_size(mt_node);
-        found_vector_id = mt_node->vector_id;
+        found_value_len = memtable_node->value_len;
+        found_field_mask = memtable_node->field_mask;
+        found_field_count = memtable_node->field_count;
+        found_field_size = node_field_size(memtable_node);
+        found_vector_id = memtable_node->vector_id;
 
         found_value = malloc(found_value_len);
         if (!found_value) {
             result = LV_ERR_OOM;
             goto _return;
         }
-        memcpy(found_value, node_access_value(mt_node), found_value_len);
+        memcpy(found_value, node_access_value(memtable_node), found_value_len);
 
         if (found_field_count > 0) {
             found_field = malloc(found_field_size);
@@ -570,7 +569,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
                 result = LV_ERR_OOM;
                 goto _return;
             }
-            memcpy(found_field, node_access_field(mt_node, 0), found_field_size);
+            memcpy(found_field, node_access_field(memtable_node, 0), found_field_size);
         }
     }
 
@@ -835,10 +834,10 @@ LVStatus lv_delete(Livero* db, const void* key, const LVKeyLen32_t key_len) {
 
     LVVectorId64_t found_vector_id = LV_NO_VECTOR_ID;
 
-    LVNode* mt_node = table_search(db->memtable, key, key_len);
+    LVNode* memtable_node = table_search(db->memtable, key, key_len);
 
-    if (mt_node) {
-        found_vector_id = mt_node->vector_id;
+    if (memtable_node) {
+        found_vector_id = memtable_node->vector_id;
     }
 
     else if (db->sst_fd < 0) {
@@ -846,7 +845,7 @@ LVStatus lv_delete(Livero* db, const void* key, const LVKeyLen32_t key_len) {
         goto _return;
     }
 
-    else if (db->sst_fd >= 0) {
+    else {
         LVSSTIndexBlockEntry entry;
         LVStatus sst_search_result = sst_search_index_block(db->sst_fd, &entry, key, key_len);
 
@@ -863,15 +862,15 @@ LVStatus lv_delete(Livero* db, const void* key, const LVKeyLen32_t key_len) {
     if ((result = lv_put_internal(db, LV_DELETE, db->next_seq, LV_NO_VECTOR_ID, key, key_len, NULL, 0, NULL, 0, 0, 0, NULL)) != LV_OK) goto _return;
 
     if (found_vector_id != LV_NO_VECTOR_ID) {
-        const LVVectorId64_t internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, found_vector_id);
-        vector_hnsw_mark_deleted(db->hnsw, internal_id);
+        const LVVectorId64_t internal_vector_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, found_vector_id);
+        vector_hnsw_mark_deleted(db->hnsw, internal_vector_id);
     }
 _return:
     return result;
 }
 
 
-LVStatus lv_query(const Livero* db, const char* query, const void* query_vector, const LVQueryOption* option, LVQueryResultSet** outputs)
+LVStatus lv_query(const Livero* db, const char* query, const void* query_vector, const LVQueryOption* option, LVQueryResultSet** output)
 {
     LVStatus result = LV_OK;
 
@@ -882,13 +881,13 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     LVQVSet* merged_qvset = NULL;
 
     // check db is properly initialized
-    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto cleanup;
 
     // check query
     if (query == NULL || strlen(query) <= 0)
     {
         result = LV_ERR_INVALID_QUERY;
-        goto _return;
+        goto cleanup;
     }
 
     const int is_limit_on = option && (option->flags & LV_QOPT_LIMIT) && option->limit > 0;
@@ -912,7 +911,7 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
                 db->schema->field_hashes, option->order.by, strlen(option->order.by));
             if (!hash) {
                 result = LV_ERR_INVALID_QUERY;
-                goto _return;
+                goto cleanup;
             }
             if (hash->type != LV_META_STRING) {
                 ordby_field_mask = hash->mask;
@@ -929,11 +928,11 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     parser = query_create_parser();
     if (!parser) {
         result = LV_ERR_OOM;
-        goto _return;
+        goto cleanup;
     }
     if ((result = query_tokenize(query, parser)) != LV_OK)
     {
-        goto _return;
+        goto cleanup;
     }
 
     query_tree = query_parse(parser, db->schema);
@@ -941,7 +940,7 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     if (!query_tree)
     {
         result = LV_ERR_INVALID_QUERY;
-        goto _return;
+        goto cleanup;
     }
 
     const uint32_t query_field_mask = query_get_field_mask(query_tree, db->schema);
@@ -950,21 +949,21 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     memtable_qvset = lv_create_qvset_internal();
     if (!memtable_qvset) {
         result = LV_ERR_OOM;
-        goto _return;
+        goto cleanup;
     }
 
 
     sst_qvset = lv_create_qvset_internal();
     if (!sst_qvset) {
         result = LV_ERR_OOM;
-        goto _return;
+        goto cleanup;
     }
 
 
     merged_qvset = lv_create_qvset_internal();
     if (!merged_qvset) {
         result = LV_ERR_OOM;
-        goto _return;
+        goto cleanup;
     }
 
 
@@ -1002,16 +1001,16 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
             .vector_index_fd = db->vector_index_fd,
         };
 
-        if ((result = vector_hnsw_query(db->hnsw, db->schema, query_tree, query_vector, &hnsw_qctx)) != LV_OK) goto _return;
-        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
+        if ((result = vector_hnsw_query(db->hnsw, db->schema, query_tree, query_vector, &hnsw_qctx)) != LV_OK) goto cleanup;
+        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto cleanup;
     }
     else {
-        if ((result = table_query_filter_scan(db->memtable, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_light_append_internal, memtable_qvset)) != LV_OK) goto _return;
+        if ((result = table_query_filter_scan(db->memtable, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_light_append_internal, memtable_qvset)) != LV_OK) goto cleanup;
         if (db->sst_fd >= 0) {
-            if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto _return;
+            if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto cleanup;
         }
 
-        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
+        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto cleanup;
     }
 
 
@@ -1027,13 +1026,15 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
         lv_apply_limit_internal(merged_qvset, option->limit);
     }
 
-    *outputs = lv_create_query_result_set_internal(merged_qvset);
+    *output = lv_create_query_result_set_internal(merged_qvset);
 
-    if (!*outputs) {
+    if (!*output) {
         result = LV_ERR_OOM;
     }
 
-_return:
+    return result;
+
+cleanup:
     lv_destroy_light_qvset_internal(memtable_qvset);
     lv_destroy_qvset_internal(sst_qvset);
     lv_destroy_light_qvset_internal(merged_qvset);
@@ -1368,9 +1369,9 @@ static LVStatus lv_recover_internal(Livero* db) {
                     if ((result = vector_read_i8_vector(db->vectors_fd, current_node->vector_id, db->schema->vector_dim, vector)) != LV_OK) goto _return;
                     if ((result = vector_hnsw_i8_insert(db->hnsw, current_node->vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK) goto _return;
                 }
-                const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, current_node->vector_id);
-                node_link_hnsw_node(current_node, db->hnsw->id_node_map->map[current_hnsw_internal_id]);
-                vector_hnsw_link_memtable_node(db->hnsw, current_hnsw_internal_id, current_node);
+                const LVVectorId64_t internal_vector_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, current_node->vector_id);
+                node_link_hnsw_node(current_node, db->hnsw->id_node_map->map[internal_vector_id]);
+                vector_hnsw_link_memtable_node(db->hnsw, internal_vector_id, current_node);
             }
 
 
@@ -1423,8 +1424,8 @@ static LVStatus lv_recover_internal(Livero* db) {
                         };
                     }
 
-                    const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, entry.vector_id);
-                    vector_hnsw_mark_flushed(db->hnsw, current_hnsw_internal_id);
+                    const LVVectorId64_t internal_vector_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, entry.vector_id);
+                    vector_hnsw_mark_flushed(db->hnsw, internal_vector_id);
                 }
             }
 
@@ -1535,9 +1536,9 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
     }
 
     if (vector) {
-        const LVVectorId64_t current_hnsw_internal_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, current_vector_id);
-        node_link_hnsw_node(inserted_memtable_node, db->hnsw->id_node_map->map[current_hnsw_internal_id]);
-        vector_hnsw_link_memtable_node(db->hnsw, current_hnsw_internal_id, inserted_memtable_node);
+        const LVVectorId64_t internal_vector_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, current_vector_id);
+        node_link_hnsw_node(inserted_memtable_node, db->hnsw->id_node_map->map[internal_vector_id]);
+        vector_hnsw_link_memtable_node(db->hnsw, internal_vector_id, inserted_memtable_node);
     }
 
     db->next_seq += 1;
