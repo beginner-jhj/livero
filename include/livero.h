@@ -25,7 +25,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
 
 LVStatus lv_delete(Livero* db, const void* key, const LVKeyLen32_t key_len);
 
-LVStatus lv_query(const Livero* db, const char* query, const void* query_vector, const LVQueryOption* option, LVQueryResultSet** outputs);
+LVStatus lv_query(const Livero* db, const char* query, const void* query_vector, const LVQueryOption* option, LVQueryResultSet** output);
 
 LVStatus lv_close(Livero* db);
 
