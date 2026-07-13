@@ -15,7 +15,7 @@ static void create_crc_table(void)
         {
             if (crc & 1)
             {
-                crc = (crc >> 1) ^ CRC32_POLY;
+                crc = (crc >> 1) ^ LV_CRC32_POLY;
             }
             else
             {

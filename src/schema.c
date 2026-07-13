@@ -119,7 +119,7 @@ LVStatus schema_write(const int fd, const LVSchema* schema)
         goto _return;
     }
 
-    uint32_t checksum = CRC32_SEED;
+    uint32_t checksum = LV_CRC32_SEED;
 
     // write magic
     if ((result = write_helper(fd, LV_MAGIC_SCHEMA, LV_MAGIC_SIZE)) != LV_OK)
@@ -127,7 +127,7 @@ LVStatus schema_write(const int fd, const LVSchema* schema)
         goto _return;
     }
 
-    checksum = crc_calc(LV_MAGIC_SCHEMA, LV_MAGIC_SIZE, CRC32_SEED);
+    checksum = crc_calc(LV_MAGIC_SCHEMA, LV_MAGIC_SIZE, LV_CRC32_SEED);
 
     // write version
     uint32_t version_to_save = (uint32_t)LV_FORMAT_VERSION;
@@ -229,7 +229,7 @@ LVStatus schema_read(const int fd, LVSchema* schema)
 
     memset(schema->field_hashes, 0, sizeof(schema->field_hashes));
 
-    uint32_t checksum = CRC32_SEED;
+    uint32_t checksum = LV_CRC32_SEED;
 
     char schema_magic[LV_MAGIC_SIZE];
 
@@ -238,7 +238,7 @@ LVStatus schema_read(const int fd, LVSchema* schema)
         goto _return;
     }
 
-    checksum = crc_calc(schema_magic, LV_MAGIC_SIZE, CRC32_SEED);
+    checksum = crc_calc(schema_magic, LV_MAGIC_SIZE, LV_CRC32_SEED);
 
     if (memcmp(schema_magic, LV_MAGIC_SCHEMA, LV_MAGIC_SIZE) != 0)
     {

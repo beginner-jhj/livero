@@ -13,7 +13,7 @@ LVStatus wal_append(const int fd, const LVNodeOp op, const LVSeq64_t seq, const 
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
 
-    uint32_t checksum = CRC32_SEED;
+    uint32_t checksum = LV_CRC32_SEED;
 
     // write op
     uint8_t op_to_save = (uint8_t)op;
@@ -184,7 +184,7 @@ LVStatus wal_recover(const int fd, LVMemTable* table, LVSeq64_t* next_seq_out, L
 
     while (current_offset < wal_size)
     {
-        uint32_t checksum = CRC32_SEED;
+        uint32_t checksum = LV_CRC32_SEED;
 
         if ((result = wal_read_head(fd, &checksum, &saved_op, &saved_seq, &saved_level, &saved_key_len, &saved_value_len, &saved_vector_id, &saved_field_mask, &saved_field_count, &saved_field_size)) != LV_OK)
         {
