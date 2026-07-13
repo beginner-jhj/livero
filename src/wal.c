@@ -374,7 +374,6 @@ LVStatus wal_read_tail(const int fd, uint32_t* checksum, void* node_tail_ptr, LV
     LVStatus result = LV_OK;
 
     uint8_t BUF_32[4];
-    uint8_t BUF_64[8];
 
     char field_disk_buffer[field_size];
 
