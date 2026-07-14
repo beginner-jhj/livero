@@ -154,7 +154,7 @@ LVStatus wal_append(const int fd, const LVNodeOp op, const LVSeq64_t seq, const 
         goto _return;
     }
 
-    result = write_helper_flush(fd, 1);
+    fsync(fd);
 
 _return:
     return result;

@@ -65,7 +65,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 continue;
             }
 
-            const uint64_t record_start_offset = write_helper_get_offset(new_fd);
+            const uint64_t record_start_offset = lseek(new_fd,0, SEEK_CUR);
             if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
             if ((result = sst_indexblockset_append(index_set, cur_key_len, cur_key,
                 current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
@@ -133,7 +133,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 if (node_cmp(LV_NODE_DATA, old_entry.key, old_entry.key_len, old_entry.seq,
                     LV_NODE_DATA, current_key, current_key_len, current_node->seq) < 0) {
 
-                    const uint64_t record_start_offset = write_helper_get_offset(new_fd);
+                    const uint64_t record_start_offset = lseek(new_fd, 0, SEEK_CUR);
                     if ((result = sst_write_record_with_old_sst(new_fd, old_fd, old_entry.offset)) != LV_OK) goto _return;
                     if ((result = sst_indexblockset_append(index_set, old_entry.key_len, old_entry.key,
                         old_entry.seq, old_entry.vector_id, record_start_offset)) != LV_OK) goto _return;
@@ -167,10 +167,10 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
 
             const int cmp_result = node_cmp(LV_NODE_DATA, old_entry.key, old_entry.key_len, old_entry.seq, LV_NODE_DATA, current_key, current_key_len, current_node->seq);
 
-            const uint64_t record_start_offset = write_helper_get_offset(new_fd);
+            const uint64_t record_start_offset = lseek(new_fd, 0, SEEK_CUR);
 
             if (node_key_equal(old_entry.key, old_entry.key_len, current_key, current_key_len)) {
-                const uint64_t record_start_offset = write_helper_get_offset(new_fd);
+                const uint64_t record_start_offset = lseek(new_fd,0, SEEK_CUR);
                 if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
                 if ((result = sst_indexblockset_append(index_set, current_key_len, current_key,
                     current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
@@ -251,7 +251,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 continue;
             }
 
-            const uint64_t record_start_offset = write_helper_get_offset(new_fd);
+            const uint64_t record_start_offset = lseek(new_fd, 0, SEEK_CUR);
 
             if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
             if ((result = sst_indexblockset_append(index_set, current_key_len, current_key, current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
@@ -270,7 +270,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
         }
 
         while (has_old_entry) {
-            const uint64_t record_start_offset = write_helper_get_offset(new_fd);
+            const uint64_t record_start_offset = lseek(new_fd, 0, SEEK_CUR);
 
             if ((result = sst_write_record_with_old_sst(new_fd, old_fd, old_entry.offset)) != LV_OK) goto _return;
             if ((result = sst_indexblockset_append(index_set, old_entry.key_len, old_entry.key, old_entry.seq, old_entry.vector_id, record_start_offset)) != LV_OK) goto _return;
@@ -301,7 +301,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     }
 
 
-    const uint64_t index_block_offset = write_helper_get_offset(new_fd);
+    const uint64_t index_block_offset = lseek(new_fd, 0, SEEK_CUR);
 
     //write index_block
     for (int i = 0; i < index_set->size; ++i) {

@@ -1078,8 +1078,7 @@ LVStatus lv_close(Livero* db)
         if (fs != LV_OK) result = fs;
     }
 
-    if (db->sst_fd >= 0) write_helper_flush(db->sst_fd, 1);
-    write_helper_reset();
+    if (db->sst_fd >= 0) fsync(db->sst_fd);
 
     if (db->schema_fd >= 0)       close(db->schema_fd);
     if (db->wal_fd >= 0)          close(db->wal_fd);
@@ -1572,7 +1571,7 @@ static LVStatus lv_flush_internal(Livero* db) {
 
     if ((result = sst_flush(new_fd, old_fd, db->vector_index_fd, db->memtable->head->levels[0])) != LV_OK) goto _return;
 
-    write_helper_flush(new_fd, 1);
+    fsync(new_fd);
     if (old_fd >= 0) close(old_fd);
     db->sst_fd = new_fd;
 

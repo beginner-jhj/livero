@@ -206,7 +206,7 @@ LVStatus schema_write(const int fd, const LVSchema* schema)
         goto _return;
     }
 
-    result = write_helper_flush(fd, 1);
+    fsync(fd);
 _return:
     return result;
 }
