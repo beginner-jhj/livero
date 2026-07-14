@@ -34,8 +34,10 @@ LVArena* arena_create(const LVSize32_t block_capacity)
     initial_block->prev = NULL;
     arena->current_block = initial_block;
 
-    block_buffer = malloc(block_capacity);
-    if (!block_buffer) goto cleanup;
+    if (posix_memalign(&block_buffer, LV_ARENA_BLOCK_ALIGN, block_capacity) != 0) {
+        block_buffer = NULL;
+        goto cleanup;
+    }
     initial_block->buffer = block_buffer;
 
     return arena;
@@ -84,48 +86,59 @@ void* arena_allocate(LVArena* arena, const LVSize32_t total, int32_t align)
     {
         align = alignof(max_align_t);
     }
+
+    // Round current_offset up to the next multiple of `align`.
+    // Works because align is always a power of two: (x + align-1) & ~(align-1)
+    // clears the low bits to round down, and the +align-1 turns it into round up.
     LVSize32_t aligned_offset = (arena->current_offset + align - 1) & ~(align - 1);
 
     LVArenaBlock* new_block = NULL;
     void* new_block_buffer = NULL;
     void* result = NULL;
 
+    // Oversize request: dedicated block sized to the request.
     if (total > arena->block_capacity)
     {
         new_block = malloc(sizeof(LVArenaBlock));
         if (!new_block) goto cleanup;
         new_block->buffer = NULL;
 
-        new_block_buffer = malloc(total);
-        if (!new_block_buffer) goto cleanup;
-        new_block->buffer = new_block_buffer;
-
+        // 64B-aligned block start -> the returned pointer meets any `align`
+        // up to 64 (HNSW vectors need 32).
+        if (posix_memalign(&new_block_buffer, LV_ARENA_BLOCK_ALIGN, total) != 0) {
+            new_block_buffer = NULL;  // posix_memalign leaves it untouched on fail
+            goto cleanup;
+        }
         new_block->buffer = new_block_buffer;
         new_block->prev = arena->current_block;
         arena->current_block = new_block;
         arena->current_offset = total;
 
-        result = new_block->buffer;
-        return result;
+        return new_block->buffer;  // block start is 64B-aligned, so aligned
     }
 
+    // Current block full: start a fresh block.
     if (aligned_offset + total > arena->block_capacity)
     {
         new_block = malloc(sizeof(LVArenaBlock));
         if (!new_block) goto cleanup;
         new_block->buffer = NULL;
 
-        new_block_buffer = malloc(arena->block_capacity);
-        if (!new_block_buffer) goto cleanup;
-
+        if (posix_memalign(&new_block_buffer, LV_ARENA_BLOCK_ALIGN, arena->block_capacity) != 0) {
+            new_block_buffer = NULL;
+            goto cleanup;
+        }
         new_block->buffer = new_block_buffer;
         new_block->prev = arena->current_block;
         arena->current_block = new_block;
         arena->current_offset = total;
 
-        return new_block->buffer;
+        return new_block->buffer;  // fresh block start is 64B-aligned
     }
 
+    // Fits in current block: bump the offset.
+    // Correct because the block itself started 64B-aligned, so
+    // buffer + aligned_offset honors `align` (<= 64).
     result = (char*)arena->current_block->buffer + aligned_offset;
     arena->current_offset = aligned_offset + total;
     return result;
