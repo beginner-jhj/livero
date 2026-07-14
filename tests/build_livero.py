@@ -77,8 +77,6 @@ ffibuilder.cdef("""
     typedef uint32_t LVKeyLen32_t;
     typedef uint32_t LVValueLen32_t;
     typedef uint32_t LVDim32_t;
-    typedef float    LVFloat32_t;
-    typedef int8_t   LVInt8_t;
     typedef uint8_t  LVLevel8_t;
     typedef uint32_t LVCount32_t;
     typedef uint32_t LVFieldMask32_t; /* bitmask of schema fields */

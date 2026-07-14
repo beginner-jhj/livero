@@ -14,8 +14,6 @@ typedef uint64_t LVSeq64_t;      /* monotonically increasing sequence number */
 typedef uint32_t LVKeyLen32_t;   /* key length in bytes */
 typedef uint32_t LVValueLen32_t; /* value length in bytes */
 typedef uint32_t LVDim32_t;      /* vector dimension */
-typedef float LVFloat32_t;       /* 32-bit float vector element */
-typedef int8_t LVInt8_t;         /* quantized int8 vector element */
 typedef uint8_t LVLevel8_t;      /* skiplist level */
 typedef uint32_t LVCount32_t;    /* general counts */
 typedef uint32_t LVFieldMask32_t; /* bitmask of schema fields */
