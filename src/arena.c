@@ -3,6 +3,12 @@
 #include <stdalign.h>
 #include "helper.h"
 
+/*
+ * Create an arena with one initial block of `block_capacity` bytes.
+ * Returns NULL on OOM or if block_capacity == 0. On any failure the partial
+ * arena is cleaned up before returning (arena_destroy tolerates NULLs).
+ */
+
 LVArena* arena_create(const LVSize32_t block_capacity)
 {
     LVArenaBlock* initial_block = NULL;
@@ -39,6 +45,10 @@ cleanup:
     return NULL;
 }
 
+/*
+ * Free every block in the chain (walking `prev`), then the arena itself.
+ * Safe to call on NULL and on a partially-constructed arena.
+ */
 void arena_destroy(LVArena* arena)
 {
     if (arena)
@@ -56,6 +66,17 @@ void arena_destroy(LVArena* arena)
         free(arena);
     }
 }
+
+/*
+ * Allocate `total` bytes aligned to `align`, bumping the current block's
+ * offset. Falls back to alignof(max_align_t) if align <= 0.
+ *
+ * Three cases:
+ *   1. total > block_capacity : allocate a dedicated oversize block.
+ *   2. doesn't fit in current block : start a fresh block.
+ *   3. fits : bump the offset in the current block.
+ * Returns NULL on OOM.
+ */
 
 void* arena_allocate(LVArena* arena, const LVSize32_t total, int32_t align)
 {
