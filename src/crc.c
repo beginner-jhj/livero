@@ -1,5 +1,16 @@
 #include "crc.h"
 
+
+/*
+ * Build the 256-entry lookup table on first use (lazy init).
+ * Each entry is the CRC of a single byte value, precomputed so crc_calc can
+ * process one byte per table lookup instead of 8 bit-shifts.
+ *
+ * NOTE: not thread-safe. The `is_crc_table_initialized` guard has a race if
+ * two threads first-call concurrently. Fine for livero's single-writer model;
+ * revisit if CRC is ever called from multiple threads before the table exists.
+ */
+
 static uint32_t CRC_TABLE[256];
 static int is_crc_table_initialized = 0;
 
@@ -27,6 +38,11 @@ static void create_crc_table(void)
     is_crc_table_initialized = 1;
 }
 
+
+/*
+ * Compute CRC32 over `size` bytes, starting from `seed`.
+ * Pass LV_CRC32_SEED for a fresh checksum, or a previous result to chain.
+ */
 uint32_t crc_calc(const void* data, const LVSize32_t size, const uint32_t seed){
     create_crc_table();
     const uint8_t *p = (const uint8_t*)data;
