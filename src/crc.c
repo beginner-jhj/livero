@@ -48,10 +48,10 @@ uint32_t crc_calc(const void* data, const LVSize32_t size, const uint32_t seed){
     const uint8_t *p = (const uint8_t*)data;
     uint32_t crc = seed;
 
-    for(int i=0; i<size; ++i){
+    for(LVSize32_t i=0; i<size; ++i){
         const uint8_t index = (crc ^ p[i])&(0xFF);
         crc = (crc>>8)^(CRC_TABLE[index]);
     }
 
-    return crc;
+    return crc ^ 0xFFFFFFFF;;
 }
