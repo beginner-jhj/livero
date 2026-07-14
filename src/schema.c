@@ -196,15 +196,6 @@ LVStatus schema_write(const int fd, const LVSchema* schema)
 
         checksum = crc_calc(&current_filed_type_to_save, 1, checksum);
 
-        const uint32_t hash = fnv1a_hash(current_field->name, strlen(current_field->name));
-        put_fixed_32(BUF_32, hash);
-        if ((result = write_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
-        {
-            goto _return;
-        }
-
-        checksum = crc_calc(BUF_32, sizeof(uint32_t), checksum);
-
         ++count;
     }
 
@@ -339,24 +330,6 @@ LVStatus schema_read(const int fd, LVSchema* schema)
         checksum = crc_calc(&saved_field_type, sizeof(uint8_t), checksum);
 
         schema->field_defs[count].type = (LVMetaType)saved_field_type;
-
-        // read field name hash
-
-        if ((result = read_helper(fd, BUF_32, sizeof(uint32_t))) != LV_OK)
-        {
-            goto _return;
-        }
-
-        const uint32_t saved_hash = get_fixed_32(BUF_32);
-        const uint32_t expected_hash = fnv1a_hash(saved_field_name, strlen(saved_field_name));
-
-        if (saved_hash != expected_hash)
-        {
-            result = LV_ERR_CORRUPT;
-            goto _return;
-        }
-
-        checksum = crc_calc(BUF_32, sizeof(uint32_t), checksum);
 
         if ((result = schema_insert_field_hash(schema->field_hashes, saved_field_name, saved_field_type, current_field_mask)) != LV_OK)
         {
