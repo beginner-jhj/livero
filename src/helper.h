@@ -8,9 +8,6 @@
 #define WRITE_BUFFER_SIZE 4096
 
 LVStatus write_helper(const int fd, const void* buf, const LVSize32_t len);
-LVStatus write_helper_flush(const int fd, const int sync);
-LVOffset64_t write_helper_get_offset(const int fd);
-void write_helper_reset(void);
 LVStatus read_helper(const int fd, void* buf, const LVSize32_t len);
 
 LVStatus pwrite_helper(const int fd, const void* buf, const LVSize32_t len, const LVOffset64_t offset);

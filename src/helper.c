@@ -2,96 +2,12 @@
 #include <stdint.h>
 #include <string.h>
 
-static char WRITE_BUFFER[WRITE_BUFFER_SIZE];
-static LVSize32_t write_helper_pos = 0;
-static LVOffset64_t write_helper_current_offset = 0;
-static int write_helper_last_fd = -1;
-
 LVStatus write_helper(const int fd, const void* buf, const LVSize32_t len)
 {
-    LVStatus result = LV_OK;
-
-    if (len > WRITE_BUFFER_SIZE)
-    {
-        if (write(fd, buf, len) < (ssize_t)len) return LV_ERR_IO;
-        write_helper_current_offset += len;
-        return LV_OK;
-    }
-
-    if ((write_helper_last_fd != -1 && write_helper_last_fd != fd) || (write_helper_pos + len > WRITE_BUFFER_SIZE))
-    {
-        if (write_helper_pos > 0)
-        {
-            ssize_t written = write(write_helper_last_fd, WRITE_BUFFER, write_helper_pos);
-            if (written < (ssize_t)write_helper_pos)
-            {
-                return LV_ERR_IO;
-            }
-            write_helper_pos = 0;
-        }
-    }
-
-    memcpy(WRITE_BUFFER + write_helper_pos, buf, len);
-    write_helper_pos += len;
-
-    if (write_helper_last_fd == fd || write_helper_last_fd == -1) {
-        write_helper_current_offset += len;
-    }
-    else {
-        write_helper_current_offset = len;
-    }
-
-    write_helper_last_fd = fd;
-
+    ssize_t written = write(fd, buf, len);
+    if (written < 0) return LV_ERR_IO;
+    if ((uint32_t)written < len) return LV_ERR_FULL;
     return LV_OK;
-}
-
-LVOffset64_t write_helper_get_offset(const int fd) {
-    if (fd == write_helper_last_fd) {
-        return write_helper_current_offset;
-    }
-    else {
-        return 0;
-    }
-}
-
-LVStatus write_helper_flush(const int fd, const int sync)
-{
-
-    if (write_helper_last_fd != fd)
-    {
-        return LV_ERR_INVALID;
-    }
-
-    if (write_helper_pos > 0 && write_helper_last_fd != -1)
-    {
-        ssize_t written = write(fd, WRITE_BUFFER, write_helper_pos);
-        if (written < 0)
-        {
-            return LV_ERR_IO;
-        }
-
-        else if (written < (ssize_t)write_helper_pos)
-        {
-            return LV_ERR_FULL;
-        }
-
-        if (sync == 1)
-        {
-            fsync(fd);
-        }
-
-        write_helper_pos = 0;
-    }
-
-    return LV_OK;
-}
-
-void write_helper_reset(void)
-{
-    write_helper_pos = 0;
-    write_helper_current_offset = 0;
-    write_helper_last_fd = -1;
 }
 
 
