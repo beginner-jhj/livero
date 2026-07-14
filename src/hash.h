@@ -3,7 +3,6 @@
 
 #include "lv_internal.h"
 
-//FNV1a: used for Bloom filter double hashing.
 #define LV_FNV_OFFSET_BASIS 0x811C9DC5u
 #define LV_FNV_PRIME        0x01000193u
 #define LV_FNV_SEED         0xDEADBEEFu
