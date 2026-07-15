@@ -9,6 +9,19 @@
 #include "sst.h"
 #include "hash.h"
 
+/*
+ * Create an empty HNSW index for a given vector type (f32 or int8) and
+ * dimension. Sets up: two arenas (graph nodes / vectors), the id maps, the two
+ * search heaps, and the external->internal id hash map. Distance-heap
+ * comparators are bound to the vector type here so the hot path never branches
+ * on type. Returns NULL on OOM (partial state is torn down via
+ * vector_hnsw_destroy, which tolerates NULLs).
+ *
+ * aligned_dim rounds dim up to a multiple of vector_align (32) so SIMD kernels
+ * can stride over padded vectors without reading past the buffer. m_l = 1/ln(M)
+ * is the level-generation constant (see vector_hnsw_layer).
+ */
+
 LVHnsw* vector_hnsw_create(const LVVectorType vector_type, const LVDim32_t dim)
 {
 
@@ -96,6 +109,15 @@ cleanup:
     vector_hnsw_destroy(hnsw);
     return NULL;
 }
+
+
+/*
+ * Free everything create allocated. Order doesn't matter (no cross-refs to
+ * dangle): heap entry buffers + heaps, each id map's backing array + the map,
+ * then both arenas (which free all graph nodes and vectors wholesale), then the
+ * struct. Safe on NULL and on a half-constructed index (every pointer was
+ * NULL-initialized up front, so these guards hold during cleanup-on-failure).
+ */
 
 void vector_hnsw_destroy(LVHnsw* hnsw) {
     if (hnsw) {
@@ -332,11 +354,49 @@ LVStatus vector_hnsw_i8_insert(LVHnsw* hnsw, const LVVectorId64_t external_vecto
     return vector_hnsw_insert(hnsw, external_vector_id, vector, 0, NULL, dist_fn);
 }
 
+
+/*
+ * Insert one vector into the HNSW graph. This is the orchestrator: it runs the
+ * full HNSW insertion algorithm and then commits the built node + vector into
+ * the id maps.
+ *
+ * Algorithm (standard HNSW insert):
+ *   1. Roll a random top layer for the new node (vector_hnsw_layer).
+ *   2. Pad+copy the query vector to aligned_dim so SIMD kernels stay in-bounds.
+ *   3. From the current entry point, greedily descend the layers ABOVE the new
+ *      node's top layer to find a good entry point (search_ep, long hops).
+ *   4. From that entry point, for each layer from min_layer down to 0:
+ *        - beam-search the layer (search_layer, width EF_CONSTRUCTION) to gather
+ *          candidate neighbors into result_heap,
+ *        - pick the M best (select_neighbors),
+ *        - link them bidirectionally to the new node,
+ *        - carry this layer's results down as the next layer's entry points.
+ *   5. Commit: append the node, register external->internal id, and promote the
+ *      new node to entry point if it reached a higher layer than any before.
+ *
+ * WHY append the vector BEFORE building the graph (step between 2 and 3):
+ *   Graph construction computes distances against the new vector, and those
+ *   reads go through the vector map. So the vector must be registered first,
+ *   even though the node isn't appended until the end. (See the append_vector
+ *   call up top vs append_node at the bottom.)
+ *
+ * WHY neighbor bookkeeping uses update_start offsets:
+ *   `neighbors` is one flat array holding every layer's neighbor slots. Layer 0
+ *   gets M0 slots; each higher layer gets M. update_start indexes into that
+ *   flat array per layer (0 for layer 0, then M0 + (layer-1)*M). Keeping them
+ *   contiguous avoids a pointer-chase per layer.
+ *
+ * Entry point / first insert: when node_count == 0 this is the very first node;
+ * we skip the search entirely and just commit it as the entry point.
+ */
+
 LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, const void* vector, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
     LVStatus result = LV_OK;
-    const LVLevel8_t new_layer = vector_hnsw_layer(hnsw->m_l);
 
+    // Random top layer for this node. Higher layers are exponentially rarer
+    // (governed by m_l); most nodes only reach layer 0. See vector_hnsw_layer.
+    const LVLevel8_t new_layer = vector_hnsw_layer(hnsw->m_l);
     LVSize32_t neighbor_counts[new_layer + 1];
     memset(neighbor_counts, 0, sizeof(neighbor_counts));
 
@@ -344,6 +404,10 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, 
     memset(ep_list, 0, sizeof(ep_list));
 
     const LVSize32_t vector_size = hnsw->vector_type == LV_VEC_FLOAT32 ? sizeof(float) : sizeof(int8_t);
+
+    // Pad to aligned_dim and zero the tail, so SIMD distance kernels can stride
+    // over full-width blocks without reading past the real dim. (The zero pad
+    // contributes 0 to L2/dot, so it doesn't change distances.)
     uint8_t padded_vector[hnsw->aligned_dim * vector_size];
     memset(padded_vector, 0, sizeof(padded_vector));
     memcpy(padded_vector, vector, hnsw->dim * vector_size);
@@ -358,13 +422,17 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, 
 
     const LVVectorId64_t new_internal_id = hnsw->node_count;
 
-    //append vector to id_vector_map first here
+    //append vector to id_vector_map first here because hnsw contruction needs vector reference.
     if ((result = vector_hnsw_append_vector(hnsw, new_internal_id, vector)) != LV_OK) goto _return;
 
 
     if (hnsw->node_count > 0) {
         // get ep
         LVVectorId64_t ep_internal_id = hnsw->entry_node->internal_id;
+
+        // Descend the layers ABOVE the new node's top layer first: pure greedy
+        // single-entry hops to relocate the entry point closer to the query before
+        // the real (beam-width) search begins at min_layer.
         if (new_layer <= hnsw->current_max_layer)
         {
             ep_internal_id = vector_hnsw_search_ep(hnsw, hnsw->entry_node, padded_vector, hnsw->current_max_layer, new_layer, is_f32, f32_dist_fn, i8_dist_fn);
@@ -399,7 +467,11 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, 
                 vector_update_node_neighbor(hnsw, neighbor_node, layer, new_internal_id, vector);
             }
 
-            // update next ep_list
+            // Carry this layer's results down as next layer's entry points.
+            // Safe to fill ep_list (sized EF_CONSTRUCTION) directly: search_layer caps
+            // result_heap at EF (== EF_CONSTRUCTION here) by popping the worst entry
+            // whenever size exceeds EF, so result_heap->size never exceeds ep_list's
+            // capacity.
             for (int i = 0; i < hnsw->result_heap->size; ++i)
             {
                 ep_list[i] = (LVHnswNode*)hnsw->id_node_map->map[hnsw->result_heap->entries[i].id];
@@ -427,6 +499,15 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, 
 _return:
     return result;
 }
+
+
+/*
+ * Greedy descent to relocate the entry point closer to the query, across the
+ * layers ABOVE where the real beam-search will start (start > layer > end).
+ *
+ * At each layer, repeatedly hop to the closest neighbor until no neighbor is
+ * closer than the current node — then drop a layer and continue.
+ */
 
 LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const void* new_node_vector, const LVLevel8_t start, const LVLevel8_t end, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
@@ -470,6 +551,14 @@ LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const v
                 }
             }
 
+            /*
+             * WHY `best_id == current_ep->internal_id` breaks the inner loop:
+            *   We just scanned all of current_ep's neighbors. If none beat current_ep
+            *   (best_id still points at current_ep itself), we've reached a local minimum
+            *   for this layer — no neighbor is closer to the query, so hopping is done.
+            *   Otherwise we move to best_id and re-scan from there. This is the classic
+            *   greedy "walk downhill until you can't" step.
+            */
             if (best_id == current_ep->internal_id)
             {
                 break;
@@ -481,13 +570,57 @@ LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const v
     return best_id;
 }
 
+
+/*
+ * Beam search within a single layer. From the entry points, explore the graph
+ * greedily-but-wide, keeping the EF closest nodes found (result_heap) while
+ * pulling the next-closest frontier node to expand (frontier_heap).
+ *
+ * Two heaps, standard HNSW:
+ *   frontier_heap (min): closest unexpanded candidate on top — explore next.
+ *   result_heap  (max): farthest kept result on top — so when we exceed EF we
+ *                       pop the worst, keeping exactly the EF best.
+ *
+ * visited bitset: one bit per internal_id, so each node is expanded at most
+ * once per search.
+ *
+ * WHY the early break:
+ *   If the closest frontier candidate is already farther than the WORST result
+ *   we're keeping (result_heap top), nothing reachable can improve the result
+ *   set — every remaining frontier node is even farther. Stop.
+ *
+ * WHY a candidate enters the heaps only if (result_heap not full OR closer than
+ * the current worst): that's the admission test — once we have EF results, a
+ * new node is only worth keeping if it beats the worst one we hold.
+ *
+ * ── IMPORTANT: this function is used during INSERTION (graph construction).
+ * It must NOT filter candidates by lifecycle flags (flushed / deleted /
+ * is_latest). Those are QUERY-side concerns. Filtering them here removes valid
+ * graph neighbors and fragments connectivity — a real bug we hit where a
+ * query-side filter leaked into this path and shattered the graph after
+ * flush+reopen. Keep this path purely structural; do lifecycle filtering only
+ * in vector_hnsw_query. ──
+ */
+
 LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, const LVSize32_t ep_list_size, const void* new_node_vector, const LVLevel8_t layer, const LVSize32_t ef, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
     LVStatus result = LV_OK;
-    const LVSize32_t EF = ef > 0 ? ef : HNSW_EF_DEFAULT;
 
-    uint64_t visited[(hnsw->node_count + 63) / 64];
-    memset(visited, 0, sizeof(visited));
+    const LVSize32_t EF = ef > 0 ? ef : HNSW_EF_DEFAULT;
+    LVVectorId64_t* visited = NULL;
+
+    // one bit per internal_id; marks nodes already expanded so a node is
+    // visited at most once per search. Heap-allocated (not a stack VLA) because
+    // node_count grows unbounded with the dataset — a stack array would risk
+    // overflow on large sets. calloc zero-inits, so no separate memset.
+    // TODO(v1.1): this alloc/free happens per search_layer call; consider a
+    // reusable buffer on LVHnsw once we profile.
+    LVSize32_t visited_words = (hnsw->node_count + 63) / 64;
+    visited = calloc(visited_words, sizeof(LVVectorId64_t));
+    if (!visited) {
+        result = LV_ERR_OOM;
+        goto _return;
+    }
 
     for (int i = 0; i < ep_list_size; ++i)
     {
@@ -578,7 +711,6 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
                     {
                         goto _return;
                     }
-                    const LVHnswNode* neighbor_node = hnsw->id_node_map->map[neighbor_internal_id];
 
                     if ((result = vector_heap_insert(hnsw->result_heap, &new_entry)) != LV_OK)
                     {
@@ -598,8 +730,35 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, const LVHnswNode** ep_list, cons
     }
 
 _return:
+    free(visited);
     return result;
 }
+
+/*
+ * Select up to M neighbors from candidates, using HNSW's DIVERSITY heuristic
+ * (Malkov & Yashunin, Algorithm 4) — NOT simply the M closest.
+ *
+ * WHY not just the M nearest:
+ *   Taking the M closest tends to pick neighbors clustered in one direction
+ *   (wherever the local density is highest), leaving other directions
+ *   unconnected. That makes the graph non-navigable: a search approaching from
+ *   an uncovered direction can't reach this node. Recall suffers.
+ *
+ * The heuristic: walk candidates nearest-first; keep a candidate only if it is
+ * closer to the NEW node than to every already-selected neighbor. In other
+ * words, reject a candidate that sits "behind" one we already kept (same
+ * direction) — prefer spreading neighbors across directions.
+ *
+ *   candidates[i].dis          = dist(candidate, new node)
+ *   dist_candidate_to_neighbor = dist(candidate, an already-kept neighbor)
+ *   if candidate is >= as close to a kept neighbor as to the new node, it's
+ *   redundant with that neighbor's direction -> drop it.
+ *
+ * candidates are sorted nearest-first (qsort) so we consider the best first and
+ * naturally keep the closest representative of each direction. Writes the kept
+ * ids into neighbor_list starting at neighbor_update_start (the flat per-layer
+ * offset — see the neighbor layout note).
+ */
 
 LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const LVLevel8_t layer, LVHnswEntry* candidates, const LVSize32_t candidates_size, LVVectorId64_t* neighbor_list, LVSize32_t neighbor_update_start, const int is_f32)
 {
@@ -729,11 +888,22 @@ _return:
     return result;
 }
 
-LVSize32_t vector_node_neighbor_size(const LVLevel8_t layer)
-{
-    const LVSize32_t count = layer == 0 ? HNSW_M0 : HNSW_M0 + layer * HNSW_M;
-    return count * sizeof(LVVectorId64_t);
-}
+
+/*
+ * Add `neighbor_id` to `node`'s neighbor list at `layer` (the reverse link:
+ * when we link new -> node, we also link node -> new here).
+ *
+ * Two cases:
+ *   - node has room (< M): just append the id into its slot.
+ *   - node is FULL (would exceed M): we can't just drop the new link or blindly
+ *     overflow. Re-run the diversity selection over the existing M neighbors
+ *     PLUS the new candidate (M+1 total) and keep the best M. This may evict an
+ *     old neighbor in favor of the new one if that improves diversity — which
+ *     keeps every node's out-degree bounded at M while preserving navigability.
+ *
+ * M = M0 at layer 0, else M. layer_offset locates this layer's slots inside the
+ * node's flat neighbor array (see vector_access_neighbors / layout note).
+ */
 
 void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_t layer, const LVVectorId64_t neighbor_id, const void* neighbor_vector)
 {
@@ -796,6 +966,25 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
         node->neighbor_counts[layer] = prev_neighbor_count + 1;
     }
 }
+
+
+LVSize32_t vector_node_neighbor_size(const LVLevel8_t layer)
+{
+    const LVSize32_t count = layer == 0 ? HNSW_M0 : HNSW_M0 + layer * HNSW_M;
+    return count * sizeof(LVVectorId64_t);
+}
+
+/*
+ * Return a pointer to `layer`'s neighbor slots inside the node's single flat
+ * neighbor array. Layout: layer 0 occupies the first M0 slots, then each higher
+ * layer occupies M slots:
+ *
+ *   [ layer0: M0 ][ layer1: M ][ layer2: M ] ...
+ *
+ * So layer L's offset is 0 for L==0, else M0 + (L-1)*M slots in. One flat
+ * allocation per node (see vector_node_neighbor_size) avoids a separate alloc
+ * and pointer-chase per layer.
+ */
 
 LVVectorId64_t* vector_access_neighbors(const LVHnswNode* node, const LVLevel8_t layer)
 {
@@ -955,13 +1144,39 @@ void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_internal_n
     last_node->is_latest = 0;
 }
 
+/*
+ * Query the HNSW graph for nearest neighbors of query_vector, applying the
+ * user's filter (query AST) and collecting matches.
+ *
+ * Structurally this is the same greedy beam search as search_layer (two heaps,
+ * visited set, early break), but run on layer 0 only and for QUERYING rather
+ * than building. The key difference from the insertion path:
+ *
+ *   THIS is where lifecycle filtering happens. search_layer (construction) must
+ *   stay purely structural, but here — at query time — we skip nodes that are
+ *   deleted, not-latest, etc., and apply the user's WHERE filter. (See
+ *   vector_hnsw_eval_and_collect. This split is deliberate: filtering during
+ *   construction fragments the graph; filtering during query is correct.)
+ *
+ * Flow:
+ *   1. Descend from the entry point through the upper layers (search_ep) to a
+ *      good layer-0 entry.
+ *   2. Beam-search layer 0: pop closest frontier node, expand its neighbors,
+ *      keep the EF best (by raw distance) in result_heap, and for each newly
+ *      seen neighbor call eval_and_collect to apply filters + emit matches.
+ *   3. Early break when the closest frontier is farther than our current worst
+ *      kept result — no further improvement possible.
+ *
+ * Note the two-track result collection: result_heap tracks the EF nearest by
+ * DISTANCE (to steer the search), while eval_and_collect separately emits
+ * FILTER-PASSING rows into the qvsets. A node can be near but filtered out.
+ */
+
 LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode* query,
     const void* query_vector, const LVHnswQueryCtx* query_ctx) {
 
     LVStatus result = LV_OK;
-
-    uint64_t visited[(hnsw->node_count + 63) / 64];
-    memset(visited, 0, sizeof(visited));
+    LVVectorId64_t* visited = NULL;
 
     const LVSize32_t vector_size = hnsw->vector_type == LV_VEC_FLOAT32 ? sizeof(float) : sizeof(int8_t);
     uint8_t padded_vector[hnsw->aligned_dim * vector_size];
@@ -969,6 +1184,10 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
     memcpy(padded_vector, query_vector, hnsw->dim * vector_size);
 
     if (hnsw->node_count == 0 || hnsw->entry_node == NULL) goto _return;
+
+    LVSize32_t visited_words = (hnsw->node_count + 63) / 64;
+    visited = calloc(visited_words, sizeof(uint64_t));
+    if (!visited) { result = LV_ERR_OOM; goto _return; }
 
     const LVSize32_t EF = query_ctx->search_ef > 0 ? query_ctx->search_ef : HNSW_EF_DEFAULT;
 
@@ -1036,7 +1255,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                         new_entry.dis.f32 = dis;
                         new_entry.dis_type = LV_DIS_F32;
 
-                        score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_f32_l2(dis) : vector_score_f32_dot(-dis);
+                        score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_f32_l2(dis) : vector_score_f32_dot(dis);
 
                     }
                 }
@@ -1050,7 +1269,7 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
                         new_entry.dis.i32 = dis;
                         new_entry.dis_type = LV_DIS_I32;
 
-                        score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_i32_l2(dis) : vector_score_i32_dot(-dis);
+                        score = query_ctx->vector_metric == LV_METRIC_L2 ? vector_score_i32_l2(dis) : vector_score_i32_dot(dis);
 
                     }
                 }
@@ -1071,8 +1290,35 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
     }
 
 _return:
+    free(visited);
     return result;
 }
+
+/*
+ * For one graph node that the search reached: apply lifecycle + query filters,
+ * and if it passes, emit it into the appropriate result set.
+ *
+ * Lifecycle guard first: deleted or non-latest nodes are never results
+ * (regardless of distance). This is the query-side filtering that must NOT live
+ * in the construction path.
+ *
+ * Then two data paths, because a node's record may be in memory or on disk:
+ *   - NOT flushed -> memtable path: the record is still in the memtable node;
+ *     evaluate the query AST against it directly and append to memtable_qvset.
+ *   - flushed -> SST path: the record is on disk; delegate to
+ *     sst_query_with_hnsw, which reads the record via external_id and does the
+ *     filter+append against sst_qvset. (LV_QFILTER_T/F are pass/fail, not
+ *     errors; anything else is a real error to propagate.)
+ *
+ * insert_into_result_heap: the entry point is pre-inserted by the caller
+ * (flag 0); newly discovered neighbors pass 1 so, when they pass filtering,
+ * they also update the EF-bounded result_heap.
+ *
+ * Why separate memtable_qvset and sst_qvset: results come from two sources with
+ * different record layouts; keeping them in separate sets lets the query layer
+ * merge them afterward (and lets memtable tombstones suppress stale SST rows —
+ * see the storage/SST merge).
+ */
 
 LVStatus vector_hnsw_eval_and_collect(
     LVHnsw* hnsw,
@@ -1080,9 +1326,9 @@ LVStatus vector_hnsw_eval_and_collect(
     const LVAstNode* query,
     const LVHnswQueryCtx* query_ctx,
     const LVHnswEntry* entry,
-    float score,
-    int insert_into_result_heap,
-    LVSize32_t EF)
+    const float score,
+    const int insert_into_result_heap,
+    const LVSize32_t EF)
 {
     LVStatus result = LV_OK;
 

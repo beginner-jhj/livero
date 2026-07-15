@@ -3,14 +3,96 @@
 
 #include "lv_internal.h"
 
-/* ── HNSW parameters ────────────────────────────────────────────────────────
- * Fixed constants. Changing these requires rebuilding the index.
+/*
+ * vector.h — HNSW vector index + SIMD distance kernels
  *
- * M              — max neighbors per node at layers 1+
- * M0             — max neighbors per node at layer 0 (typically 2*M)
- * MAX_LEVEL      — maximum number of layers in the graph
- * EF_CONSTRUCTION— beam width during index construction (accuracy vs speed)
+ * ============================================================================
+ * WHAT IS HNSW (read this first if the code below looks like a maze)
+ * ============================================================================
+ * HNSW = Hierarchical Navigable Small World. It answers "given a query vector,
+ * find its nearest neighbors" WITHOUT scanning every vector. Brute force is
+ * O(N) per query; HNSW is ~O(log N).
+ *
+ * The idea, in one picture: build a graph where each vector is a node linked to
+ * a handful of nearby vectors. To search, start somewhere and greedily walk to
+ * whichever neighbor is closer to the query, repeating until you can't get
+ * closer. That alone can get stuck in local minima, so HNSW stacks the graph in
+ * LAYERS:
+ *
+ *   layer 2:      A ------------------- E        (few nodes, long links)
+ *   layer 1:      A ----- C ----------- E        (more nodes)
+ *   layer 0:  A-B-C-D-E-F-G-H-...              (ALL nodes, short links)
+ *
+ * Every node lives in layer 0; a random subset also reaches higher layers
+ * (geometrically fewer as you go up — see vector_hnsw_layer / m_l). Search
+ * starts at the top entry point, greedily descends each layer to get "roughly
+ * close" fast (long hops), then does the fine-grained search in the dense
+ * layer 0. High layers = express lanes; layer 0 = local streets.
+ *
+ * ============================================================================
+ * KEY PARAMETERS (and the accuracy/speed/memory trade-offs they encode)
+ * ============================================================================
+ *   M / M0      : neighbors kept per node (M0 = layer 0, usually 2*M because the
+ *                 bottom layer does the real work). More neighbors = better
+ *                 recall, but more memory + slower inserts.
+ *   EF_CONSTRUCTION : how wide the beam is while BUILDING the graph. Higher =
+ *                 better-connected graph (better recall later), slower build.
+ *   ef (search) : how wide the beam is while QUERYING. Higher = better recall,
+ *                 slower query. Deliberately SEPARATE from EF_CONSTRUCTION:
+ *                 build quality is paid once, query cost is paid every search,
+ *                 so we tune them independently (search_ef in LVHnswQueryCtx).
+ *   m_l         : 1/ln(M); the level-generation constant that makes higher
+ *                 layers exponentially sparse.
+ *
+ * ============================================================================
+ * HOW livero's HNSW work
+ * ============================================================================
+ * 1. Vectors and graph nodes are stored SEPARATELY, in two arenas
+ *    (node_arena, vector_arena) and reached by two id maps. Vectors are the
+ *    big aligned payload; nodes are small graph bookkeeping. Splitting them
+ *    keeps the graph compact and lets vectors be aligned/padded for SIMD.
+ *
+ * 2. external_id vs internal_id. The caller sees external_id (the vector_id
+ *    from the record). Internally we assign a dense internal_id. 
+ *    Ids are monotonic and never reused. id_hash_map resolves external->
+ *    internal; see vector_hnsw_get_internal_id.
+ *
+ * 3. Lifecycle flags on a node — flushed / deleted / is_latest. Because livero
+ *    is an LSM engine, a vector can be in the memtable, flushed to SST, deleted
+ *    (tombstoned), or superseded by an update. These flags let one graph span
+ *    memtable + on-disk state. IMPORTANT: these flags are QUERY-side filters.
+ *    They must NOT filter candidates during INSERT/graph-construction — doing so
+ *    fragments the graph. (This was a real bug: a query-side filter leaked into
+ *    the insertion path and shattered connectivity after flush+reopen. Keep the
+ *    filtering in vector_hnsw_query, never in vector_hnsw_search_layer's build
+ *    role.)
+ *
+ * 4. SIMD distance kernels (ARM NEON), f32 and int8, L2 and dot. Vectors are
+ *    padded to aligned_dim so a kernel can process fixed-width SIMD strides
+ *    without reading past the buffer. Distances are returned so that SMALLER =
+ *    NEARER for every metric: L2 as-is, dot NEGATED. (Scores are then mapped to
+ *    [0,1] by vector_score_*.) NOTE: dot assumes unit-normalized vectors; recall
+ *    degrades on non-normalized input — normalization is a v1.1 item.
+ *
+ * ============================================================================
+ * SEARCH MACHINERY (heaps)
+ * ============================================================================
+ * Greedy layer search uses two heaps (LVHnswHeap):
+ *   frontier_heap : MIN-heap of candidates to explore next (closest first).
+ *   result_heap   : MAX-heap of best-so-far results (farthest at top, so we can
+ *                   pop the worst when we have more than ef).
+ * Entries carry either an f32 or i32 distance (LVVectorDisType); the heap's
+ * cmp_fn is chosen to match. This is the standard HNSW "two priority queues"
+ * beam search.
+ *
+ * ============================================================================
+ * MEMORY / THREADING
+ * ============================================================================
+ * Graph nodes and vectors come from arenas (freed wholesale on destroy).
+ * Not thread-safe; single-writer.
  */
+
+
 #define HNSW_M 16
 #define HNSW_M0 32
 #define HNSW_MAX_LEVEL 16
@@ -209,9 +291,9 @@ LVStatus vector_hnsw_eval_and_collect(
     const LVAstNode* query,
     const LVHnswQueryCtx* query_ctx,
     const LVHnswEntry* entry,
-    float score,
-    int insert_into_result_heap,
-    LVSize32_t EF);
+    const float score,
+    const int insert_into_result_heap,
+    const LVSize32_t EF);
 
 LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema,
     const LVAstNode* query, const void* query_vector, const LVHnswQueryCtx* query_ctx);
