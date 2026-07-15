@@ -43,6 +43,7 @@ typedef enum
     LV_ERR_INVALID_QUERY = -9,
     LV_ERR_UNSUP_QOP = -10,
     LV_ERR_EXISTS = -11,
+    LV_ERR_TRUNCATED = -12,
 } LVStatus;
 
 /* ── Vector metadata ───────────────────────────────────────────────────────

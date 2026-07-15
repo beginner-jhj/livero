@@ -98,7 +98,7 @@ ffibuilder.cdef("""
     typedef enum { LV_OK, LV_QFILTER_T, LV_QFILTER_F, LV_ERR_IO, LV_ERR_OOM,
                    LV_ERR_NOT_FOUND, LV_ERR_CORRUPT, LV_ERR_INVALID, LV_ERR_FULL,
                    LV_ERR_DUPLICATE, LV_ERR_INVALID_DB, LV_ERR_INVALID_QUERY,
-                   LV_ERR_UNSUP_QOP, LV_ERR_EXISTS } LVStatus;
+                   LV_ERR_UNSUP_QOP, LV_ERR_EXISTS, LV_ERR_TRUNCATED } LVStatus;
     typedef enum { LV_VEC_FLOAT32, LV_VEC_INT8 } LVVectorType;
     typedef enum { LV_META_STRING, LV_META_INT, LV_META_FLOAT } LVMetaType;
     typedef enum { LV_METRIC_L2, LV_METRIC_DOT } LVVectorMetric;
