@@ -253,14 +253,14 @@ LVStatus wal_recover(const int fd, LVMemTable* table, LVSeq64_t* next_seq_out, L
             }
         }
         saw_any = 1;
-        last_seq = saved_seq;
-
+        if (saved_seq > last_seq) {
+            last_seq = saved_seq;
+        }
     }
 
+_return:
     *next_seq_out = saw_any ? last_seq + 1 : 0;
     *next_vector_id_out = saw_vector ? last_vector_id + 1 : 0;
-
-_return:
     return result;
 }
 
