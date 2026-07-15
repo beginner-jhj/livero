@@ -23,7 +23,7 @@ LVStatus read_helper(const int fd, void* buf, const LVSize32_t len)
     {
         // requested a fixed-width / length-prefixed field but the file ended
         // early -> the record is truncated, i.e. the file is corrupt.
-        return LV_ERR_CORRUPT;     // distinct from LV_ERR_IO: not a disk error,
+        return LV_ERR_TRUNCATED;     // distinct from LV_ERR_IO: not a disk error,
         // the bytes simply aren't there
     }
 
@@ -40,7 +40,7 @@ LVStatus pread_helper(const int fd, void* buf, const LVSize32_t len, const LVOff
     {
         // requested a fixed-width / length-prefixed field but the file ended
         // early -> the record is truncated, i.e. the file is corrupt.
-        return LV_ERR_CORRUPT;     // distinct from LV_ERR_IO: not a disk error,
+        return LV_ERR_TRUNCATED;     // distinct from LV_ERR_IO: not a disk error,
         // the bytes simply aren't there
     }
 
