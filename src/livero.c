@@ -970,7 +970,7 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     if (needs_hnsw) {
         const int is_f32 = db->schema->vector_type == LV_VEC_FLOAT32;
         LVSize32_t search_ef = HNSW_EF_DEFAULT + parser->complexity_score * 10;
-        if (is_limit_on ) {
+        if (is_limit_on) {
             search_ef = option->limit > search_ef ? option->limit : search_ef;
         }
 
@@ -1350,7 +1350,16 @@ static LVStatus lv_recover_internal(Livero* db) {
     if (wal_st.st_size <= 0 && sst_st.st_size <= 0) goto _return;
 
     if (wal_st.st_size > 0) {
-        if ((result = wal_recover(db->wal_fd, db->memtable, &next_seq_from_wal, &next_vector_id_from_wal)) != LV_OK) goto _return;
+        LVStatus recover_status = wal_recover(db->wal_fd, db->memtable, &next_seq_from_wal, &next_vector_id_from_wal);
+        if (recover_status == LV_OK) {
+            //pass
+        }
+        else if (recover_status == LV_ERR_TRUNCATED) {
+            //ERR TRUNCATED means torn write, it is acceptable.
+        }
+        else {
+            goto _return;
+        }
 
         //recover hnsw from wal
         LVNode* current_node = db->memtable->head->levels[0];
