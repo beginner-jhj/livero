@@ -1,6 +1,37 @@
 #ifndef STORAGE
 #define STORAGE
 
+/*
+ * storage.h — LVMemTable: the in-memory write buffer of livero's LSM engine
+ *
+ * WHAT
+ *   An ordered, in-memory table of records backed by a skip list. All writes
+ *   (put / delete) land here first; when it fills past a threshold it is
+ *   flushed to an immutable SST on disk. This is the "MemTable" of the LSM-tree.
+ *
+ * WHY A SKIP LIST
+ *   Records must stay sorted by key so that (a) flush produces a sorted SST in
+ *   one linear pass, and (b) lookups and range/filter scans are efficient. A
+ *   skip list gives O(log n) search/insert with simple code and no rebalancing
+ *   (unlike a balanced tree), which keeps the write path fast and the
+ *   implementation small — fitting livero's zero-dependency, embeddable goal.
+ *
+ * VERSIONING — the invariant that everything else depends on
+ *   livero never mutates a record in place. An update or delete inserts a NEW
+ *   node with the same key and a higher sequence number (seq). So one key can
+ *   have several nodes coexisting, and they are ordered key-ascending, then
+ *   seq-DESCENDING (latest version first among equal keys). Readers must return
+ *   the FIRST match for a key — that is the newest version. (Delete is just a
+ *   node with op = delete, a "tombstone".)
+ *
+ * MEMORY
+ *   Every node is allocated from the table's arena. Nothing is freed
+ *   individually; table_destroy frees the whole arena at once (see arena.h).
+ *
+ * NOT THREAD-SAFE
+ *   Single-writer model; no internal locking.
+ */
+
 #include "lv_internal.h"
 
 /* ── LVMemTable skip list parameters ───────────────────────────────────────────*/
