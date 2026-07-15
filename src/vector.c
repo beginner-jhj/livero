@@ -9,34 +9,6 @@
 #include "sst.h"
 #include "hash.h"
 
-/**
- * ARM NEON SIMD Naming Convention Reference
- * -----------------------------------------
- * Structure: v[instruction][shaping][type][size]q_[datatype][bits]
- * 1. [instruction]: The core operation (e.g., add, sub, mul, mla, fma, ldr).
- * 2. [shaping]: How the data width changes during the operation.
- * - (None): Normal. Input and output widths are identical.
- * - l (Long): Output width is twice the input width (e.g., 8-bit * 8-bit -> 16-bit).
- * - w (Wide): One input is twice the width of the other (e.g., 16-bit + 8-bit -> 16-bit).
- * - n (Narrow): Output width is half the input width (e.g., 16-bit -> 8-bit).
- * 3. [type]: Specific behavior of the operation.
- * - p (Pairwise): Operates on adjacent elements in the same register.
- * - v (Across): Operates across all elements in a single register (e.g., vaddvq).
- * - h (Halving): Right-shifts the result by 1 (effective average).
- * - r (Rounding): Adds 0.5 before truncating for better precision.
- * - q (Saturating): Clamps the result to max/min range instead of overflowing.
- * 4. [size]: The register bit-width.
- * - (None): 64-bit "Double-word" register (D0-D31).
- * - q (Quadword): 128-bit "Quad-word" register (V0-V31). Handles 4x f32 or 16x i8.
- * 5. [datatype][bits]: The element format.
- * - s8, s16, s32, s64: Signed integers.
- * - u8, u16, u32, u64: Unsigned integers.
- * - f16, f32: Floating-point (Half and Single precision).
- * Example: vmlal_u16
- * [v]ector [m]ultiply [l]ong [a]ccumulate [l]ong on [u]nsigned [16]-bit.
- * (Multiplies two 16-bit values and adds the result to a 32-bit accumulator).
- */
-
 LVHnsw* vector_hnsw_create(const LVVectorType vector_type, const LVDim32_t dim)
 {
 
