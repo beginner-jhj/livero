@@ -16,26 +16,26 @@
 
 struct Livero
 {
-    char path[LV_PATH_MAX];
-    LVSize32_t flush_threshold;
-    int schema_fd;
-    LVSchema* schema;
+    /* ── identity / config ── */
+    char path[LV_PATH_MAX];         // the DB directory (holds schema.lv, wal.lv, sst.lv, ...)
+    LVSize32_t flush_threshold;     // memtable record count that triggers a flush to SST
+    int schema_fd;                  // open fd for schema.lv
+    LVSchema* schema;               // in-memory schema: vector config + field defs/hashes
 
+    /* ── LSM-tree (key/value/record storage) ── */
+    int wal_fd;                     // write-ahead log; every write lands here first (crash durability)
+    LVMemTable* memtable;           // in-memory sorted write buffer (skiplist); flushed to SST when full
+    LVSeq64_t next_seq;             // next sequence number to assign; monotonic across restarts (versioning)
+    int sst_fd;                     // current on-disk SST (immutable, sorted); -1 if none yet
 
-    // LSM-Tree memtable
-    int wal_fd;
-    LVMemTable* memtable;
-    LVSeq64_t next_seq;
-    int sst_fd;
+    /* ── vector index ── */
+    int vectors_fd;                 // vectors.lv: raw vector payloads on disk; read back to rebuild HNSW on recover
+    int vector_index_fd;            // vector_index.lv: vector_id -> SST record offset, O(1) lookup at query time
+    LVVectorId64_t next_vector_id;  // next vector id to assign; monotonic, never reused
+    LVHnsw* hnsw;                   // in-memory HNSW graph index for nearest-neighbor search
 
-    // Vector
-    int vectors_fd;                 // vectors.lv (O(1) access)
-    int vector_index_fd; //vector_id to sst record offset
-    LVVectorId64_t next_vector_id;
-
-    LVHnsw* hnsw;
-
-    int32_t magic;
+    /* ── integrity ── */
+    int32_t magic;                  // sanity marker to catch use of an invalid/freed handle
 };
 
 static LVStatus lv_mkdir_p_internal(const char* dir_path);
@@ -59,13 +59,17 @@ static void lv_apply_limit_internal(LVQVSet* qvset, const LVSize32_t limit);
 static LVQueryResultSet* lv_create_query_result_set_internal(const LVQVSet* result_qvset);
 
 
-/* ============================================================================
- * lv_create — create a NEW database from a schema.
+/*
+ * Create a NEW database at `path`. Fails with LV_ERR_EXISTS if one already
+ * exists there — create never clobbers existing data.
  *
- * Fails with LV_ERR_EXISTS if schema.lv already exists (use lv_open instead).
- * The schema is written to disk here and becomes authoritative; from this
- * point on nobody passes a schema in again.
- * ========================================================================== */
+ * The schema is fixed at creation: vector dim/type/metric plus the metadata
+ * field definitions. Field names are validated here (reserved words, charset);
+ * invalid defs -> LV_ERR_INVALID. flush_threshold is how many records the
+ * memtable holds before flushing to an SST (0 -> default 1024).
+ *
+ * On LV_OK, *db is an open handle; close it with lv_close.
+ */
 LVStatus lv_create(Livero** db, const char* path, const LVSize32_t flush_threshold,
     const LVDim32_t vector_dim, const LVVectorType vector_type,
     const LVVectorMetric vector_metric,
@@ -110,11 +114,15 @@ LVStatus lv_create(Livero** db, const char* path, const LVSize32_t flush_thresho
 }
 
 
-/* ============================================================================
- * lv_open — open an EXISTING database. Schema comes from disk; no schema args.
+/*
+ * Open an EXISTING database at `path`, recovering its full state: loads and
+ * verifies the schema (magic/version/CRC), then replays the WAL and existing
+ * SST into the memtable + HNSW index (see lv_recover_internal). Fails with
+ * LV_ERR_NOT_FOUND if no database exists at `path`.
  *
- * Fails with LV_ERR_NOT_FOUND if schema.lv is missing (use lv_create instead).
- * ========================================================================== */
+ * flush_threshold may differ from the creating run; it only affects future
+ * flushes. On LV_OK, *db is ready for reads and writes.
+ */
 LVStatus lv_open(Livero** db, const char* path, const LVSize32_t flush_threshold)
 {
     LVStatus result = LV_OK;
@@ -152,6 +160,20 @@ LVStatus lv_open(Livero** db, const char* path, const LVSize32_t flush_threshold
     /* hand off; lv_open_internal owns schema + schema_fd from here. */
     return lv_open_internal(db, db_path, flush_threshold, schema, schema_fd);
 }
+
+/*
+ * Insert or replace a record: key (+ optional value, vector, and metadata
+ * fields). This is the validation gate before the write path:
+ *   - handle sanity (magic) via lv_check_db_corruption_internal
+ *   - field_count within the schema, key/value lengths within limits
+ *   - every field name must exist in the schema; their masks are OR'd into the
+ *     record's field_mask (used later for fast filter pre-checks)
+ * Fields are serialized to a buffer, then lv_put_internal does the actual WAL +
+ * memtable + HNSW write. seq/vector_id for this record are snapshotted here.
+ *
+ * A later lv_put with the same key creates a NEWER version (higher seq) that
+ * supersedes the old — nothing is overwritten in place.
+ */
 
 LVStatus lv_put(Livero* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVCount32_t field_count, const LVMetaField* fields)
 {
@@ -211,6 +233,22 @@ LVStatus lv_put(Livero* db, const void* key, const LVKeyLen32_t key_len, const v
     return result;
 }
 
+/*
+ * Fetch one record by exact key. On LV_OK, *output is a newly-allocated
+ * LVGetResult the caller MUST free with lv_destroy_get_result. Missing or
+ * deleted keys return LV_ERR_NOT_FOUND (and allocate no result).
+ *
+ * Two sources, checked newest-first:
+ *   1. memtable (table_search returns the latest version): if it's a DELETE
+ *      tombstone, the key is gone -> NOT_FOUND. Otherwise copy value / vector /
+ *      fields out of the in-memory node.
+ *   2. not in memtable -> SST: linear-search the index block for the
+ *      key's offset, read the record head then tail, deserialize fields. (If
+ *      there's no SST yet, NOT_FOUND.)
+ *
+ * All returned buffers (value, vector, fields) are deep copies owned by the
+ * result — safe to use after other db operations.
+ */
 LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, LVGetResult** output) {
     LVStatus result = LV_OK;
 
@@ -249,7 +287,7 @@ LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, L
         output_result->vector_id = memtable_node->vector_id;
         if (output_result->vector_id != LV_NO_VECTOR_ID) {
             LVVectorType type = lv_get_vector_type(db);
-            LVSize32_t size = type == LV_VEC_FLOAT32 ? sizeof(float) * db->hnsw->aligned_dim : sizeof(int8_t) * db->hnsw->aligned_dim;
+            LVSize32_t size = type == LV_VEC_FLOAT32 ? sizeof(float) * db->hnsw->dim : sizeof(int8_t) * db->hnsw->dim;
 
             output_result->vector = malloc(size);
             if (!output_result->vector) {
@@ -269,7 +307,7 @@ LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, L
     }
     else if (db->sst_fd < 0) {
         result = LV_ERR_NOT_FOUND;
-        return result;
+        goto cleanup;
     }
     else {
         LVSSTIndexBlockEntry entry;
@@ -289,11 +327,13 @@ LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, L
 
         output_result->node_seq = seq;
         output_result->value_len = value_len;
-        output_result->value = malloc(value_len);
-        if (!output_result->value) {
-            result = LV_ERR_OOM;
-            goto cleanup;
-        };
+        if (output_result->value_len > 0) {
+            output_result->value = malloc(value_len);
+            if (!output_result->value) {
+                result = LV_ERR_OOM;
+                goto cleanup;
+            };
+        }
 
 
         if (field_size > 0) {
@@ -315,7 +355,7 @@ LVStatus lv_get(const Livero* db, const void* key, const LVKeyLen32_t key_len, L
         output_result->vector_id = vector_id;
         if (output_result->vector_id != LV_NO_VECTOR_ID) {
             LVVectorType type = lv_get_vector_type(db);
-            LVSize32_t size = type == LV_VEC_FLOAT32 ? sizeof(float) * db->hnsw->aligned_dim : sizeof(int8_t) * db->hnsw->aligned_dim;
+            LVSize32_t size = type == LV_VEC_FLOAT32 ? sizeof(float) * db->hnsw->dim : sizeof(int8_t) * db->hnsw->dim;
 
             output_result->vector = malloc(size);
             if (!output_result->vector) {
@@ -343,9 +383,29 @@ void lv_destroy_get_result(LVGetResult* result) {
         free(result->value);
         free(result->vector);
         schema_destroy_fields(result->field_count, result->fields);
+        free(result);
     }
 }
 
+/*
+ * lv_update_value / lv_update_vector: change ONE part of an existing record,
+ * preserving the rest.
+ *
+ * Both follow the same shape:
+ *   1. Find the current record (memtable first, else SST). Deleted/missing ->
+ *      NOT_FOUND.
+ *   2. Read out the parts we must KEEP (the other fields, vector, value...).
+ *   3. Write a new version via lv_put_internal with LV_UPDATE: the changed part
+ *      is new, everything else is copied forward.
+ * Because writes are versioned, an update is just a newer record with the same
+ * key — the same mechanism as a re-put.
+ */
+
+
+ /*
+ * Replace a record's value, keeping its vector and fields. (Reuses the existing
+ * vector_id, so the vector isn't re-inserted.)
+ */
 LVStatus lv_update_value(Livero* db, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len) {
     LVStatus result = LV_OK;
 
@@ -418,6 +478,12 @@ LVStatus lv_update_value(Livero* db, const void* key, const LVKeyLen32_t key_len
     return LV_ERR_NOT_FOUND;
 }
 
+/*
+ * Replace a record's vector, keeping value and fields. Unlike update_value,
+ * this assigns a NEW vector_id (the vector changed, so it's a new HNSW entry),
+ * and marks the OLD vector's HNSW node as updated (vector_hnsw_mark_updated) so
+ * queries stop returning the stale vector. (See the mark_updated at the end.)
+ */
 LVStatus lv_update_vector(Livero* db, const void* key, const LVKeyLen32_t key_len, const void* vector) {
     LVStatus result = LV_OK;
 
@@ -509,8 +575,54 @@ LVStatus lv_update_vector(Livero* db, const void* key, const LVKeyLen32_t key_le
     return result;
 }
 
+/*
+ * Update and/or ADD metadata fields on an existing record, keeping value,
+ * vector, and untouched fields. The hard part: fields are packed contiguously
+ * with no gaps, and an added field or a resized string changes the packed
+ * layout — so we rebuild the whole field buffer.
+ *
+ * Three phases:
+ *
+ *   PHASE 1 — classify (first loop over the caller's fields):
+ *     For each incoming field, decide if it UPDATES an existing field (its mask
+ *     bit is already set) or ADDS a new one (bit not set). Track masks/offsets
+ *     for each group and accumulate the new total field buffer size
+ *     (new_field_size) — including string length deltas for updates and the
+ *     full size of adds.
+ *
+ *   PHASE 2 — compute new offsets (second loop over the merged field set):
+ *     Walk every field the RESULT will have (existing + added), in mask order,
+ *     and record where each lands in the rebuilt buffer (new_field_accrued_
+ *     offsets). Each field's size depends on its type (and string length),
+ *     pulled from the update, the add, or the existing record as appropriate.
+ *
+ *   PHASE 3 — materialize (third + fourth loops):
+ *     Copy every field into new_field at its computed offset: updated fields
+ *     take the new value, untouched fields are copied from the old buffer, and
+ *     added fields are appended. Then write the whole thing as a new record
+ *     version via lv_put_internal.
+ *
+ * The offset bookkeeping exists because fields have no fixed slots — a string
+ * that grows/shrinks, or a new field inserted mid-mask-order, shifts everything
+ * after it. new_field_accrued_offsets is the map from field -> byte position in
+ * the rebuilt buffer.
+ *
+ * MEMORY: found_value/found_field/new_field/new_field_accrued_offsets are all
+ * heap-allocated and freed at _return (each NULL-initialized so cleanup is safe
+ * on any early goto).
+ */
+
 LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len, const LVSize32_t field_count, const LVMetaField* fields) {
     LVStatus result = LV_OK;
+
+
+    // TODO(v1.1): VLA policy pass. These VLAs sit at function top because C
+    // forbids jumping (goto cleanup) into the scope of a VLA — so with the
+    // goto/_return pattern they must precede all gotos, which pushes them BEFORE
+    // the field_count validation below. Net effect: a huge field_count would be
+    // stack-allocated before it's rejected. field_count is caller-supplied and
+    // small in practice, but the right fix is to heap-allocate these (malloc)
+    // so validation can run first AND the goto pattern stays clean. 
 
     LVSize32_t field_count_to_add = 0;
     int new_fields_offsets[field_count];
@@ -556,12 +668,14 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
         found_field_size = node_field_size(memtable_node);
         found_vector_id = memtable_node->vector_id;
 
-        found_value = malloc(found_value_len);
-        if (!found_value) {
-            result = LV_ERR_OOM;
-            goto _return;
+        if (found_value_len > 0) {
+            found_value = malloc(found_value_len);
+            if (!found_value) {
+                result = LV_ERR_OOM;
+                goto _return;
+            }
+            memcpy(found_value, node_access_value(memtable_node), found_value_len);
         }
-        memcpy(found_value, node_access_value(memtable_node), found_value_len);
 
         if (found_field_count > 0) {
             found_field = malloc(found_field_size);
@@ -590,10 +704,13 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
         uint64_t record_head_size = 0;
         if ((result = sst_read_record_head(db->sst_fd, entry.offset, NULL, NULL, NULL, NULL, &found_value_len, &found_vector_id, &found_field_mask, &found_field_count, &found_field_size, &record_head_size)) != LV_OK) goto _return;
 
-        found_value = malloc(found_value_len);
-        if (!found_value) {
-            result = LV_ERR_OOM;
-            goto _return;
+        if (found_value_len > 0) {
+            found_value = malloc(found_value_len);
+            if (!found_value) {
+                result = LV_ERR_OOM;
+                goto _return;
+            }
+            memcpy(found_value, node_access_value(memtable_node), found_value_len);
         }
 
         if (found_field_count > 0) {
@@ -827,6 +944,18 @@ _return:
     return result;
 }
 
+/*
+ * Delete a key: writes a DELETE tombstone (a new versioned record with op =
+ * LV_DELETE), which supersedes the key on read/merge. The data isn't erased
+ * immediately — it's shadowed by the tombstone until a later SST merge drops
+ * both (see sst_flush).
+ *
+ * We first locate the record (memtable or SST) only to find its vector_id, so
+ * we can mark that vector deleted in the HNSW index (vector_hnsw_mark_deleted)
+ * — otherwise the vector would keep showing up in similarity search. The
+ * tombstone itself carries no vector (LV_NO_VECTOR_ID).
+ */
+
 LVStatus lv_delete(Livero* db, const void* key, const LVKeyLen32_t key_len) {
     LVStatus result = LV_OK;
 
@@ -870,6 +999,37 @@ _return:
 }
 
 
+/*
+ * Run a filtered query, optionally combined with vector similarity search.
+ *
+ * On LV_OK, *output is a newly-allocated result set the caller MUST free with
+ * lv_destroy_query_result_set.
+ *
+ * PIPELINE
+ *   1. Parse `query` (the filter string) into an AST, validating field names
+ *      against the schema.
+ *   2. Decide the search mode from the options:
+ *        - needs_hnsw (score_filter or ORDER BY "vector"): run the HNSW vector
+ *          search, which walks the graph and applies the filter per candidate.
+ *        - otherwise: linear filter scan over the memtable + SST.
+ *   3. Both modes collect matches into TWO result sets — memtable_qvset and
+ *      sst_qvset — then merge them (lv_merge_qvsets): memtable is newer, so its
+ *      versions (incl. tombstones) win over the SST's for the same key.
+ *   4. Post-process the merged set in order: score_filter -> ORDER BY -> LIMIT.
+ *   5. Materialize the final result set.
+ *
+ * ORDER BY "vector" is special: it means "order by similarity score", not by a
+ * schema field — see the short-circuit near the top.
+ *
+ * COMPLEXITY -> EF: a more complex filter widens the HNSW search (search_ef =
+ * default + complexity_score*10, and at least `limit`), so heavily-filtered
+ * queries don't lose recall (fewer candidates pass, so cast a wider net).
+ *
+ * MEMORY: parser, AST, and the three qvsets are all freed on every path
+ * (cleanup on error; the success path frees via the destroy calls too). Each
+ * pointer is NULL-initialized so cleanup is safe at any early goto.
+ */
+
 LVStatus lv_query(const Livero* db, const char* query, const void* query_vector, const LVQueryOption* option, LVQueryResultSet** output)
 {
     LVStatus result = LV_OK;
@@ -881,19 +1041,22 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     LVQVSet* merged_qvset = NULL;
 
     // check db is properly initialized
-    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto cleanup;
+    if ((result = lv_check_db_corruption_internal(db)) != LV_OK) goto _return;
 
     // check query
     if (query == NULL || strlen(query) <= 0)
     {
         result = LV_ERR_INVALID_QUERY;
-        goto cleanup;
+        goto _return;
     }
 
     const int is_limit_on = option && (option->flags & LV_QOPT_LIMIT) && option->limit > 0;
     const int is_score_filter_on = option && query_vector && (option->flags & LV_QOPT_SCORE_FILTER);
     const int is_ordby_on = (option && (option->flags & LV_QOPT_ORDER_BY));
     const int is_ordby_vec = is_ordby_on && query_vector && ((strncasecmp(option->order.by, "vector", strlen("vector")) == 0));
+
+    // vector search is triggered by score_filter or ORDER BY "vector" — the only
+    // options that need distance ranking. Plain filters take the linear-scan path.
     const int needs_hnsw = is_score_filter_on || is_ordby_vec;
 
     LVFieldMask32_t ordby_field_mask = 0;
@@ -911,7 +1074,7 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
                 db->schema->field_hashes, option->order.by, strlen(option->order.by));
             if (!hash) {
                 result = LV_ERR_INVALID_QUERY;
-                goto cleanup;
+                goto _return;
             }
             if (hash->type != LV_META_STRING) {
                 ordby_field_mask = hash->mask;
@@ -928,11 +1091,11 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     parser = query_create_parser();
     if (!parser) {
         result = LV_ERR_OOM;
-        goto cleanup;
+        goto _return;
     }
     if ((result = query_tokenize(query, parser)) != LV_OK)
     {
-        goto cleanup;
+        goto _return;
     }
 
     query_tree = query_parse(parser, db->schema);
@@ -940,7 +1103,7 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     if (!query_tree)
     {
         result = LV_ERR_INVALID_QUERY;
-        goto cleanup;
+        goto _return;
     }
 
     const LVFieldMask32_t query_field_mask = query_get_field_mask(query_tree, db->schema);
@@ -949,22 +1112,27 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
     memtable_qvset = lv_create_qvset_internal();
     if (!memtable_qvset) {
         result = LV_ERR_OOM;
-        goto cleanup;
+        goto _return;
     }
 
 
     sst_qvset = lv_create_qvset_internal();
     if (!sst_qvset) {
         result = LV_ERR_OOM;
-        goto cleanup;
+        goto _return;
     }
 
 
     merged_qvset = lv_create_qvset_internal();
     if (!merged_qvset) {
         result = LV_ERR_OOM;
-        goto cleanup;
+        goto _return;
     }
+
+    // memtable and SST matches go into SEPARATE qvsets: memtable uses a "light"
+    // append (data still in memory), SST uses the full append (data read from
+    // disk). Merging them lets memtable's newer versions/tombstones override the
+    // SST copy of the same key.
 
 
     if (needs_hnsw) {
@@ -1001,18 +1169,21 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
             .vector_index_fd = db->vector_index_fd,
         };
 
-        if ((result = vector_hnsw_query(db->hnsw, db->schema, query_tree, query_vector, &hnsw_qctx)) != LV_OK) goto cleanup;
-        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto cleanup;
+        if ((result = vector_hnsw_query(db->hnsw, db->schema, query_tree, query_vector, &hnsw_qctx)) != LV_OK) goto _return;
+        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
     }
     else {
-        if ((result = table_query_filter_scan(db->memtable, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_light_append_internal, memtable_qvset)) != LV_OK) goto cleanup;
+        if ((result = table_query_filter_scan(db->memtable, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_light_append_internal, memtable_qvset)) != LV_OK) goto _return;
         if (db->sst_fd >= 0) {
-            if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto cleanup;
+            if ((result = sst_query_filter_scan(db->sst_fd, db->schema, query_tree, query_field_mask, ordbytype, ordby_field_mask, lv_qvset_append_internal, sst_qvset)) != LV_OK) goto _return;
         }
 
-        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto cleanup;
+        if ((result = lv_merge_qvsets_internal(merged_qvset, memtable_qvset, sst_qvset)) != LV_OK) goto _return;
     }
 
+
+    // post-process order matters: score_filter (drop by similarity) BEFORE
+    // ordering, and LIMIT last (so we cut after sorting, not before).
 
     if (is_score_filter_on) {
         lv_apply_score_filter_internal(merged_qvset, option->vector_score_filter.score, option->vector_score_filter.bound);
@@ -1032,9 +1203,12 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
         result = LV_ERR_OOM;
     }
 
-    return result;
-
-cleanup:
+_return:
+    /* Ownership: memtable entries are borrowed pointers into memtable nodes
+         * (light); sst entries are copies this qvset owns (full); merge MOVES
+         * pointers into merged without copying, so merged owns nothing (light);
+         * the result set COPIES from merged, so all three qvsets are freed here on
+         * success too. Each datum has exactly one owner -> one free. */
     lv_destroy_light_qvset_internal(memtable_qvset);
     lv_destroy_qvset_internal(sst_qvset);
     lv_destroy_light_qvset_internal(merged_qvset);
@@ -1043,16 +1217,10 @@ cleanup:
     return result;
 }
 
-LVDim32_t lv_get_vector_dim(const Livero* db)
-{
-    return db->schema->vector_dim;
-}
-
-LVVectorType lv_get_vector_type(const Livero* db)
-{
-    return db->schema->vector_type;
-}
-
+/*
+ * Free a query result set: each result's key/value copies, the results array,
+ * then the set. NULL-safe.
+ */
 void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
     if (qrset) {
         if (qrset->results) {
@@ -1066,6 +1234,29 @@ void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
     }
 }
 
+// Accessors for the fixed schema config (set at create, immutable after).
+LVDim32_t lv_get_vector_dim(const Livero* db)
+{
+    return db->schema->vector_dim;
+}
+
+LVVectorType lv_get_vector_type(const Livero* db)
+{
+    return db->schema->vector_type;
+}
+
+/*
+ * Close the database: flush, sync, release everything. NULL-safe.
+ *
+ * The flush-on-close is REQUIRED, not just tidiness: if the memtable holds
+ * writes (especially DELETE tombstones) that were never flushed, closing
+ * without flushing would lose them — and on reopen the WAL replay could
+ * resurrect keys that were deleted. So we flush any pending memtable to the SST
+ * first, then fsync, then close fds and free in-memory structures.
+ * (This was a real bug: deletes reappearing after close/reopen — see the flush
+ * below.)
+ */
+
 LVStatus lv_close(Livero* db)
 {
     if (!db) return LV_OK;
@@ -1074,8 +1265,9 @@ LVStatus lv_close(Livero* db)
 
     if (db->memtable && db->memtable->node_count > 0)
     {
-        LVStatus fs = lv_flush_internal(db);
-        if (fs != LV_OK) result = fs;
+        result = lv_flush_internal(db);
+        // flush failure is reported via result, but we still release everything —
+    // close must not leak fds/memory even if the final flush fails.
     }
 
     if (db->sst_fd >= 0) fsync(db->sst_fd);
@@ -1164,23 +1356,16 @@ static LVStatus lv_prepare_db_dir_internal(char* db_path_out, const char* path)
     return lv_mkdir_p_internal(db_path_out);
 }
 
-/* ============================================================================
- * lv_open_internal — shared DB assembly + recovery.
+/*
+ * Shared open path for lv_create and lv_open: allocate the Livero handle, wire
+ * up all fds (schema, WAL, SST, vectors, vector_index), build the memtable and
+ * HNSW, then recover on-disk state into them.
  *
- * Contract: the caller (lv_create / lv_open) has ALREADY resolved the schema:
- *   - schema      : a fully-built LVSchema* (from disk on open, or freshly
- *                   created + written to disk on create).
- *   - schema_fd   : an open fd for schema.lv (owned by the DB from here on).
- *   - db_path     : the ".../LV" directory, already created (mkdir done).
- *
- * This function does NOT read the user's schema arguments. It builds HNSW from
- * `schema` (the authoritative, disk-backed one), so there is no way for a
- * caller-supplied dim/type to disagree with what is on disk.
- *
- * On failure it cleans up via lv_close (which frees schema, closes schema_fd,
- * etc.), so ownership of schema/schema_fd transfers into LV_DB before any
- * fallible step that could trigger cleanup.
- * ========================================================================== */
+ * OWNERSHIP: takes over `schema` and `schema_fd` immediately (stored in LV_DB)
+ * so lv_close can release them exactly once on any later failure. The one
+ * exception — LV_DB allocation itself failing — is handled in cleanup, where
+ * this function still owns them. (See the cleanup comment.)
+ */
 static LVStatus lv_open_internal(Livero** db, const char* db_path,
     const LVSize32_t flush_threshold,
     LVSchema* schema, int schema_fd)
@@ -1313,7 +1498,32 @@ cleanup:
     return result;
 }
 
-//must be called after open wal, sst, vectors
+/*
+ * Rebuild in-memory state from disk on open. Must run AFTER wal/sst/vectors fds
+ * are opened.
+ *
+ * KEY DESIGN: the HNSW graph is NOT persisted. Only the raw vectors are
+ * (vectors.lv). On recover we replay records and RE-INSERT their vectors into a
+ * fresh HNSW, rebuilding the graph from scratch. This keeps the on-disk format
+ * simple (no graph serialization / no dangling internal-id references) at the
+ * cost of rebuild time — a deliberate trade for an embedded, on-device store.
+ *
+ * Two sources:
+ *   1. WAL: replay into the memtable (wal_recover), then walk the memtable and
+ *      re-insert each live record's vector into the HNSW. A TRUNCATED result is
+ *      NOT an error — it means the last record was a torn write from a crash;
+ *      we keep everything up to it. (Any other error is fatal.)
+ *   2. SST: for each indexed record, re-insert its vector too — BUT skip keys
+ *      that already exist in the memtable (the WAL/memtable version is newer, so
+ *      the SST copy is stale). SST vectors are marked "flushed" (their data
+ *      lives on disk, not in a memtable node).
+ *
+ * Tombstones carry LV_NO_VECTOR_ID, so the vector_id checks naturally skip them.
+ *
+ * Finally, next_seq / next_vector_id are the MAX across both sources (+1 already
+ * applied by each), so new ids never collide with recovered ones.
+ */
+
 static LVStatus lv_recover_internal(Livero* db) {
     LVStatus result = LV_OK;
 
@@ -1458,6 +1668,24 @@ static LVStatus lv_check_db_corruption_internal(const Livero* db) {
     return db->magic == LV_MAGIC ? LV_OK : LV_ERR_CORRUPT;
 }
 
+/*
+ * The actual write path, shared by put and the update/delete variants. Order
+ * matters:
+ *   1. If there's a vector: persist it to vectors.lv AND insert it into the
+ *      HNSW graph, then bump next_vector_id. (Vector goes in first because the
+ *      memtable node will link to its HNSW node afterward.)
+ *   2. Pick a random skiplist level (coin flips, P = LV_SKIPLIST_P).
+ *   3. Append to the WAL — durability BEFORE the record is visible in memory,
+ *      so a crash can replay it.
+ *   4. Insert into the memtable.
+ *   5. If there was a vector, cross-link the memtable node and its HNSW node
+ *      (each can reach the other).
+ *   6. Bump next_seq; flush to SST if the memtable hit flush_threshold.
+ *
+ * WAL-before-memtable is the write-ahead invariant: a record is durable on disk
+ * before it's live in memory.
+ */
+
 static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t current_seq, const LVVectorId64_t current_vector_id, const void* key, const LVKeyLen32_t key_len, const void* value, const LVValueLen32_t value_len, const void* vector, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const void* memory_field_buffer) {
     LVStatus result = LV_OK;
 
@@ -1497,6 +1725,8 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
     void* VALUE = value;
     LVValueLen32_t VALUE_LEN = value_len;
 
+    // no key given: use this record's seq as a unique key (always distinct,
+    // since seq is monotonic). Lets vector-only records exist without a caller key.
     if (KEY == NULL)
     {
         KEY = &current_seq;
@@ -1508,6 +1738,9 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
         VALUE_LEN = 0;
     }
 
+    // random tower height for this skiplist node: keep leveling up while a coin
+    // flip stays under P, capped at MAX_LEVEL. Higher levels get exponentially
+    // rarer — this is what gives the skiplist its O(log n) shape.
     LVLevel8_t new_level = 1;
 
     while ((xorshift() % 100 <= LV_SKIPLIST_P) && new_level < LV_SKIPLIST_MAX_LEVEL)
@@ -1518,6 +1751,8 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
     // append to WAL
 
     if (field_size > 0) {
+        // WAL stores the disk-encoded field bytes (endian-normalized); the memtable
+        // keeps the in-memory form. So convert here for the WAL copy only.
         char wal_field_buffer[field_size];
         schema_field_memmory_to_disk(memory_field_buffer, field_size, wal_field_buffer);
 
@@ -1559,8 +1794,17 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
 }
 
 
-
-
+/*
+ * Flush the memtable to the SST and reset it. Uses atomic-rename for crash
+ * safety: write a full new SST to sst.tmp, fsync it, then rename it over sst.lv
+ * in one atomic step — a crash leaves either the old SST or the new one, never
+ * a half-written file.
+ *
+ * After the new SST is in place: mark every flushed vector's HNSW node as
+ * "flushed" (its data now lives in the SST, not a memtable node), swap in a
+ * fresh empty memtable, and truncate the WAL (its records are now durable in
+ * the SST — this is the ONLY place the WAL is cleared; see wal.h).
+ */
 static LVStatus lv_flush_internal(Livero* db) {
     LVStatus result = LV_OK;
 
@@ -1581,14 +1825,17 @@ static LVStatus lv_flush_internal(Livero* db) {
     if ((result = sst_flush(new_fd, old_fd, db->vector_index_fd, db->memtable->head->levels[0])) != LV_OK) goto _return;
 
     fsync(new_fd);
-    if (old_fd >= 0) close(old_fd);
-    db->sst_fd = new_fd;
+
 
     // atomic rename
     if (rename(sst_tmp_path, sst_path) != 0) {
         result = LV_ERR_IO;
+        close(new_fd);
         goto _return;
     };
+
+    if (old_fd >= 0) close(old_fd);
+    db->sst_fd = new_fd;
 
     LVNode* current = db->memtable->head->levels[0];
     while (current->type != LV_NODE_TAIL) {
@@ -1607,7 +1854,8 @@ static LVStatus lv_flush_internal(Livero* db) {
         goto _return;
     };
 
-    // wal truncate
+    // WAL is now redundant: everything it held is durable in the new SST. This
+    // is the only place we truncate it. (Recover never clears it — see wal.h.)
     ftruncate(db->wal_fd, 0);
     lseek(db->wal_fd, 0, SEEK_SET);
 
