@@ -1,5 +1,7 @@
 # livero
 
+English | [한국어](README.ko.md)
+
 An embeddable, on-device vector database written in C, with zero external
 dependencies.
 
