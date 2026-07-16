@@ -237,6 +237,7 @@ ffibuilder.set_source(
     # build turns ASan on, but a CFFI module compiled with ASan would clash with
     # the (non-ASan) Python interpreter that loads it. Memory checking of the
     # Python path is a separate task for later.
+    extra_compile_args=["-O2", "-DNDEBUG", "-march=native"],
 )
 
 if __name__ == "__main__":
