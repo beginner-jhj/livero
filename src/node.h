@@ -1,6 +1,32 @@
 #ifndef NODE
 #define NODE
 
+/*
+ * node.h — LVNode: the record cell shared by the memtable, WAL, and SST paths
+ *
+ * WHAT
+ *   One LVNode holds a single record: its op (put/delete), seq, key, value,
+ *   vector_id, and metadata fields, plus the skip-list level pointers. It's the
+ *   in-memory unit the memtable stores, the WAL rebuilds on recovery, and the
+ *   SST reads/writes.
+ *
+ * FLEXIBLE LAYOUT (one allocation)
+ *   A node is a single arena block laid out as:
+ *     [ LVNode header ][ levels[]: level ptrs ][ key ][ value ][ field bytes ]
+ *   levels[] is a flexible array member; key/value/fields follow it, located by
+ *   node_key_offset / node_value_offset / node_field_offset. One allocation per
+ *   node (no separate malloc per part) keeps nodes compact and arena-friendly.
+ *
+ * ORDERING (node_cmp) — the rule the whole engine leans on
+ *   Nodes sort by key ascending, and among EQUAL keys by seq DESCENDING (newest
+ *   first). Sentinels (HEAD/TAIL) always sort to the ends. This single rule is
+ *   why table_search returns the newest version (first match at level 0), and
+ *   why SST merge lets the memtable (newer seq) win over the old SST for the
+ *   same key. See node_cmp.
+ *
+ * MEMORY: nodes are arena-allocated; never freed individually.
+ */
+
 #include "lv_internal.h"
 
 typedef struct LVNode

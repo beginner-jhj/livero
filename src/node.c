@@ -4,6 +4,14 @@
 #include <string.h>
 #include "query.h"
 
+
+/*
+ * Allocate one node sized for its level + key + value + fields, and copy the
+ * record data in. Single arena allocation; key/value/fields are placed after
+ * the levels[] array via the node_*_offset helpers. align = -1 lets the arena
+ * pick max_align_t (the vector isn't stored here, so no SIMD alignment needed).
+ */
+
 LVNode* node_create(LVArena* arena, const LVNodeType type, const LVSeq64_t seq, const LVNodeOp op, const LVLevel8_t level, const LVKeyLen32_t key_len, const void* key, const LVValueLen32_t value_len, const void* value, const LVVectorId64_t vector_id, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const LVSize32_t field_size, const void* field_buffer)
 {
     LVNode* node = NULL;
@@ -62,6 +70,12 @@ _return:
     return node;
 }
 
+/*
+ * Like node_create but allocates WITHOUT copying data in — reserves a
+ * correctly-sized node for the caller to fill. Used by WAL recovery, which
+ * reads each field directly into the reserved node's key/value/field regions.
+ */
+
 LVNode* node_reserve(LVArena* arena, const LVLevel8_t level, const LVKeyLen32_t key_len, const LVValueLen32_t value_len, const LVSize32_t field_size) {
     const LVSize32_t size_to_reserve = sizeof(LVNode) + level * sizeof(LVNode*) + key_len + value_len + field_size;
     return (LVNode*)arena_allocate(arena, size_to_reserve, -1);
@@ -82,8 +96,25 @@ LVSize32_t node_field_offset(const LVLevel8_t level, const LVKeyLen32_t klen, co
     return node_value_offset(level, klen) + vlen;
 }
 
-//-1: a < b
-// 1: a > b
+/*
+ * Total order over nodes. Returns <0 if a<b, >0 if a>b (never 0 for two DATA
+ * nodes — see below).
+ *
+ * For two DATA nodes:
+ *   1. Compare keys lexicographically (memcmp over the shorter length).
+ *   2. If one key is a prefix of the other, the shorter key is smaller.
+ *   3. If keys are fully EQUAL, order by seq DESCENDING — the HIGHER seq
+ *      (newer version) sorts FIRST. This is the core versioning rule: newest
+ *      wins. table_search relies on it (first match = latest), and SST merge
+ *      relies on it (memtable's newer seq beats the old SST copy).
+ *
+ * Two DATA nodes never compare equal: keys can tie, but seqs are unique per
+ * key, so there's always a tiebreak. (That's why the equal-key branch returns
+ * only -1/1, never 0.)
+ *
+ * Sentinels: HEAD sorts before everything, TAIL after everything — so skip-list
+ * boundaries need no special-casing at call sites.
+ */
 
 int node_cmp(const LVNodeType type_a, const void* key_a, const LVKeyLen32_t klen_a, const LVSeq64_t seq_a, const LVNodeType type_b, const void* key_b, const LVKeyLen32_t klen_b, const LVSeq64_t seq_b)
 {
@@ -91,14 +122,12 @@ int node_cmp(const LVNodeType type_a, const void* key_a, const LVKeyLen32_t klen
     {
         const LVKeyLen32_t min_len = klen_a < klen_b ? klen_a : klen_b;
 
-        const int mcmp_result = memcmp(key_a, key_b, min_len); // compare their headers
+        const int mcmp_result = memcmp(key_a, key_b, min_len);
 
         if (mcmp_result != 0)
         {
             return mcmp_result;
         }
-
-        // if headers are same, compare their lengthes
 
         if (klen_a < klen_b)
         {
@@ -111,14 +140,14 @@ int node_cmp(const LVNodeType type_a, const void* key_a, const LVKeyLen32_t klen
         }
 
         else
-        { // if lengthes are same, comapre their sequences
-            // bigger seq must be prior
+        { // keys equal -> newer (bigger) seq comes FIRST. This ordering is the
+          // basis of the whole versioning scheme (see header/table_search).
             if (seq_a > seq_b)
             {
                 return -1;
             }
 
-            else // seqs of data nodes can not be equal
+            else 
             {
                 return 1;
             }
@@ -144,7 +173,7 @@ int node_cmp(const LVNodeType type_a, const void* key_a, const LVKeyLen32_t klen
                 return 1;
             }
 
-            else if (type_b == LV_NODE_TAIL)
+            else //type_b == LV_NODE_TAIL
             {
                 return -1;
             }
