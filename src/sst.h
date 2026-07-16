@@ -1,6 +1,47 @@
 #ifndef SST
 #define SST
 
+/*
+ * sst.h — Sorted String Table: immutable on-disk record storage
+ *
+ * WHAT
+ *   When the memtable fills, it is flushed to an SST: an immutable file holding
+ *   records sorted by key, plus an index block (key -> file offset) and a footer
+ *   (index location, counts, next seq/vector_id). Once written, an SST never
+ *   changes — updates/deletes create new records in a newer memtable/SST, and
+ *   compaction merges them into a fresh SST (sst_write_record_with_old_sst).
+ *
+ * WHY IMMUTABLE
+ *   Immutability makes reads lock-free and safe, makes the index a simple sorted
+ *   array (binary-searchable), and turns flush/compaction into a clean linear
+ *   rewrite. This is the "SST" half of the LSM-tree.
+ *
+ * TWO LOOKUP PATHS
+ * ────────────────────────────────────────────────────────────────
+ *   1. BY KEY (sst_search_index_block): linear-search the index block for a key,
+ *      get its record offset, read the record.
+ *
+ *   2. BY VECTOR_ID (sst_query_with_hnsw + vector_index_fd): this is livero's
+ *      key design. After HNSW returns nearest vector_ids, we must fetch each
+ *      record from the SST. Searching the key-index for each would be
+ *      O(log N) per hit — and we don't even have the key, only the vector_id.
+ *
+ *      Solution: vector_index.lv — a companion file that is a flat array of
+ *      uint64 record offsets, indexed directly by vector_id. Vector_ids are
+ *      assigned sequentially, so record R's offset lives at byte (vector_id * 8)
+ *      in that file. One lseek/pread at vector_id*8 gives the SST offset in
+ *      O(1) — no search, no key needed. HNSW hit -> vector_id -> lseek ->
+ *      SST offset -> record. This is what makes on-device vector search over an
+ *      on-disk SST fast.
+ *
+ * RECORD LAYOUT — split head / tail (same idea as WAL)
+ *   Fixed-size head (seq, op, level, lengths, ids, masks) + variable tail
+ *   (key, value, field bytes). read_record_head first to learn sizes, then
+ *   read_record_tail. read_bytes_out lets the caller advance past each record.
+ *
+ * NOT THREAD-SAFE for writes; reads are safe by immutability.
+ */
+
 #include "lv_internal.h"
 
 typedef struct LVSSTIndexBlockEntry {

@@ -8,6 +8,40 @@
 #include "storage.h"
 #include "schema.h"
 
+/*
+ * Flush the memtable to a new SST, optionally MERGING with an existing SST.
+ * This is the LSM compaction step.
+ *
+ * Two modes:
+ *   old_fd < 0  : fresh flush. Walk the memtable in key order, write each live
+ *                 record to the new SST. (Deletes are dropped — see below.)
+ *   old_fd >= 0 : merge flush. The memtable AND an existing sorted SST are both
+ *                 sorted by key; merge them like the merge step of merge-sort,
+ *                 producing one sorted new SST.
+ *
+ * Both inputs are sorted by key, so we advance whichever side has the smaller
+ * key (node_cmp), and when both sides have the SAME key the memtable wins (it's
+ * newer) — that's how updates take effect.
+ *
+ * DELETES (tombstones):
+ *   A memtable delete means "this key is gone". On a fresh flush we simply skip
+ *   it. On a merge, a delete must also SUPPRESS the old SST's copy of that key:
+ *   when the memtable delete matches the old entry's key, we drop BOTH and
+ *   emit nothing. This is where a deleted key finally disappears from disk.
+ *   (Deletes never carry a vector, so they never touch vector_index.lv.)
+ *
+ * As each record is written we record its offset in the key index (for by-key
+ * lookup) AND, if it has a vector, write that offset into vector_index.lv at
+ * vector_id*8 — keeping the O(1) vector_id -> offset map in sync (see header).
+ *
+ * Finally we append the index block and a footer (index offset, record count,
+ * next seq/vector_id) so the SST is self-describing on reopen.
+ *
+ * MEMORY: index_set and old_entry.key are heap-allocated; the _return label
+ * frees both. old_entry.key is set to NULL after every free so the cleanup
+ * can't double-free (the pattern you'll see repeated at each advance).
+ */
+
 LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd, const LVNode* node) {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
@@ -104,16 +138,20 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
         uint64_t record_read = 0;
         LVNode* current_node = node;
         LVSeq64_t last_seq = 0;
-        LVVectorDisType last_vector_id = 0;
+        LVVectorId64_t last_vector_id = 0;
+
+        // ── merge loop: both memtable and old SST still have entries ──
+        // Compare current memtable key vs current old-SST key and advance the
+        // smaller. Equal keys -> memtable wins (newer); delete -> suppress old.
 
         while (has_old_entry && current_node->type != LV_NODE_TAIL) {
             const void* current_key = node_access_key(current_node);
             const LVKeyLen32_t current_key_len = current_node->key_len;
 
-            if (current_node->op == LV_DELETE) {
-
+            if (current_node->op == LV_DELETE) { // memtable says this key is deleted.
                 if (node_key_equal(current_key, current_key_len, old_entry.key, old_entry.key_len)) {
-                    //drop both
+                    // same key on both sides -> drop BOTH: the delete cancels the
+                    // old SST record. Nothing written; key is now truly gone.
                     free(old_entry.key);
                     old_entry.key = NULL;  /* freed; null so the _return cleanup can't double-free */
                     record_read += 1;
@@ -164,11 +202,13 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                     continue;
                 }
             }
-
-            const int cmp_result = node_cmp(LV_NODE_DATA, old_entry.key, old_entry.key_len, old_entry.seq, LV_NODE_DATA, current_key, current_key_len, current_node->seq);
-
             const uint64_t record_start_offset = lseek(new_fd, 0, SEEK_CUR);
 
+
+            
+            // same key, memtable side is live -> memtable version wins (newer),
+            // write it and skip the old SST copy. This is how an update replaces
+            // the on-disk record.
             if (node_key_equal(old_entry.key, old_entry.key_len, current_key, current_key_len)) {
                 const uint64_t record_start_offset = lseek(new_fd,0, SEEK_CUR);
                 if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
@@ -199,8 +239,10 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 continue;
             }
             /* different keys: existing cmp_result < 0 logic stays */
+            const int cmp_result = node_cmp(LV_NODE_DATA, old_entry.key, old_entry.key_len, old_entry.seq, LV_NODE_DATA, current_key, current_key_len, current_node->seq);
 
             if (cmp_result < 0) {
+                // old SST key smaller -> emit old record, advance old side.
                 if ((result = sst_write_record_with_old_sst(new_fd, old_fd, old_entry.offset)) != LV_OK) goto _return;
                 if ((result = sst_indexblockset_append(index_set, old_entry.key_len, old_entry.key, old_entry.seq, old_entry.vector_id, record_start_offset)) != LV_OK) goto _return;
 
@@ -223,7 +265,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
                 }
             }
             else {
-
+                // memtable key smaller -> emit memtable record, advance memtable.
                 if ((result = sst_write_record_with_node(new_fd, current_node)) != LV_OK) goto _return;
                 if ((result = sst_indexblockset_append(index_set, current_key_len, current_key, current_node->seq, current_node->vector_id, record_start_offset)) != LV_OK) goto _return;
                 if (current_node->vector_id != LV_NO_VECTOR_ID) {
@@ -240,13 +282,14 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
             record_count += 1;
         }
 
+        // memtable exhausted the merge but old SST may remain (and vice versa):
+        // drain whichever still has entries, in order.
         while (current_node->type != LV_NODE_TAIL) {
             const void* current_key = node_access_key(current_node);
             const LVKeyLen32_t current_key_len = current_node->key_len;
 
             if (current_node->op == LV_DELETE) {
                 last_seq = current_node->seq;
-                // deleted node's vector id is always LV_NO_VECTOR_ID
                 current_node = table_get_next_node(current_node);
                 continue;
             }
@@ -385,7 +428,7 @@ _return:
     return result;
 }
 
-LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVSSTIndexBlockEntry* entry, uint64_t* next_offset) {
+LVStatus sst_read_index_entry_at_offset(const int fd, const uint64_t offset, LVSSTIndexBlockEntry* entry, LVOffset64_t* next_offset) {
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
@@ -504,9 +547,7 @@ LVStatus sst_write_record_with_old_sst(const int new_fd, const int old_fd, const
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
     uint64_t off = read_offset;
-
-    // lseek(old_fd, read_offset, SEEK_SET);
-
+    
     //seq
     if ((result = pread_helper(old_fd, BUF_64, 8, off)) != LV_OK) return result;
     off += 8;
