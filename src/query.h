@@ -1,8 +1,34 @@
 #ifndef QUERY
 #define QUERY
 
+/*
+ * query.h — SQL-style filter pipeline: lex -> parse -> AST -> evaluate
+ *
+ * WHAT
+ *   Turns a filter string like  "age > 30 AND (city == 'NYC' OR vip == 1)"
+ *   into an AST, then evaluates that AST against each record to decide pass/fail.
+ *   livero's public API takes filters as strings (FFI-friendly: one char* over
+ *   JNI/Swift, no struct marshalling), so this module is the bridge from that
+ *   string to an executable predicate.
+ *
+ * PIPELINE
+ *   1. LEX  (LVSQLLexer, query_tokenize): scan the string char-by-char into
+ *      tokens (idents, literals, operators, AND/OR, parens).
+ *   2. PARSE (LVSQLParser, query_parse*): recursive-descent parser that builds
+ *      the AST. The function layering encodes operator precedence:
+ *        parse_or -> parse_and -> parse_term -> parse_filter
+ *      i.e. OR binds loosest, AND tighter, then parenthesized groups / leaf
+ *      comparisons. Field names are validated against the schema during parse.
+ *   3. AST (LVAstNode): AND/OR internal nodes (left/right) + filter leaves
+ *      (field op value). A recursive tree.
+ *   4. EVAL (query_eval_ast): recurse the tree against a record — AND/OR combine
+ *      children, a filter leaf compares the record's field to the literal.
+ *
+ * MEMORY: the AST is heap-allocated (query_create_*_node) and freed by
+ * query_destroy_ast; the parser owns its token buffer (query_destroy_parser).
+ */
+
 #include "lv_internal.h"
-#include <math.h>
 
 typedef enum LVQueryToken
 {

@@ -17,6 +17,13 @@ int query_is_op_token(const LVQueryToken token)
     return token == LV_TOKEN_GT || token == LV_TOKEN_GTE || token == LV_TOKEN_LT || token == LV_TOKEN_LTE || token == LV_TOKEN_EQ || token == LV_TOKEN_NEQ;
 }
 
+/*
+ * AST node constructors. Each OWNS its children on success and CLEANS THEM UP
+ * on failure — if a child is NULL (a failed sub-parse) or malloc fails, we
+ * destroy both children and return NULL. This lets the parser chain calls
+ * without leaking partial trees: a failure anywhere frees the subtree built so
+ * far. (query_destroy_ast walks and frees the whole tree; NULL-safe.)
+ */
 LVAstNode* query_create_and_node(LVAstNode* left, LVAstNode* right)
 {
     if (!left || !right)
@@ -36,6 +43,8 @@ LVAstNode* query_create_and_node(LVAstNode* left, LVAstNode* right)
     and_node->value.logic.right = right;
     return and_node;
 }
+
+//same ownership pattern as and_node
 LVAstNode* query_create_or_node(LVAstNode* left, LVAstNode* right)
 {
     if (!left || !right)
@@ -55,6 +64,14 @@ LVAstNode* query_create_or_node(LVAstNode* left, LVAstNode* right)
     or_node->value.logic.right = right;
     return or_node;
 }
+
+/*
+ * Build a leaf filter node (field op value). The field name and (for strings)
+ * the value are DEEP-COPIED and null-terminated, so the AST owns its data and
+ * outlives the original query string / tokens. String value is freed by
+ * query_destroy_ast.
+ */
+
 LVAstNode* query_create_filter_node(const char* field_name, const LVQueryOp op, const LVFilterValue* value)
 {
     LVAstNode* filter_node = NULL;
@@ -65,6 +82,8 @@ LVAstNode* query_create_filter_node(const char* field_name, const LVQueryOp op, 
     if (!filter_node) goto cleanup;
 
     filter_node->type = LV_AST_FILTER;
+    // filter is a leaf; null the logic pointers so query_destroy_ast (which
+    // checks type) never walks into garbage. (filter and logic share a union.)
     filter_node->value.logic.left = NULL;
     filter_node->value.logic.right = NULL;
     memcpy(filter_node->value.filter.field_name, field_name, strlen(field_name));
@@ -99,6 +118,11 @@ cleanup:
     return NULL;
 }
 
+/*
+ * Evaluate the AST against one record: recurse AND/OR, short-circuiting as C's
+ * && / || do, and evaluate filter leaves via query_eval_filter. Returns 1 if
+ * the record passes, 0 otherwise.
+ */
 int query_eval_ast(const LVAstNode* ast_node, const LVNode* record, const LVSchema* schema)
 {
     if (ast_node->type == LV_AST_AND)
@@ -122,10 +146,15 @@ LVStatus query_eval_filter(const LVFilter* filter, const LVNode* node, const LVS
 {
     LVStatus result = LV_QFILTER_F;
     LVMetaFieldHash* field_hash = schema_search_field_hash(schema->field_hashes, filter->field_name, strlen(filter->field_name));
-
+    // field names are validated at parse time, so this should be non-NULL.
+    // Guard anyway — a mismatched schema/query would otherwise deref NULL.
+    if (!field_hash) { result = LV_QFILTER_F; goto _return; }
+    
     int field_node_index = node_field_number_of_mask(node->field_mask, field_hash->mask);
     char* field = (char*)node_access_field(node, field_node_index);
 
+    // node_access_field points at [type:u8][payload]; skip the type byte to
+    // reach the value. (type is already known from field_hash->type.)
     field += sizeof(uint8_t);
 
     switch (field_hash->type)
@@ -277,6 +306,24 @@ void query_destroy_ast(LVAstNode* node)
 10. STR   = "'" .* "'"
 */
 
+/*
+ * Tokenize the filter string into the parser's token buffer. Single left-to-
+ * right pass over the characters (LVSQLLexer), emitting one LVSQLToken per
+ * lexeme. The grammar the parser expects is documented above; this stage only
+ * produces tokens, it doesn't check grammar structure (that's query_parse).
+ *
+ * Tokens carry a pointer + length INTO the original sql string (not copies) —
+ * start/size slice the input, so the sql buffer must outlive tokenization.
+ *
+ * Paren balance: lparen_count is bumped on '(' and dropped on ')'; a negative
+ * count (')' before its '(') or a nonzero count at EOF means unbalanced
+ * parentheses -> LV_ERR_INVALID_QUERY.
+ *
+ * complexity_score: bumped on each comparison operator. It later widens the
+ * vector search's EF so a heavily-filtered query doesn't lose recall (see the
+ * query.h note). That's why each op case does complexity_score += 1.
+ */
+
 LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
 {
     LVStatus result = LV_OK;
@@ -294,11 +341,14 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
         {
             LVSize32_t start_index = lexer.current_index;
             int is_float = 0;
+
+            // leading minus: consume it, then require an actual digit to follow
+            // (a lone '-' isn't a valid number).
             if (lexer.current_char == '-')
             {
                 query_advance_lexer(&lexer);
             }
-            if (!isdigit(lexer.current_char))
+            if (!isdigit(lexer.current_char)) // '-' not followed by digit -> error
             {
                 result = LV_ERR_INVALID_QUERY;
                 goto _return;
@@ -321,6 +371,9 @@ LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
                 }
                 query_advance_lexer(&lexer);
             }
+            
+            // tokens store (start, size) pointing INTO sql, not copies — cheap, but sql
+            // must stay alive through parsing.
             LVSize32_t size = lexer.current_index - start_index;
             const char* start = lexer.sql + start_index;
             if (is_float)
@@ -601,6 +654,12 @@ int query_lexer_expect_next_not(const LVSQLLexer* lexer, const char expected)
     return 0;
 }
 
+/*
+ * Digit test used to decide whether to start a NUMBER token. Deliberately also
+ * returns true for '-', so a leading minus opens the number path and negative
+ * literals (e.g. -30) tokenize correctly. This is why we don't just call the
+ * standard isdigit here — do NOT drop the '-' case.
+ */
 int query_lexer_isdigit(int c)
 {
     return isdigit(c) || c == '-';
