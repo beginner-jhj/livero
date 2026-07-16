@@ -1,6 +1,24 @@
 #ifndef SCHEMA
 #define SCHEMA
 
+/*
+ * schema.h — user-defined metadata fields: definition, bitmask filtering,
+ *            and on-disk <-> in-memory serialization
+ *
+ * WHAT
+ *   A schema fixes the vector config (dim, type, metric) and a set of typed
+ *   metadata FIELDS (int / float / string) that records can carry. Each field
+ *   is assigned a single-bit MASK; a record's field_mask is the OR of the masks
+ *   of the fields it actually has.
+ *
+ * WHY BITMASKS
+ *   Filtering is the hot path. Before evaluating a query against a record, we
+ *   can cheaply pre-check "does this record even have the fields the query
+ *   touches?" with one AND: (query_field_mask & record_field_mask). Records
+ *   that can't match are skipped without touching their data. Field name lookup
+ *   goes name -> hash -> mask via field_hashes (chained hash map).
+ */
+
 #include "lv_internal.h"
 
 typedef struct LVMetaFieldHash
@@ -15,8 +33,8 @@ typedef struct LVMetaFieldHash
 typedef struct LVSchema
 {
     LVDim32_t vector_dim;
-    LVVectorType vector_type; // 1byte
-    LVVectorMetric vector_metric; // 1byte
+    LVVectorType vector_type; 
+    LVVectorMetric vector_metric;
     LVCount32_t field_count;
     LVMetaFieldDef field_defs[LV_MAX_META_FIELDS];
     LVMetaFieldHash* field_hashes[LV_MAX_META_FIELDS];

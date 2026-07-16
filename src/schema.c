@@ -7,6 +7,28 @@
 #include "crc.h"
 #include <ctype.h>
 
+
+/*
+ * Build a schema from a vector config + field definitions.
+ *
+ * Each field gets a distinct single-bit mask, assigned in order: the first
+ * field is bit 0 (mask 1), the next bit 1 (mask 2), and so on (current_field_mask
+ * <<= 1 each iteration). A record's field_mask is later the OR of the masks of
+ * the fields it carries — which is what makes (query_mask & record_mask)
+ * filtering work.
+ *
+ * Field names are validated up front, because they become part of the query
+ * language and the stored format:
+ *   - can't collide with RESERVED words (VECTOR, AND, OR, ==, !=, <=, >=) — a
+ *     field named "AND" would be ambiguous to the query parser.
+ *   - must be [A-Za-z0-9_] only — keeps names safe to embed in query strings.
+ *   - length-bounded by LV_META_NAME_MAX.
+ * Any violation fails the whole create (goto cleanup); a schema is all-or-nothing.
+ *
+ * Returns NULL on invalid input or OOM (partial state torn down via
+ * schema_destroy, which tolerates NULL).
+ */
+
 LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_type, const LVVectorMetric vector_metric, const LVCount32_t field_count, const LVMetaFieldDef* field_defs)
 {
     LVSchema* schema = NULL;
@@ -41,7 +63,7 @@ LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_ty
     {
         const LVMetaFieldDef* current_def = field_defs + i;
 
-        if (strlen(current_def->name) > LV_META_NAME_MAX) goto cleanup;
+        if (strlen(current_def->name) >= LV_META_NAME_MAX) goto cleanup;
 
 
         for (int k = 0; LV_RESERVED_NAMES[k] != NULL; ++k)
@@ -90,6 +112,10 @@ void schema_destroy_field_hashes(LVMetaFieldHash** hashes)
         }
     }
 }
+
+/*
+ * Free the schema and its field-hash chains. Safe on NULL.
+ */
 
 void schema_destroy(LVSchema* schema)
 {
@@ -447,7 +473,7 @@ LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount
     for (int offset = 0; offset < field_count; ++offset) {
         LVMetaField* current_field = fields + offset;
 
-        size += 1;
+        size += 1; //size of LVMetaType (1byte)
 
         if (current_field->type == LV_META_STRING) {
             size += sizeof(uint32_t) + current_field->value.str.len;
@@ -462,6 +488,22 @@ LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount
 
     return size;
 }
+
+/*
+ * Serialize a record's fields into buffer, in ASCENDING BIT ORDER of their
+ * schema mask (bit 0 first, then bit 1, ...). We iterate every possible bit and
+ * emit the field that owns that bit, skipping absent ones.
+ *
+ * WHY bit order matters: the on-disk format stores only the field_mask, not
+ * names or an explicit order. deserialize_field walks the mask's set bits in the
+ * same ascending order, so writer and reader agree on field order purely from
+ * the bit positions. Change the order here and you must change it there.
+ *
+ * is_on_disk: on disk, multi-byte values go through put_fixed_* (fixed
+ * little-endian) so files are portable across architectures; in memory they're
+ * copied native. Layout per field: [type:u8][payload]. String payload is
+ * [len:u32][bytes]; float/int are 8 bytes.
+ */
 
 void schema_serialize_field(const LVSchema* schema, void* buffer,
     const LVMetaField* fields,
@@ -506,8 +548,11 @@ void schema_serialize_field(const LVSchema* schema, void* buffer,
         else if (current_field->type == LV_META_FLOAT) {
             double value = current_field->value.f64;
             if (is_on_disk == 1) {
+                // reinterpret the double's raw bytes as u64 so put_fixed_64 can write them
+                // in a fixed byte order (portable). NOT a numeric cast — the bit pattern is
+                // preserved, so the reader gets the exact same double.
                 uint64_t bits;
-                memcpy(&bits, &value, sizeof(bits));   // reinterpret double's bytes 
+                memcpy(&bits, &value, sizeof(bits));
                 put_fixed_64(BUF_64, bits);
                 memcpy(buffer, BUF_64, 8);
             }
@@ -659,6 +704,20 @@ void schema_field_disk_to_memory(const void* src, const LVSize32_t field_size, v
     }
 }
 
+/*
+ * Rebuild the LVMetaField array from a serialized field buffer + the record's
+ * field_mask. The buffer holds only [type][payload] per field, in ascending bit
+ * order (see schema_serialize_field); names are NOT stored, so we recover each
+ * field's name from the schema by matching its single mask bit.
+ *
+ * For each field we peel the lowest set bit off field_mask, resolve that bit to
+ * a field name via the schema's hash chains, then read the typed payload
+ * (is_on_disk selects fixed-endian vs native decode). Order is guaranteed to
+ * match the writer because both walk bits low-to-high.
+ *
+ * Returns a calloc'd array (freed by schema_destroy_fields), or NULL on OOM.
+ */
+
 LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk) {
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
@@ -667,19 +726,25 @@ LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVFi
 
     char* src_ptr = (char*)src;
 
-    LVCount32_t remaining = field_mask;
+    LVFieldMask32_t remaining = field_mask;
     for (int i = 0; i < field_count; ++i) {
-        LVCount32_t single_bit = remaining & (~remaining + 1);
+        LVFieldMask32_t single_bit = remaining & (~remaining + 1);
         remaining &= ~single_bit;
 
         for (int j = 0; j < LV_MAX_META_FIELDS; ++j) {
             LVMetaFieldHash* hash = hashes[j];
+            int found = 0;
             while (hash) {
                 if (hash->mask == single_bit) {
                     memcpy(result[i].name, hash->field_name, LV_META_NAME_MAX);
                     result[i].name[LV_META_NAME_MAX - 1] = '\0';
+                    found = 1;
+                    break;
                 }
                 hash = hash->next;
+            }
+            if (found) {
+                break;
             }
         }
 
@@ -706,6 +771,7 @@ LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVFi
             char* string = malloc(saved_len);
             if (!string) goto cleanup;
             memcpy(string, src_ptr, saved_len);
+            string[saved_len] = '\0';
 
             result[i].value.str.string = string;
             src_ptr += saved_len;
