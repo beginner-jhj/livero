@@ -26,7 +26,6 @@ set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address")
 # ── Library ──────────────────────────────────────────────────────────
 set(LV_SOURCES
     src/arena.c
-    src/crc.c
     src/wal.c
     src/schema.c
     src/storage.c
@@ -35,7 +34,6 @@ set(LV_SOURCES
     src/util.c
     src/helper.c
     src/node.c
-    src/hash.c
     src/query.c
     src/sst.c
 )

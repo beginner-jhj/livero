@@ -212,7 +212,6 @@ LV_SOURCES = [
     os.path.join(SRC_DIR, name)
     for name in [
         "arena.c",
-        "crc.c",
         "wal.c",
         "schema.c",
         "storage.c",
@@ -221,7 +220,6 @@ LV_SOURCES = [
         "util.c",
         "helper.c",
         "node.c",
-        "hash.c",
         "query.c",
         "sst.c",
     ]
