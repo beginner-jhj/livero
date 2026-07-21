@@ -3,8 +3,6 @@
 #include <string.h>
 #include "util.h"
 #include "helper.h"
-#include "hash.h"
-#include "crc.h"
 #include <ctype.h>
 
 
