@@ -2,7 +2,6 @@
 #include "helper.h"
 #include "node.h"
 #include "util.h"
-#include "hash.h"
 #include "vector.h"
 #include "query.h"
 #include "storage.h"
