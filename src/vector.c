@@ -7,7 +7,6 @@
 #include <float.h>
 #include "node.h"
 #include "sst.h"
-#include "hash.h"
 
 /*
  * Create an empty HNSW index for a given vector type (f32 or int8) and
