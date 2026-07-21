@@ -3,7 +3,6 @@
 #include "node.h"
 #include "schema.h"
 #include "util.h"
-#include "crc.h"
 #include <unistd.h>
 #include "helper.h"
 
