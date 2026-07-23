@@ -201,7 +201,7 @@ int32_t vector_i8_l2_sq(const int8_t* a, const int8_t* b, const LVDim32_t dim)
 {
     uint32x4_t sum_v1 = vdupq_n_u32(0); // vector to store sum
     uint32x4_t sum_v2 = vdupq_n_u32(0);
-    for (int i = 0; i < dim; i += 32)
+    for (LVDim32_t i = 0; i < dim; i += 32)
     {
         int8x16_t diff1 = vabdq_s8(vld1q_s8(a + i), vld1q_s8(b + i));
         int8x16_t diff2 = vabdq_s8(vld1q_s8(a + i + 16), vld1q_s8(b + i + 16));
@@ -238,7 +238,7 @@ float vector_f32_l2_sq(const float* a, const float* b, const LVDim32_t dim)
     float32x4_t sum_v1 = vdupq_n_f32(0.0f);
     float32x4_t sum_v2 = vdupq_n_f32(0.0f);
 
-    for (int i = 0; i < dim; i += 8)
+    for (LVDim32_t i = 0; i < dim; i += 8)
     {
         float32x4_t diff1 = vsubq_f32(vld1q_f32(a + i), vld1q_f32(b + i));
         float32x4_t diff2 = vsubq_f32(vld1q_f32(a + i + 4), vld1q_f32(b + i + 4));
@@ -254,7 +254,7 @@ int32_t vector_i8_dot(const int8_t* a, const int8_t* b, const LVDim32_t dim)
 {
     int32x4_t sum_dot1 = vdupq_n_s32(0);
     int32x4_t sum_dot2 = vdupq_n_s32(0);
-    for (int i = 0; i < dim; i += 32)
+    for (LVDim32_t i = 0; i < dim; i += 32)
     {
         int8x16_t va_1 = vld1q_s8(a + i);
         int8x16_t va_2 = vld1q_s8(a + i + 16);
@@ -299,7 +299,7 @@ float vector_f32_dot(const float* a, const float* b, const LVDim32_t dim)
     float32x4_t sum_dot1 = vdupq_n_f32(0.0f);
     float32x4_t sum_dot2 = vdupq_n_f32(0.0f);
 
-    for (int i = 0; i < dim; i += 8)
+    for (LVDim32_t i = 0; i < dim; i += 8)
     {
         float32x4_t va1 = vld1q_f32(a + i);
         float32x4_t vb1 = vld1q_f32(b + i);
