@@ -211,8 +211,6 @@ livero is a v1. Things I know are unoptimized or incomplete, roughly in order:
   binary search over the SST index block.
 - **VLA policy** — a few internal buffers are stack VLAs; moving them to the heap
   (for validation ordering and safety) is a planned sweep.
-- **Python packaging** — a proper pip package (and extracting the binding
-  converters into their own module).
 
 ## About
 
