@@ -13,6 +13,7 @@
 #include "query.h"
 #include "node.h"
 #include "sst.h"
+#include "simd.h"
 
 struct Livero
 {
@@ -1146,10 +1147,10 @@ LVStatus lv_query(const Livero* db, const char* query, const void* query_vector,
         LVI8DistFn i8_dist_fn = NULL;
 
         if (is_f32) {
-            f32_dist_fn = option->vector_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot;
+            f32_dist_fn = option->vector_metric == LV_METRIC_L2 ? simd_f32_l2_sq : simd_f32_dot;
         }
         else {
-            i8_dist_fn = option->vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot;
+            i8_dist_fn = option->vector_metric == LV_METRIC_L2 ? simd_i8_l2_sq : simd_i8_dot;
         }
 
         LVHnswQueryCtx hnsw_qctx = {
@@ -1580,12 +1581,12 @@ static LVStatus lv_recover_internal(Livero* db) {
                 if (db->schema->vector_type == LV_VEC_FLOAT32) {
                     float vector[db->schema->vector_dim];
                     if ((result = vector_read_f32_vector(db->vectors_fd, current_node->vector_id, db->schema->vector_dim, vector)) != LV_OK) goto _return;
-                    if ((result = vector_hnsw_f32_insert(db->hnsw, current_node->vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot)) != LV_OK) goto _return;
+                    if ((result = vector_hnsw_f32_insert(db->hnsw, current_node->vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? simd_f32_l2_sq : simd_f32_dot)) != LV_OK) goto _return;
                 }
                 else {
                     int8_t vector[db->schema->vector_dim];
                     if ((result = vector_read_i8_vector(db->vectors_fd, current_node->vector_id, db->schema->vector_dim, vector)) != LV_OK) goto _return;
-                    if ((result = vector_hnsw_i8_insert(db->hnsw, current_node->vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK) goto _return;
+                    if ((result = vector_hnsw_i8_insert(db->hnsw, current_node->vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? simd_i8_l2_sq : simd_i8_dot)) != LV_OK) goto _return;
                 }
                 const LVVectorId64_t internal_vector_id = vector_hnsw_get_internal_id(db->hnsw->id_hash_map, current_node->vector_id);
                 node_link_hnsw_node(current_node, db->hnsw->id_node_map->map[internal_vector_id]);
@@ -1624,7 +1625,7 @@ static LVStatus lv_recover_internal(Livero* db) {
                             goto _return;
                         };
 
-                        if ((result = vector_hnsw_f32_insert(db->hnsw, entry.vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot)) != LV_OK) {
+                        if ((result = vector_hnsw_f32_insert(db->hnsw, entry.vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? simd_f32_l2_sq : simd_f32_dot)) != LV_OK) {
                             free(entry.key);
                             goto _return;
                         };
@@ -1636,7 +1637,7 @@ static LVStatus lv_recover_internal(Livero* db) {
                             free(entry.key);
                             goto _return;
                         };
-                        if ((result = vector_hnsw_i8_insert(db->hnsw, entry.vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK) {
+                        if ((result = vector_hnsw_i8_insert(db->hnsw, entry.vector_id, vector, db->schema->vector_metric == LV_METRIC_L2 ? simd_i8_l2_sq : simd_i8_dot)) != LV_OK) {
                             free(entry.key);
                             goto _return;
                         };
@@ -1699,7 +1700,7 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
             {
                 return result;
             }
-            if ((result = vector_hnsw_f32_insert(db->hnsw, current_vector_id, f32_vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_f32_l2_sq : vector_f32_dot)) != LV_OK)
+            if ((result = vector_hnsw_f32_insert(db->hnsw, current_vector_id, f32_vector, db->schema->vector_metric == LV_METRIC_L2 ? simd_f32_l2_sq : simd_f32_dot)) != LV_OK)
             {
                 return result;
             }
@@ -1711,7 +1712,7 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
             {
                 return result;
             }
-            if ((result = vector_hnsw_i8_insert(db->hnsw, current_vector_id, i8_vector, db->schema->vector_metric == LV_METRIC_L2 ? vector_i8_l2_sq : vector_i8_dot)) != LV_OK)
+            if ((result = vector_hnsw_i8_insert(db->hnsw, current_vector_id, i8_vector, db->schema->vector_metric == LV_METRIC_L2 ? simd_i8_l2_sq : simd_i8_dot)) != LV_OK)
             {
                 return result;
             }
