@@ -23,6 +23,7 @@ We use CFFI's *API mode* (not ABI mode). The difference matters:
 """
 
 import os
+import platform
 from cffi import FFI
 
 ffibuilder = FFI()
@@ -208,6 +209,19 @@ ffibuilder.cdef("""
 # public header gives the compiler the true definitions, which CFFI cross-checks
 # against the cdef above. `sources=` lists Livero's .c files so they compile
 # directly into this module (the self-contained choice; no external .dylib).
+arch = platform.machine().lower()
+
+# Map architecture to the corresponding SIMD source file
+if arch in ("arm64", "aarch64"):
+    simd_source = "simd_neon.c"
+elif arch in ("x86_64", "amd64", "x86"):
+    simd_source = "simd_sse2.c"
+else:
+    raise RuntimeError(
+        f"Unsupported architecture for SIMD optimization: {arch}. "
+        "Only ARM (NEON) and x86 (SSE2) are supported."
+    )
+
 LV_SOURCES = [
     os.path.join(SRC_DIR, name)
     for name in [
@@ -222,6 +236,7 @@ LV_SOURCES = [
         "node.c",
         "query.c",
         "sst.c",
+        simd_source,  # Dynamically injected based on CPU
     ]
 ]
 
