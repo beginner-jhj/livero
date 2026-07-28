@@ -454,7 +454,7 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, 
 
             LVSize32_t update_start = layer == 0 ? 0 : HNSW_M0 + (layer - 1) * HNSW_M;
 
-            const LVSize32_t neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, hnsw->result_heap->entries, hnsw->result_heap->size, neighbors, update_start, is_f32);
+            const LVSize32_t neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, hnsw->result_heap->entries, hnsw->result_heap->size, neighbors, update_start, is_f32, f32_dist_fn, i8_dist_fn);
 
             neighbor_counts[layer] = neighbor_count;
 
@@ -463,7 +463,7 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, 
             {
                 LVHnswNode* neighbor_node = (LVHnswNode*)hnsw->id_node_map->map[neighbors[update_start + i]];
 
-                vector_update_node_neighbor(hnsw, neighbor_node, layer, new_internal_id, vector);
+                vector_update_node_neighbor(hnsw, neighbor_node, layer, new_internal_id, vector,is_f32, f32_dist_fn, i8_dist_fn);
             }
 
             // Carry this layer's results down as next layer's entry points.
@@ -759,7 +759,7 @@ _return:
  * offset — see the neighbor layout note).
  */
 
-LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const LVLevel8_t layer, LVHnswEntry* candidates, const LVSize32_t candidates_size, LVVectorId64_t* neighbor_list, LVSize32_t neighbor_update_start, const int is_f32)
+LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const LVLevel8_t layer, LVHnswEntry* candidates, const LVSize32_t candidates_size, LVVectorId64_t* neighbor_list, LVSize32_t neighbor_update_start, const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
 
     qsort(candidates, candidates_size, sizeof(LVHnswEntry), is_f32 ? cmp_f32_entry : cmp_i32_entry);
@@ -781,7 +781,7 @@ LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const 
             void* selected_vector = hnsw->id_vector_map->map[result[j].id];
             if (is_f32)
             {
-                float dist_candidate_to_neighbor = vector_f32_l2_sq(
+                float dist_candidate_to_neighbor = f32_dist_fn(
                     (float*)(candidate_vector), // candidate
                     (float*)(selected_vector),  // result[j]
                     hnsw->aligned_dim);
@@ -793,7 +793,7 @@ LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const 
             }
             else
             {
-                int32_t dist_candidate_to_neighbor = vector_i8_l2_sq((int8_t*)(candidate_vector), (int8_t*)(selected_vector), hnsw->aligned_dim);
+                int32_t dist_candidate_to_neighbor = i8_dist_fn((int8_t*)(candidate_vector), (int8_t*)(selected_vector), hnsw->aligned_dim);
                 if (candidates[i].dis.i32 >= dist_candidate_to_neighbor)
                 {
                     keep = 0;
@@ -904,7 +904,7 @@ _return:
  * node's flat neighbor array (see vector_access_neighbors / layout note).
  */
 
-void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_t layer, const LVVectorId64_t neighbor_id, const void* neighbor_vector)
+void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_t layer, const LVVectorId64_t neighbor_id, const void* neighbor_vector,const int is_f32, LVF32DistFn f32_dist_fn, LVI8DistFn i8_dist_fn)
 {
     LVSize32_t prev_neighbor_count = node->neighbor_counts[layer];
 
@@ -913,8 +913,6 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
     LVSize32_t layer_offset = (layer == 0) ? 0 : HNSW_M0 * sizeof(LVVectorId64_t) + (layer - 1) * HNSW_M * sizeof(LVVectorId64_t);
 
     const LVSize32_t M = layer == 0 ? HNSW_M0 : HNSW_M;
-
-    const int is_f32 = hnsw->vector_type == LV_VEC_FLOAT32;
 
     if (prev_neighbor_count + 1 > M) {
         LVHnswEntry candidates[M + 1];
@@ -926,12 +924,12 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
             void* candidate_vector = hnsw->id_vector_map->map[id];
             candidates[i].id = id;
             if (is_f32) {
-                float dis_candidate_to_current_node = vector_f32_l2_sq((float*)current_node_vector, (float*)candidate_vector, hnsw->aligned_dim);
+                float dis_candidate_to_current_node = f32_dist_fn((float*)current_node_vector, (float*)candidate_vector, hnsw->aligned_dim);
                 candidates[i].dis.f32 = dis_candidate_to_current_node;
                 candidates[i].dis_type = LV_DIS_F32;
             }
             else {
-                int32_t dis_candidate_to_ciurrent_node = vector_i8_l2_sq((int8_t*)current_node_vector, (int8_t*)candidate_vector, hnsw->aligned_dim);
+                int32_t dis_candidate_to_ciurrent_node = i8_dist_fn((int8_t*)current_node_vector, (int8_t*)candidate_vector, hnsw->aligned_dim);
                 candidates[i].dis.i32 = dis_candidate_to_ciurrent_node;
                 candidates[i].dis_type = LV_DIS_I32;
             }
@@ -939,17 +937,17 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
         }
         candidates[M].id = neighbor_id;
         if (is_f32) {
-            float dis = vector_f32_l2_sq((float*)current_node_vector, (float*)neighbor_vector, hnsw->aligned_dim);
+            float dis = f32_dist_fn((float*)current_node_vector, (float*)neighbor_vector, hnsw->aligned_dim);
             candidates[M].dis.f32 = dis;
             candidates[M].dis_type = LV_DIS_F32;
         }
         else {
-            int32_t dis = vector_i8_l2_sq((int8_t*)current_node_vector, (int8_t*)neighbor_vector, hnsw->aligned_dim);
+            int32_t dis = i8_dist_fn((int8_t*)current_node_vector, (int8_t*)neighbor_vector, hnsw->aligned_dim);
             candidates[M].dis.i32 = dis;
             candidates[M].dis_type = LV_DIS_I32;
         }
 
-        const LVSize32_t new_neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, candidates, M + 1, new_neighbors, 0, is_f32);
+        const LVSize32_t new_neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, candidates, M + 1, new_neighbors, 0, is_f32, f32_dist_fn, i8_dist_fn);
 
         for (int i = 0; i < new_neighbor_count; ++i) {
             neighbors[i] = new_neighbors[i];
