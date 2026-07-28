@@ -38,6 +38,18 @@ set(LV_SOURCES
     src/sst.c
 )
 
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch64)")
+    message(STATUS "ARM architecture detected. Adding NEON simd source file.")
+    list(APPEND LV_SOURCES src/simd_neon.c)
+
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|i386|i686)")
+    message(STATUS "x86 architecture detected. Adding SSE2 simd source file.")
+    list(APPEND LV_SOURCES src/simd_sse2.c)
+
+else()
+    message(FATAL_ERROR "Not supported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
 add_library(livero STATIC ${LV_SOURCES})
 
 target_include_directories(livero
