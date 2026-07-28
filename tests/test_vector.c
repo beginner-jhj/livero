@@ -119,27 +119,42 @@ static void test_distance_f32(void)
         "f32 negated-dot: self is <= cross (smaller == closer)");
 }
 
+// Run many random trials plus explicit boundary rows. Random catches the
+// "typical case" bugs; the fixed boundary cases catch overflow/sign errors
+// that random values almost never hit (the int8 extremes -128/127 with
+// opposite signs are the worst case for both l2 squaring and dot).
 static void test_distance_i8(void)
 {
     TEST_START(2, "i8 distance functions vs scalar reference");
 
     int8_t a[DIST_DIM], b[DIST_DIM];
+
+    // --- boundary case: max opposite extremes (worst case for overflow) ---
+    for (int i = 0; i < DIST_DIM; ++i) { a[i] = -128; b[i] = 127; }
+    expect_true(ref_l2_i8(a,b,DIST_DIM)      == vector_i8_l2_sq(a,b,DIST_DIM), "i8 L2 extremes");
+    expect_true(ref_neg_dot_i8(a,b,DIST_DIM) == vector_i8_dot(a,b,DIST_DIM),   "i8 dot extremes");
+
+    // --- boundary case: both at -128 (max magnitude, same sign) ---
+    for (int i = 0; i < DIST_DIM; ++i) { a[i] = -128; b[i] = -128; }
+    expect_true(vector_i8_l2_sq(a,b,DIST_DIM) == 0, "i8 L2 identical extremes == 0");
+
+    // --- many random trials ---
     lv_rand_seed(2);
-    for (int i = 0; i < DIST_DIM; ++i) {
-        a[i] = (int8_t)lv_rand_int_range(-100, 100);
-        b[i] = (int8_t)lv_rand_int_range(-100, 100);
+    for (int trial = 0; trial < 1000; ++trial) {
+        for (int i = 0; i < DIST_DIM; ++i) {
+            a[i] = (int8_t)lv_rand_int_range(-128, 127);
+            b[i] = (int8_t)lv_rand_int_range(-128, 127);
+        }
+        // exact equality is the right assertion for integer kernels: unlike
+        // float, there's no rounding, so SIMD and scalar must match bit-for-bit.
+        if (ref_l2_i8(a,b,DIST_DIM) != vector_i8_l2_sq(a,b,DIST_DIM)) {
+            expect_true(0, "i8 L2 random trial mismatch"); break;
+        }
+        if (ref_neg_dot_i8(a,b,DIST_DIM) != vector_i8_dot(a,b,DIST_DIM)) {
+            expect_true(0, "i8 dot random trial mismatch"); break;
+        }
     }
-
-    int32_t l2_ref = ref_l2_i8(a, b, DIST_DIM);
-    int32_t l2_got = vector_i8_l2_sq(a, b, DIST_DIM);
-    expect_true(l2_ref == l2_got, "i8 L2 matches reference (exact)");
-
-    int32_t dot_ref = ref_neg_dot_i8(a, b, DIST_DIM);
-    int32_t dot_got = vector_i8_dot(a, b, DIST_DIM);
-    expect_true(dot_ref == dot_got, "i8 dot matches reference (negated, exact)");
-
-    int32_t l2_same = vector_i8_l2_sq(a, a, DIST_DIM);
-    expect_true(l2_same == 0, "i8 L2 of identical vectors == 0");
+    expect_true(1, "i8 L2/dot match reference over 1000 random trials");
 }
 
 /* ===========================================================================

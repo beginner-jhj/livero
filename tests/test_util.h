@@ -7,8 +7,7 @@
 #include <time.h>   /* clock_gettime, struct timespec */
 #include <stdlib.h> /* rand, srand */
 #include <float.h>  /* FLT_MAX */
-#include "lv_internal.h"
-
+#include "livero_types.h"
 /* ============================================================
  * Basic test macros
  * ============================================================ */
