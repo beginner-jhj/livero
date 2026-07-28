@@ -393,7 +393,7 @@ LVStatus sst_read_footer(const int fd, LVOffset64_t* indexblock_offset, LVBigCou
     }
 
     off_t file_size = lseek(fd, 0, SEEK_END);
-    if (file_size == -1 || file_size < 32) {
+    if (file_size == -1 || file_size < 32) { //32 is footer size
         result = LV_ERR_CORRUPT;
         goto _return;
     }
