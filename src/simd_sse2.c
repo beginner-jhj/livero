@@ -76,7 +76,7 @@ float simd_f32_dot(const float *a, const float *b, const LVDim32_t dim) {
   acc2 = _mm_add_ps(acc2, acc3);
   acc0 = _mm_add_ps(acc0, acc2);
 
-  return hsum_ps(acc0);
+  return -hsum_ps(acc0); // negated so smaller = closer, consistent with L2
 }
 
 int32_t simd_i8_l2_sq(const int8_t *a, const int8_t *b, const LVDim32_t dim) {
@@ -114,7 +114,7 @@ int32_t simd_i8_l2_sq(const int8_t *a, const int8_t *b, const LVDim32_t dim) {
     acc = _mm_add_epi32(acc, sq_hi);
   }
 
-  return -hsum_epi32(acc); // negated so smaller = closer, consistent with L2
+  return hsum_epi32(acc); 
 }
 
 int32_t simd_i8_dot(const int8_t *a, const int8_t *b, const LVDim32_t dim) {
