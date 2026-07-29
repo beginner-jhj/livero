@@ -3,7 +3,6 @@
 #include "util.h"
 #include "arena.h"
 #include <math.h>
-#include <arm_neon.h>
 #include <float.h>
 #include "node.h"
 #include "sst.h"
@@ -195,122 +194,6 @@ LVStatus vector_read_i8_vector(const int fd, const LVVectorId64_t vector_id, con
     LVStatus result = LV_OK;
     result = pread_helper(fd, vector_out, dim, vector_id * dim);
     return result;
-}
-
-int32_t vector_i8_l2_sq(const int8_t* a, const int8_t* b, const LVDim32_t dim)
-{
-    uint32x4_t sum_v1 = vdupq_n_u32(0); // vector to store sum
-    uint32x4_t sum_v2 = vdupq_n_u32(0);
-    for (LVDim32_t i = 0; i < dim; i += 32)
-    {
-        int8x16_t diff1 = vabdq_s8(vld1q_s8(a + i), vld1q_s8(b + i));
-        int8x16_t diff2 = vabdq_s8(vld1q_s8(a + i + 16), vld1q_s8(b + i + 16));
-
-        uint16x8_t diff_low1 = vmovl_u8(vget_low_u8(diff1)); // square will be bigger than 8 bit, so we have to move bits to the bigger container
-        /*
-            The suffix 'l' in vmla'l'_u16 means that it will make size of data doubled, so
-            diff_low will be 32*8=256 bits.
-            But NEON register can only store 128bits,
-            so we have to split diff_low into two parts (low, high) to store data in a 32*4 container
-
-        */
-        sum_v1 = vmlal_u16(sum_v1, vget_low_u16(diff_low1), vget_low_u16(diff_low1));
-        sum_v1 = vmlal_u16(sum_v1, vget_high_u16(diff_low1), vget_high_u16(diff_low1));
-
-        uint16x8_t diff_low2 = vmovl_u8(vget_low_u8(diff2));
-        sum_v2 = vmlal_u16(sum_v2, vget_low_u16(diff_low2), vget_low_u16(diff_low2));
-        sum_v2 = vmlal_u16(sum_v2, vget_high_u16(diff_low2), vget_high_u16(diff_low2));
-
-        uint16x8_t diff_high1 = vmovl_u8(vget_high_u8(diff1));
-        sum_v1 = vmlal_u16(sum_v1, vget_low_u16(diff_high1), vget_low_u16(diff_high1));
-        sum_v1 = vmlal_u16(sum_v1, vget_high_u16(diff_high1), vget_high_u16(diff_high1));
-
-        uint16x8_t diff_high2 = vmovl_u8(vget_high_u8(diff2));
-        sum_v2 = vmlal_u16(sum_v2, vget_low_u16(diff_high2), vget_low_u16(diff_high2));
-        sum_v2 = vmlal_u16(sum_v2, vget_high_u16(diff_high2), vget_high_u16(diff_high2));
-    }
-
-    return (int32_t)vaddvq_u32(vaddq_u32(sum_v1, sum_v2));
-}
-
-float vector_f32_l2_sq(const float* a, const float* b, const LVDim32_t dim)
-{
-    float32x4_t sum_v1 = vdupq_n_f32(0.0f);
-    float32x4_t sum_v2 = vdupq_n_f32(0.0f);
-
-    for (LVDim32_t i = 0; i < dim; i += 8)
-    {
-        float32x4_t diff1 = vsubq_f32(vld1q_f32(a + i), vld1q_f32(b + i));
-        float32x4_t diff2 = vsubq_f32(vld1q_f32(a + i + 4), vld1q_f32(b + i + 4));
-
-        sum_v1 = vfmaq_f32(sum_v1, diff1, diff1); // fma: Fused Multiply-Add, 'multiply-add' one shot.
-        sum_v2 = vfmaq_f32(sum_v2, diff2, diff2);
-    }
-
-    return vaddvq_f32(vaddq_f32(sum_v1, sum_v2));
-}
-
-int32_t vector_i8_dot(const int8_t* a, const int8_t* b, const LVDim32_t dim)
-{
-    int32x4_t sum_dot1 = vdupq_n_s32(0);
-    int32x4_t sum_dot2 = vdupq_n_s32(0);
-    for (LVDim32_t i = 0; i < dim; i += 32)
-    {
-        int8x16_t va_1 = vld1q_s8(a + i);
-        int8x16_t va_2 = vld1q_s8(a + i + 16);
-
-        int8x16_t vb_1 = vld1q_s8(b + i);
-        int8x16_t vb_2 = vld1q_s8(b + i + 16);
-
-        // get low of each vector
-        int16x8_t va_1_low = vmovl_s8(vget_low_s8(va_1));
-        int16x8_t va_2_low = vmovl_s8(vget_low_s8(va_2));
-
-        int16x8_t vb_1_low = vmovl_s8(vget_low_s8(vb_1));
-        int16x8_t vb_2_low = vmovl_s8(vget_low_s8(vb_2));
-
-        // calc each dot of each (va vb) pair
-        sum_dot1 = vmlal_s16(sum_dot1, vget_low_s16(va_1_low), vget_low_s16(vb_1_low));
-        sum_dot1 = vmlal_s16(sum_dot1, vget_high_s16(va_1_low), vget_high_s16(vb_1_low));
-
-        sum_dot2 = vmlal_s16(sum_dot2, vget_low_s16(va_2_low), vget_low_s16(vb_2_low));
-        sum_dot2 = vmlal_s16(sum_dot2, vget_high_s16(va_2_low), vget_high_s16(vb_2_low));
-
-        // get high of each vector
-        int16x8_t va_1_high = vmovl_s8(vget_high_s8(va_1));
-        int16x8_t va_2_high = vmovl_s8(vget_high_s8(va_2));
-
-        int16x8_t vb_1_high = vmovl_s8(vget_high_s8(vb_1));
-        int16x8_t vb_2_high = vmovl_s8(vget_high_s8(vb_2));
-
-        // calc each dot of each (va vb) pair
-        sum_dot1 = vmlal_s16(sum_dot1, vget_low_s16(va_1_high), vget_low_s16(vb_1_high));
-        sum_dot1 = vmlal_s16(sum_dot1, vget_high_s16(va_1_high), vget_high_s16(vb_1_high));
-
-        sum_dot2 = vmlal_s16(sum_dot2, vget_low_s16(va_2_high), vget_low_s16(vb_2_high));
-        sum_dot2 = vmlal_s16(sum_dot2, vget_high_s16(va_2_high), vget_high_s16(vb_2_high));
-    }
-
-    return -vaddvq_s32(vaddq_s32(sum_dot1, sum_dot2)); //returns negated dot product so that smaller = closer, consistent with L2
-}
-
-float vector_f32_dot(const float* a, const float* b, const LVDim32_t dim)
-{
-    float32x4_t sum_dot1 = vdupq_n_f32(0.0f);
-    float32x4_t sum_dot2 = vdupq_n_f32(0.0f);
-
-    for (LVDim32_t i = 0; i < dim; i += 8)
-    {
-        float32x4_t va1 = vld1q_f32(a + i);
-        float32x4_t vb1 = vld1q_f32(b + i);
-        float32x4_t va2 = vld1q_f32(a + i + 4);
-        float32x4_t vb2 = vld1q_f32(b + i + 4);
-
-        sum_dot1 = vfmaq_f32(sum_dot1, va1, vb1);
-        sum_dot2 = vfmaq_f32(sum_dot2, va2, vb2);
-    }
-
-    return -vaddvq_f32(vaddq_f32(sum_dot1, sum_dot2)); //returns negated dot product so that smaller = closer, consistent with L2
 }
 
 float vector_score_f32_l2(const float dist) {

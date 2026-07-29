@@ -243,11 +243,6 @@ LVStatus vector_read_f32_vector(const int fd, const LVVectorId64_t vector_id, co
 LVStatus vector_write_i8_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, const int8_t* vector);
 LVStatus vector_read_i8_vector(const int fd, const LVVectorId64_t vector_id, const LVDim32_t dim, int8_t* vector_out);
 
-int32_t vector_i8_l2_sq(const int8_t* a, const int8_t* b, const LVDim32_t dim);
-float vector_f32_l2_sq(const float* a, const float* b, const LVDim32_t dim);
-int32_t vector_i8_dot(const int8_t* a, const int8_t* b, const LVDim32_t dim);
-float vector_f32_dot(const float* a, const float* b, const LVDim32_t dim);
-
 float vector_score_f32_l2(const float dist);
 float vector_score_i32_l2(const int32_t dist);
 float vector_score_f32_dot(const float dist);
