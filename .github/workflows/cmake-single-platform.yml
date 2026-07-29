@@ -2,7 +2,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast:false
+      fail-fast: false
       matrix:
         build_type: [Debug, Release]
     steps:
