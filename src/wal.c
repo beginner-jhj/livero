@@ -1,4 +1,5 @@
 #include "wal.h"
+#include "livero_types.h"
 #include "storage.h"
 #include "node.h"
 #include "schema.h"
@@ -162,9 +163,9 @@ _return:
 LVStatus wal_recover(const int fd, LVMemTable* table, LVSeq64_t* next_seq_out, LVVectorId64_t* next_vector_id_out)
 {
     LVStatus result = LV_OK;
-    off_t wal_size = lseek(fd, 0, SEEK_END);
+    LVOffset64_t wal_size = lseek(fd, 0, SEEK_END);
     lseek(fd, 0, SEEK_SET);
-    off_t current_offset = 0;
+    LVOffset64_t current_offset = 0;
 
     uint8_t saved_op;
     LVSeq64_t saved_seq;
