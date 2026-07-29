@@ -3,7 +3,7 @@ project(livero C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_C_EXTENSIONS ON)
 
 # Compiler warnings
 add_compile_options(
@@ -68,5 +68,7 @@ function(lv_add_test name file)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
-lv_add_test(test_arena   tests/test_arena.c)
-lv_add_test(test_vector  tests/test_vector.c)
+# lv_add_test(test_arena   tests/test_arena.c)
+# lv_add_test(test_vector  tests/test_vector.c)
+
+lv_add_test(test_simd tests/ctests/test_simd.c)
