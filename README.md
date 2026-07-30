@@ -188,8 +188,7 @@ Notes:
 
 livero is a v1. Things I know are unoptimized or incomplete, roughly in order:
 
-- **x86 support** — currently ARM NEON only; a scalar fallback so it builds and
-  runs on x86 is next.
+- **x86 support** — Done: Now it supports x86 SSE2 SIMD.
 - **Concurrency** — livero is currently single-writer and not thread-safe in
   many places. Proper concurrency is a major direction: fine-grained thread
   safety for throughput, and running flush/compaction in the background (right
