@@ -1,4 +1,5 @@
 #include "util.h"
+#include <stdint.h>
 #include <time.h>
 
 LVStatus path_join(char* buf, LVSize32_t buf_size, const char* path, const char* dir)
@@ -75,7 +76,7 @@ LVOffset64_t get_fixed_64(const uint8_t* buf)
     return result;
 }
 
-LVCount32_t xorshift(void)
+uint32_t xorshift(void)
 {
     static uint32_t state = 0;
     if (state == 0) state = (uint32_t)time(NULL);
