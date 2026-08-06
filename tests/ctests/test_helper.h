@@ -1,36 +1,45 @@
-#ifndef  TEST_HELPER
+#ifndef TEST_HELPER
 #define TEST_HELPER
 
 #include "livero_types.h"
-#include "util.h"
-#include <stdint.h>
 #include <float.h>
 #include <math.h>
+#include <stdint.h>
 
 #define F32_EPS FLT_EPSILON
+#define TEST_RAND_SEED 0xDEADBEEF
 
-static float rand_f32(void){
-    const uint32_t random_value = xorshift();
-    float output = (float)((double)random_value / 4294967296.0);
-    output = random_value %2 == 0 ? -output:output;
-    return output;
+static uint32_t test_xorshift(void) {
+  static uint32_t state = TEST_RAND_SEED;
+  state ^= state << 13;
+  state ^= state >> 17;
+  state ^= state << 5;
+  return state;
 }
 
-static int8_t rand_i8(void)
-{
-    return -128 + (int8_t)(xorshift() % 255);
+static float rand_f32(void) {
+  const uint32_t random_value = test_xorshift();
+  float output = (float)((double)random_value / 4294967296.0);
+  output = random_value % 2 == 0 ? -output : output;
+  return output;
 }
 
-static void fill_f32_vector(float* vector, const LVDim32_t dim){
-    for(LVDim32_t i=0; i<dim; ++i){
-        vector[i] = rand_f32();
-    }
+static int8_t rand_i8(void) { return -128 + (int8_t)(test_xorshift() % 255); }
+
+static int32_t rand_i32_range(const int32_t min, const int32_t max) {
+  return min + (int32_t)(test_xorshift() % (max - min + 1));
 }
 
-static void fill_i8_vector(int8_t* vector, const LVDim32_t dim){
-    for(LVDim32_t i=0; i<dim; ++i){
-        vector[i] = rand_i8();
-    }
+static void fill_f32_vector(float *vector, const LVDim32_t dim) {
+  for (LVDim32_t i = 0; i < dim; ++i) {
+    vector[i] = rand_f32();
+  }
+}
+
+static void fill_i8_vector(int8_t *vector, const LVDim32_t dim) {
+  for (LVDim32_t i = 0; i < dim; ++i) {
+    vector[i] = rand_i8();
+  }
 }
 
 // Summing n floats accumulates rounding error that grows roughly with n
