@@ -128,12 +128,12 @@ int test_i8_dot(void) {
 
 int main(void) {
   if (test_f32_l2_sq() != 0)
-    return 1;
+    return -1;
   if (test_f32_dot() != 0)
-    return 1;
+    return -1;
   if (test_i8_l2_sq() != 0)
-    return 1;
+    return -1;
   if (test_i8_dot() != 0)
-    return 1;
+    return -1;
   return 0;
 }
