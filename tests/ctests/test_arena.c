@@ -18,7 +18,7 @@ const static LVSize32_t MAXIMUM_ALLOCATION_LENGTH = DEFAULT_BLOCK_SIZE * 2;
 const static LVSize32_t SIZES[] = {DEFAULT_BLOCK_SIZE, MID_BLOCK_SIZE,
                                    LARGE_BLOCK_SIZE};
 const static LVSize32_t SIZES_COUNT = sizeof(SIZES) / sizeof(LVSize32_t);
-const static LVCount32_t ALLOCATION_COUNT = 500;
+#define ALLOCATION_COUNT 500
 
 typedef struct {
   unsigned char *ptr;
