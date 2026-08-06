@@ -38,8 +38,8 @@
 
 #include "lv_internal.h"
 
-#define LV_ARENA_BLOCK_ALIGN 64  // blocks start 64B-aligned so any allocation
-                              // (HNSW vectors need 32B for NEON) lands aligned
+#define LV_ARENA_BLOCK_ALIGN64 64  // blocks start 64B-aligned so any allocation
+                              // (HNSW vectors need 64B for NEON) lands aligned
                               // via offset math. 64 = cache line, headroom.
 
 typedef struct LVArenaBlock{
@@ -57,6 +57,6 @@ LVArena* arena_create(const LVSize32_t block_capacity);
 
 void arena_destroy(LVArena* arena);
 
-void* arena_allocate(LVArena* arena,const LVSize32_t total,int32_t align);
+void* arena_allocate(LVArena* arena,const LVSize32_t size,const int32_t alignment);
 
 #endif
