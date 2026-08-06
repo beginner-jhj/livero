@@ -1,5 +1,6 @@
 #include "vector.h"
 #include "helper.h"
+#include "simd.h"
 #include "util.h"
 #include "arena.h"
 #include <math.h>
@@ -15,7 +16,7 @@
  * on type. Returns NULL on OOM (partial state is torn down via
  * vector_hnsw_destroy, which tolerates NULLs).
  *
- * aligned_dim rounds dim up to a multiple of vector_align (32) so SIMD kernels
+ * aligned_dim rounds dim up to a multiple of vector_align (64) so SIMD kernels
  * can stride over padded vectors without reading past the buffer. m_l = 1/ln(M)
  * is the level-generation constant (see vector_hnsw_layer).
  */
@@ -28,7 +29,7 @@ LVHnsw* vector_hnsw_create(const LVVectorType vector_type, const LVDim32_t dim)
 
     hnsw->current_max_layer = 0;
     hnsw->dim = dim;
-    hnsw->vector_align = 32;
+    hnsw->vector_align = SIMD_ALIGN64;
     hnsw->aligned_dim = (dim + (hnsw->vector_align - 1)) & ~(hnsw->vector_align - 1);
     hnsw->entry_node = NULL;
     hnsw->m_l = 1 / logf(HNSW_M);
