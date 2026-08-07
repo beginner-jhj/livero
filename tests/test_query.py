@@ -338,7 +338,6 @@ CONFIG_DIMS = [4, 8, 100]
 
 @pytest.mark.parametrize("vtype,metric", VECTOR_CONFIGS)
 @pytest.mark.parametrize("dim", CONFIG_DIMS)
-@pytest.mark.skip(reason="dot normalization is a v1.1 item")
 def test_vector_determinism_configs(harness, vtype, metric, dim):
     """Determinism across all (type, metric) combos. (SIMD regression, int8 too.)"""
     fm, db, rm = harness(int_fields=1, float_fields=0, string_fields=0,
@@ -351,7 +350,6 @@ def test_vector_determinism_configs(harness, vtype, metric, dim):
 
 @pytest.mark.parametrize("vtype,metric", VECTOR_CONFIGS)
 @pytest.mark.parametrize("dim", CONFIG_DIMS)
-@pytest.mark.skip(reason="dot normalization is a v1.1 item")
 def test_vector_ordering_configs(harness, vtype, metric, dim):
     """DESC ordering across combos: score non-increasing (dot negated -> same)."""
     fm, db, rm = harness(int_fields=1, float_fields=0, string_fields=0,
