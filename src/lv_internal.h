@@ -41,7 +41,7 @@ typedef struct LVHnsw LVHnsw;
 typedef struct LVHnswIDMap LVHnswIDMap;
 typedef union LVVectorDisValue
 {
-    uint32_t i32;
+    int32_t i32;
     float f32;
 } LVVectorDisValue;
 typedef struct LVHnswQueryCtx LVHnswQueryCtx;
