@@ -272,9 +272,9 @@ LVStatus vector_heap_insert(LVHnswHeap* heap, const LVHnswEntry* entry);
 
 void vector_heap_pop(LVHnswHeap* heap, LVHnswEntry* pop);
 
-LVStatus vector_hnsw_idmap_append(LVHnswIDMap* map, const LVVectorId64_t internal_id, const void* ptr);
+LVStatus vector_hnsw_idmap_append(LVHnswIDMap* map, const LVVectorId64_t internal_id, void* ptr);
 
-void vector_hnsw_link_memtable_node(LVHnsw* hnsw, const LVVectorId64_t internal_id, const LVNode* memtable_node);
+void vector_hnsw_link_memtable_node(LVHnsw* hnsw, const LVVectorId64_t internal_id, LVNode* memtable_node);
 void vector_hnsw_mark_flushed(LVHnsw* hnsw, const LVVectorId64_t internal_id);
 void vector_hnsw_mark_deleted(LVHnsw* hnsw, const LVVectorId64_t internal_id);
 void vector_hnsw_mark_updated(LVHnsw* hnsw, const LVVectorId64_t prev_internal_id);
