@@ -1,5 +1,6 @@
 #include "vector.h"
 #include "helper.h"
+#include "livero_types.h"
 #include "simd.h"
 #include "util.h"
 #include "arena.h"
@@ -155,7 +156,7 @@ LVStatus vector_write_f32_vector(const int fd, const LVVectorId64_t vector_id, c
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint64_t offset = vector_id * dim * 4;
-    for (int i = 0; i < dim; ++i)
+    for (LVDim32_t i = 0; i < dim; ++i)
     {
         uint32_t bits;
         memcpy(&bits, &vector[i], sizeof(uint32_t));
@@ -174,7 +175,7 @@ LVStatus vector_read_f32_vector(const int fd, const LVVectorId64_t vector_id, co
     LVStatus result = LV_OK;
     uint8_t BUF_32[4];
     uint64_t offset = vector_id * dim * 4;
-    for (int i = 0; i < dim; ++i) {
+    for (LVDim32_t i = 0; i < dim; ++i) {
         if ((result = pread_helper(fd, BUF_32, 4, offset)) != LV_OK) return result;
         uint32_t bits = get_fixed_32(BUF_32);
         memcpy(&vector_out[i], &bits, 4);
@@ -343,7 +344,7 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, 
             neighbor_counts[layer] = neighbor_count;
 
             // link neighbors to new node
-            for (int i = 0; i < neighbor_counts[layer]; ++i)
+            for (LVCount32_t i = 0; i < neighbor_counts[layer]; ++i)
             {
                 LVHnswNode* neighbor_node = (LVHnswNode*)hnsw->id_node_map->map[neighbors[update_start + i]];
 
@@ -355,7 +356,7 @@ LVStatus vector_hnsw_insert(LVHnsw* hnsw, const LVVectorId64_t new_external_id, 
             // result_heap at EF (== EF_CONSTRUCTION here) by popping the worst entry
             // whenever size exceeds EF, so result_heap->size never exceeds ep_list's
             // capacity.
-            for (int i = 0; i < hnsw->result_heap->size; ++i)
+            for (LVDim32_t i = 0; i < hnsw->result_heap->size; ++i)
             {
                 ep_list[i] = (LVHnswNode*)hnsw->id_node_map->map[hnsw->result_heap->entries[i].id];
             }
@@ -409,7 +410,7 @@ LVVectorId64_t vector_hnsw_search_ep(const LVHnsw* hnsw, LVHnswNode* ep, const v
         {
 
             LVVectorId64_t* neighbors = vector_access_neighbors(current_ep, layer);
-            for (int i = 0; i < current_ep->neighbor_counts[layer]; ++i)
+            for (LVSize32_t i = 0; i < current_ep->neighbor_counts[layer]; ++i)
             {
                 LVVectorId64_t neighbor_internal_id = neighbors[i];
                 void* neighbor_vector = (hnsw->id_vector_map->map[neighbor_internal_id]);
@@ -505,7 +506,7 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, LVHnswNode** ep_list, const LVSi
         goto _return;
     }
 
-    for (int i = 0; i < ep_list_size; ++i)
+    for (LVSize32_t i = 0; i < ep_list_size; ++i)
     {
         LVHnswEntry ep_entry;
         if (is_f32)
@@ -557,7 +558,7 @@ LVStatus vector_hnsw_search_layer(LVHnsw* hnsw, LVHnswNode** ep_list, const LVSi
         const LVHnswNode* candidate_node = hnsw->id_node_map->map[candidate.id];
         LVVectorId64_t* neighbors = vector_access_neighbors(candidate_node, layer);
 
-        for (int i = 0; i < candidate_node->neighbor_counts[layer]; ++i)
+        for (LVSize32_t i = 0; i < candidate_node->neighbor_counts[layer]; ++i)
         {
             LVVectorId64_t neighbor_internal_id = neighbors[i];
             if (!(visited[neighbor_internal_id / 64] & (1ULL << (neighbor_internal_id % 64))))
@@ -651,7 +652,7 @@ LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const 
     LVHnswEntry result[M];
     LVSize32_t current_result_size = 0;
 
-    for (int i = 0; i < candidates_size; ++i)
+    for (LVSize32_t i = 0; i < candidates_size; ++i)
     {
         if (current_result_size == M)
         {
@@ -659,7 +660,7 @@ LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const 
         }
 
         int keep = 1;
-        for (int j = 0; j < current_result_size; ++j)
+        for (LVSize32_t j = 0; j < current_result_size; ++j)
         {
             void* candidate_vector = (hnsw->id_vector_map->map[candidates[i].id]);
             void* selected_vector = hnsw->id_vector_map->map[result[j].id];
@@ -692,7 +693,7 @@ LVSize32_t vector_hnsw_select_neighbors(LVHnsw* hnsw, const LVSize32_t M, const 
         }
     }
 
-    for (int i = 0; i < current_result_size; ++i)
+    for (LVSize32_t i = 0; i < current_result_size; ++i)
     {
         neighbor_list[neighbor_update_start + i] = result[i].id;
     }
@@ -803,7 +804,7 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
         LVVectorId64_t new_neighbors[M];
         void* current_node_vector = hnsw->id_vector_map->map[node->internal_id];
         LVVectorId64_t* neighbors = vector_access_neighbors(node, layer);
-        for (int i = 0; i < prev_neighbor_count; ++i) {
+        for (LVSize32_t i = 0; i < prev_neighbor_count; ++i) {
             LVVectorId64_t id = neighbors[i];
             void* candidate_vector = hnsw->id_vector_map->map[id];
             candidates[i].id = id;
@@ -833,7 +834,7 @@ void vector_update_node_neighbor(LVHnsw* hnsw, LVHnswNode* node, const LVLevel8_
 
         const LVSize32_t new_neighbor_count = vector_hnsw_select_neighbors(hnsw, M, layer, candidates, M + 1, new_neighbors, 0, is_f32, f32_dist_fn, i8_dist_fn);
 
-        for (int i = 0; i < new_neighbor_count; ++i) {
+        for (LVSize32_t i = 0; i < new_neighbor_count; ++i) {
             neighbors[i] = new_neighbors[i];
         }
 
@@ -985,7 +986,7 @@ pop:
     }
 }
 
-LVStatus vector_hnsw_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t internal_id, const void* ptr)
+LVStatus vector_hnsw_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t internal_id, void* ptr)
 {
     if (idmap->size >= idmap->capacity)
     {
@@ -1004,7 +1005,7 @@ LVStatus vector_hnsw_idmap_append(LVHnswIDMap* idmap, const LVVectorId64_t inter
     return LV_OK;
 }
 
-void vector_hnsw_link_memtable_node(LVHnsw* hnsw, const LVVectorId64_t internal_id, const LVNode* memtable_node) {
+void vector_hnsw_link_memtable_node(LVHnsw* hnsw, const LVVectorId64_t internal_id, LVNode* memtable_node) {
     LVHnswNode* hnsw_node = hnsw->id_node_map->map[internal_id];
     hnsw_node->memtable_node = memtable_node;
 }
@@ -1114,10 +1115,8 @@ LVStatus vector_hnsw_query(LVHnsw* hnsw, const LVSchema* schema, const LVAstNode
         const LVHnswNode* candidate_node = hnsw->id_node_map->map[candidate.id];
         LVVectorId64_t* neighbors = vector_access_neighbors(candidate_node, 0);
 
-        for (int i = 0; i < candidate_node->neighbor_counts[0]; ++i) {
+        for (LVSize32_t i = 0; i < candidate_node->neighbor_counts[0]; ++i) {
             const LVVectorId64_t neighbor_internal_id = neighbors[i];
-            const LVHnswNode* neighbor = hnsw->id_node_map->map[neighbor_internal_id];
-            const LVVectorId64_t neighbor_external_id = neighbor->external_id;
 
             if (!(visited[neighbor_internal_id / 64] & (1ULL << (neighbor_internal_id % 64))))
             {
@@ -1336,7 +1335,7 @@ LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
 
     LVSize32_t new_size = 0;
 
-    for (int i = 0; i < id_hash_map->capacity; ++i) {
+    for (LVSize32_t i = 0; i < id_hash_map->capacity; ++i) {
         LVHnswIDHash* current = id_hash_map->map[i];
         while (current) {
             if ((result = vector_hnsw_insert_id_hash_value(new_map, new_capacity, current->external_id, current->internal_id)) != LV_OK) {
@@ -1347,7 +1346,7 @@ LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
         }
     }
 
-    for (int i = 0; i < id_hash_map->capacity; ++i) {
+    for (LVSize32_t i = 0; i < id_hash_map->capacity; ++i) {
         LVHnswIDHash* current = id_hash_map->map[i];
         while (current) {
             LVHnswIDHash* next = current->next;
@@ -1365,7 +1364,7 @@ LVStatus vector_hnsw_rehash_id_hash_map(LVHnswIDHashMap* id_hash_map) {
 
 cleanup:
     if (new_map) {
-        for (int i = 0; i < new_capacity; ++i) {
+        for (LVSize32_t i = 0; i < new_capacity; ++i) {
             LVHnswIDHash* current = new_map[i];
             while (current) {
                 LVHnswIDHash* next = current->next;
