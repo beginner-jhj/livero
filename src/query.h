@@ -105,7 +105,7 @@ typedef struct LVAstNode
 
 typedef struct LVSQLLexer
 {
-    char* sql;
+    const char* sql;
     LVSize32_t sql_len;
     LVSize32_t current_index;
     char current_char;
@@ -115,7 +115,7 @@ typedef struct LVSQLLexer
 typedef struct LVSQLToken
 {
     LVQueryToken token;
-    char* start;
+    const char* start;
     LVSize32_t size;
 
 } LVSQLToken;
