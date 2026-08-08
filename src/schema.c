@@ -1,6 +1,9 @@
 #include "schema.h"
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "livero_types.h"
+#include "lv_internal.h"
 #include "util.h"
 #include "helper.h"
 #include <ctype.h>
@@ -57,7 +60,7 @@ LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_ty
         NULL // sentinel
     };
 
-    for (int i = 0; i < schema->field_count; ++i)
+    for (LVCount32_t i = 0; i < schema->field_count; ++i)
     {
         const LVMetaFieldDef* current_def = field_defs + i;
 
@@ -69,7 +72,7 @@ LVSchema* schema_create(const LVDim32_t vector_dim, const LVVectorType vector_ty
             if (strncasecmp(current_def->name, LV_RESERVED_NAMES[k], strlen(LV_RESERVED_NAMES[k]) + 1) == 0) goto cleanup;
         }
 
-        for (int j = 0; j < strlen(current_def->name); ++j) // check name is valid
+        for (uint64_t j = 0; j < strlen(current_def->name); ++j) // check name is valid
         {
             if (!isalnum(current_def->name[j]) && current_def->name[j] != '_')  goto cleanup;
         }
@@ -202,7 +205,7 @@ LVStatus schema_write(const int fd, const LVSchema* schema)
     }
 
     // write field defs
-    int count = 0;
+    LVCount32_t count = 0;
     while (count < schema->field_count)
     {
         const LVMetaFieldDef* current_field = schema->field_defs + count;
@@ -328,7 +331,7 @@ LVStatus schema_read(const int fd, LVSchema* schema)
 
     schema->field_count = saved_fcount;
 
-    int count = 0;
+    LVCount32_t count = 0;
 
     LVFieldMask32_t current_field_mask = 1;
 
@@ -436,7 +439,7 @@ _return:
     return result;
 }
 
-LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVSize32_t field_len)
+const LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash* const* hashes, const char* field_name, const LVSize32_t field_len)
 {
     const LVHash32_t hash = fnv1a_hash(field_name, field_len);
 
@@ -449,7 +452,7 @@ LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash** hashes, const char* 
 
     else
     {
-        LVMetaFieldHash* current_field_hash = hashes[index];
+        const LVMetaFieldHash* current_field_hash = hashes[index];
         while (current_field_hash)
         {
             if (strncmp(current_field_hash->field_name, field_name, field_len) == 0
@@ -468,8 +471,8 @@ LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount
 
     LVSize32_t size = 0;
 
-    for (int offset = 0; offset < field_count; ++offset) {
-        LVMetaField* current_field = fields + offset;
+    for (LVCount32_t offset = 0; offset < field_count; ++offset) {
+        const LVMetaField* current_field = fields + offset;
 
         size += 1; //size of LVMetaType (1byte)
 
@@ -503,21 +506,23 @@ LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount
  * [len:u32][bytes]; float/int are 8 bytes.
  */
 
-void schema_serialize_field(const LVSchema* schema, void* buffer,
+void schema_serialize_field(LVMetaFieldHash* const* hashes, void* buffer,
     const LVMetaField* fields,
     const LVCount32_t field_count, const int is_on_disk) {
-    if (!fields || field_count <= 0 || !buffer || !schema) return;
+    if (!fields || field_count <= 0 || !buffer || !hashes) return;
 
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
+
+    char* buffer_ptr = buffer;
 
     for (int bit = 0; bit < LV_MAX_META_FIELDS; ++bit) {
         const uint32_t target_mask = (1u << bit);
 
         const LVMetaField* current_field = NULL;
-        for (int i = 0; i < field_count; ++i) {
+        for (LVCount32_t i = 0; i < field_count; ++i) {
             const LVMetaFieldHash* h = schema_search_field_hash(
-                schema->field_hashes, fields[i].name, strlen(fields[i].name));
+                hashes, fields[i].name, strlen(fields[i].name));
             if (h && h->mask == target_mask) {
                 current_field = &fields[i];
                 break;
@@ -527,21 +532,21 @@ void schema_serialize_field(const LVSchema* schema, void* buffer,
         if (!current_field) continue;
 
         const uint8_t type = (uint8_t)current_field->type;
-        memcpy(buffer, &type, sizeof(uint8_t));
-        buffer += sizeof(uint8_t);
+        memcpy(buffer_ptr, &type, sizeof(uint8_t));
+        buffer_ptr += sizeof(uint8_t);
 
         if (current_field->type == LV_META_STRING) {
             uint32_t len = current_field->value.str.len;
             if (is_on_disk == 1) {
                 put_fixed_32(BUF_32, len);
-                memcpy(buffer, BUF_32, 4);
+                memcpy(buffer_ptr, BUF_32, 4);
             }
             else {
-                memcpy(buffer, &len, sizeof(uint32_t));
+                memcpy(buffer_ptr, &len, sizeof(uint32_t));
             }
-            buffer += 4;
-            memcpy(buffer, current_field->value.str.string, len);
-            buffer += len;
+            buffer_ptr += 4;
+            memcpy(buffer_ptr, current_field->value.str.string, len);
+            buffer_ptr += len;
         }
         else if (current_field->type == LV_META_FLOAT) {
             double value = current_field->value.f64;
@@ -552,23 +557,23 @@ void schema_serialize_field(const LVSchema* schema, void* buffer,
                 uint64_t bits;
                 memcpy(&bits, &value, sizeof(bits));
                 put_fixed_64(BUF_64, bits);
-                memcpy(buffer, BUF_64, 8);
+                memcpy(buffer_ptr, BUF_64, 8);
             }
             else {
-                memcpy(buffer, &value, sizeof(double));
+                memcpy(buffer_ptr, &value, sizeof(double));
             }
-            buffer += 8;
+            buffer_ptr += 8;
         }
         else { /* int64 */
             int64_t value = current_field->value.i64;
             if (is_on_disk == 1) {
                 put_fixed_64(BUF_64, value);
-                memcpy(buffer, BUF_64, 8);
+                memcpy(buffer_ptr, BUF_64, 8);
             }
             else {
-                memcpy(buffer, &value, sizeof(int64_t));
+                memcpy(buffer_ptr, &value, sizeof(int64_t));
             }
-            buffer += 8;
+            buffer_ptr += 8;
         }
     }
 }
@@ -716,7 +721,7 @@ void schema_field_disk_to_memory(const void* src, const LVSize32_t field_size, v
  * Returns a calloc'd array (freed by schema_destroy_fields), or NULL on OOM.
  */
 
-LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk) {
+LVMetaField* schema_deserialize_field(LVMetaFieldHash* const* hashes, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk) {
     uint8_t BUF_32[4];
     uint8_t BUF_64[8];
     LVMetaField* result = calloc(field_count, sizeof(LVMetaField));
@@ -725,7 +730,7 @@ LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVFi
     char* src_ptr = (char*)src;
 
     LVFieldMask32_t remaining = field_mask;
-    for (int i = 0; i < field_count; ++i) {
+    for (LVCount32_t i = 0; i < field_count; ++i) {
         LVFieldMask32_t single_bit = remaining & (~remaining + 1);
         remaining &= ~single_bit;
 
@@ -812,7 +817,7 @@ cleanup:
 
 void schema_destroy_fields(const LVCount32_t field_count, LVMetaField* fields) {
     if (fields) {
-        for (int i = 0; i < field_count; ++i) {
+        for (LVCount32_t i = 0; i < field_count; ++i) {
             LVMetaField* field = fields + i;
             if (field->type == LV_META_STRING && field->value.str.string) {
                 free(field->value.str.string);
