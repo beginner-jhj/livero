@@ -1,20 +1,19 @@
 #include "query.h"
+#include "livero_types.h"
+#include "node.h"
+#include "schema.h"
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#include "helper.h"
-#include "schema.h"
-#include "node.h"
-#include <ctype.h>
-#include <math.h>
-#include "vector.h"
 
-int query_is_value_token(const LVQueryToken token)
-{
-    return token == LV_TOKEN_INT || token == LV_TOKEN_FLOAT || token == LV_TOKEN_STR;
+int query_is_value_token(const LVQueryToken token) {
+  return token == LV_TOKEN_INT || token == LV_TOKEN_FLOAT ||
+         token == LV_TOKEN_STR;
 }
-int query_is_op_token(const LVQueryToken token)
-{
-    return token == LV_TOKEN_GT || token == LV_TOKEN_GTE || token == LV_TOKEN_LT || token == LV_TOKEN_LTE || token == LV_TOKEN_EQ || token == LV_TOKEN_NEQ;
+int query_is_op_token(const LVQueryToken token) {
+  return token == LV_TOKEN_GT || token == LV_TOKEN_GTE ||
+         token == LV_TOKEN_LT || token == LV_TOKEN_LTE ||
+         token == LV_TOKEN_EQ || token == LV_TOKEN_NEQ;
 }
 
 /*
@@ -24,45 +23,41 @@ int query_is_op_token(const LVQueryToken token)
  * without leaking partial trees: a failure anywhere frees the subtree built so
  * far. (query_destroy_ast walks and frees the whole tree; NULL-safe.)
  */
-LVAstNode* query_create_and_node(LVAstNode* left, LVAstNode* right)
-{
-    if (!left || !right)
-    {
-        query_destroy_ast(left);
-        query_destroy_ast(right);
-        return NULL;
-    }
-    LVAstNode* and_node = malloc(sizeof(LVAstNode));
-    if (!and_node) {
-        query_destroy_ast(left);
-        query_destroy_ast(right);
-        return NULL;
-    }
-    and_node->type = LV_AST_AND;
-    and_node->value.logic.left = left;
-    and_node->value.logic.right = right;
-    return and_node;
+LVAstNode *query_create_and_node(LVAstNode *left, LVAstNode *right) {
+  if (!left || !right) {
+    query_destroy_ast(left);
+    query_destroy_ast(right);
+    return NULL;
+  }
+  LVAstNode *and_node = malloc(sizeof(LVAstNode));
+  if (!and_node) {
+    query_destroy_ast(left);
+    query_destroy_ast(right);
+    return NULL;
+  }
+  and_node->type = LV_AST_AND;
+  and_node->value.logic.left = left;
+  and_node->value.logic.right = right;
+  return and_node;
 }
 
-//same ownership pattern as and_node
-LVAstNode* query_create_or_node(LVAstNode* left, LVAstNode* right)
-{
-    if (!left || !right)
-    {
-        query_destroy_ast(left);
-        query_destroy_ast(right);
-        return NULL;
-    }
-    LVAstNode* or_node = malloc(sizeof(LVAstNode));
-    if (!or_node) {
-        query_destroy_ast(left);
-        query_destroy_ast(right);
-        return NULL;
-    }
-    or_node->type = LV_AST_OR;
-    or_node->value.logic.left = left;
-    or_node->value.logic.right = right;
-    return or_node;
+// same ownership pattern as and_node
+LVAstNode *query_create_or_node(LVAstNode *left, LVAstNode *right) {
+  if (!left || !right) {
+    query_destroy_ast(left);
+    query_destroy_ast(right);
+    return NULL;
+  }
+  LVAstNode *or_node = malloc(sizeof(LVAstNode));
+  if (!or_node) {
+    query_destroy_ast(left);
+    query_destroy_ast(right);
+    return NULL;
+  }
+  or_node->type = LV_AST_OR;
+  or_node->value.logic.left = left;
+  or_node->value.logic.right = right;
+  return or_node;
 }
 
 /*
@@ -72,50 +67,52 @@ LVAstNode* query_create_or_node(LVAstNode* left, LVAstNode* right)
  * query_destroy_ast.
  */
 
-LVAstNode* query_create_filter_node(const char* field_name, const LVQueryOp op, const LVFilterValue* value)
-{
-    LVAstNode* filter_node = NULL;
+LVAstNode *query_create_filter_node(const char *field_name, const LVQueryOp op,
+                                    const LVFilterValue *value) {
+  LVAstNode *filter_node = NULL;
 
-    if (strlen(field_name) > LV_META_NAME_MAX - 1) goto cleanup;
+  if (strlen(field_name) > LV_META_NAME_MAX - 1)
+    goto cleanup;
 
-    filter_node = malloc(sizeof(LVAstNode));
-    if (!filter_node) goto cleanup;
+  filter_node = malloc(sizeof(LVAstNode));
+  if (!filter_node)
+    goto cleanup;
 
-    filter_node->type = LV_AST_FILTER;
-    // filter is a leaf; null the logic pointers so query_destroy_ast (which
-    // checks type) never walks into garbage. (filter and logic share a union.)
-    filter_node->value.logic.left = NULL;
-    filter_node->value.logic.right = NULL;
-    memcpy(filter_node->value.filter.field_name, field_name, strlen(field_name));
-    filter_node->value.filter.field_name[strlen(field_name)] = '\0';
-    filter_node->value.filter.op = op;
-    filter_node->value.filter.value.type = value->type;
-    switch (value->type)
-    {
-    case LV_META_INT:
-        filter_node->value.filter.value.value.i64 = value->value.i64;
-        break;
-    case LV_META_FLOAT:
-        filter_node->value.filter.value.value.f64 = value->value.f64;
-        break;
+  filter_node->type = LV_AST_FILTER;
+  // filter is a leaf; null the logic pointers so query_destroy_ast (which
+  // checks type) never walks into garbage. (filter and logic share a union.)
+  filter_node->value.logic.left = NULL;
+  filter_node->value.logic.right = NULL;
+  memcpy(filter_node->value.filter.field_name, field_name, strlen(field_name));
+  filter_node->value.filter.field_name[strlen(field_name)] = '\0';
+  filter_node->value.filter.op = op;
+  filter_node->value.filter.value.type = value->type;
+  switch (value->type) {
+  case LV_META_INT:
+    filter_node->value.filter.value.value.i64 = value->value.i64;
+    break;
+  case LV_META_FLOAT:
+    filter_node->value.filter.value.value.f64 = value->value.f64;
+    break;
 
-    case LV_META_STRING:
-        filter_node->value.filter.value.value.str.len = value->value.str.len;
-        char* string = malloc(value->value.str.len + 1);
-        if (!string) goto cleanup;
-        memcpy(string, value->value.str.string, value->value.str.len);
-        string[value->value.str.len] = '\0';
-        filter_node->value.filter.value.value.str.string = string;
-        break;
-    default:
-        break;
-    }
+  case LV_META_STRING:
+    filter_node->value.filter.value.value.str.len = value->value.str.len;
+    char *string = malloc(value->value.str.len + 1);
+    if (!string)
+      goto cleanup;
+    memcpy(string, value->value.str.string, value->value.str.len);
+    string[value->value.str.len] = '\0';
+    filter_node->value.filter.value.value.str.string = string;
+    break;
+  default:
+    break;
+  }
 
-    return filter_node;
+  return filter_node;
 
 cleanup:
-    free(filter_node);
-    return NULL;
+  free(filter_node);
+  return NULL;
 }
 
 /*
@@ -123,174 +120,169 @@ cleanup:
  * && / || do, and evaluate filter leaves via query_eval_filter. Returns 1 if
  * the record passes, 0 otherwise.
  */
-int query_eval_ast(const LVAstNode* ast_node, const LVNode* record, const LVSchema* schema)
-{
-    if (ast_node->type == LV_AST_AND)
-    {
-        return query_eval_ast(ast_node->value.logic.left, record, schema) && query_eval_ast(ast_node->value.logic.right, record, schema);
-    }
+int query_eval_ast(const LVAstNode *ast_node, const LVNode *record,
+                   const LVSchema *schema) {
+  if (ast_node->type == LV_AST_AND) {
+    return query_eval_ast(ast_node->value.logic.left, record, schema) &&
+           query_eval_ast(ast_node->value.logic.right, record, schema);
+  }
 
-    else if (ast_node->type == LV_AST_OR)
-    {
-        return query_eval_ast(ast_node->value.logic.left, record, schema) || query_eval_ast(ast_node->value.logic.right, record, schema);
-    }
+  else if (ast_node->type == LV_AST_OR) {
+    return query_eval_ast(ast_node->value.logic.left, record, schema) ||
+           query_eval_ast(ast_node->value.logic.right, record, schema);
+  }
 
-    else
-    {
-        return query_eval_filter(&ast_node->value.filter, record, schema) == LV_QFILTER_T;
-    }
-    return 0;
+  else {
+    return query_eval_filter(&ast_node->value.filter, record, schema) ==
+           LV_QFILTER_T;
+  }
+  return 0;
 }
 
-LVStatus query_eval_filter(const LVFilter* filter, const LVNode* node, const LVSchema* schema)
-{
-    LVStatus result = LV_QFILTER_F;
-    LVMetaFieldHash* field_hash = schema_search_field_hash(schema->field_hashes, filter->field_name, strlen(filter->field_name));
-    // field names are validated at parse time, so this should be non-NULL.
-    // Guard anyway — a mismatched schema/query would otherwise deref NULL.
-    if (!field_hash) { result = LV_QFILTER_F; goto _return; }
-    
-    int field_node_index = node_field_number_of_mask(node->field_mask, field_hash->mask);
-    char* field = (char*)node_access_field(node, field_node_index);
+LVStatus query_eval_filter(const LVFilter *filter, const LVNode *node,
+                           const LVSchema *schema) {
+  LVStatus result = LV_QFILTER_F;
+  const LVMetaFieldHash *field_hash = schema_search_field_hash(
+      schema->field_hashes, filter->field_name, strlen(filter->field_name));
+  // field names are validated at parse time, so this should be non-NULL.
+  // Guard anyway — a mismatched schema/query would otherwise deref NULL.
+  if (!field_hash) {
+    result = LV_QFILTER_F;
+    goto _return;
+  }
 
-    // node_access_field points at [type:u8][payload]; skip the type byte to
-    // reach the value. (type is already known from field_hash->type.)
-    field += sizeof(uint8_t);
+  int field_node_index =
+      node_field_number_of_mask(node->field_mask, field_hash->mask);
+  char *field = (char *)node_access_field(node, field_node_index);
 
-    switch (field_hash->type)
-    {
-    case LV_META_FLOAT:
-    {
-        double value = 0.0;
-        memcpy(&value, field, sizeof(double));
-        double to_cmp = filter->value.value.f64;
+  // node_access_field points at [type:u8][payload]; skip the type byte to
+  // reach the value. (type is already known from field_hash->type.)
+  field += sizeof(uint8_t);
 
-        switch (filter->op)
-        {
-        case LV_QOP_EQ:
-            result = value == to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
+  switch (field_hash->type) {
+  case LV_META_FLOAT: {
+    double value = 0.0;
+    memcpy(&value, field, sizeof(double));
+    double to_cmp = filter->value.value.f64;
 
-        case LV_QOP_NEQ:
-            result = value != to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
+    switch (filter->op) {
+    case LV_QOP_EQ:
+      result = value == to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
 
-        case LV_QOP_GT:
-            result = value > to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
+    case LV_QOP_NEQ:
+      result = value != to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
 
-        case LV_QOP_GTE:
-            result = value >= to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
+    case LV_QOP_GT:
+      result = value > to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
 
-        case LV_QOP_LT:
-            result = value < to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
+    case LV_QOP_GTE:
+      result = value >= to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
 
-        case LV_QOP_LTE:
-            result = value <= to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
+    case LV_QOP_LT:
+      result = value < to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
 
-        default:
-            break;
-        }
-        break;
-    }
-
-    case LV_META_INT:
-    {
-        int64_t value = 0;
-        memcpy(&value, field, sizeof(int64_t));
-        int64_t to_cmp = filter->value.value.i64;
-
-        switch (filter->op)
-        {
-        case LV_QOP_EQ:
-            result = value == to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
-
-        case LV_QOP_NEQ:
-            result = value != to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
-
-        case LV_QOP_GT:
-            result = value > to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
-
-        case LV_QOP_GTE:
-            result = value >= to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
-
-        case LV_QOP_LT:
-            result = value < to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
-
-        case LV_QOP_LTE:
-            result = value <= to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
-
-        default:
-            break;
-        }
-
-        break;
-    }
-
-    case LV_META_STRING:
-    {
-        uint32_t len = 0;
-        memcpy(&len, field, sizeof(uint32_t));
-
-        if (len != filter->value.value.str.len)
-        {
-            if (filter->op == LV_QOP_EQ)
-            {
-                result = LV_QFILTER_F;
-                goto _return;
-            }
-            if (filter->op == LV_QOP_NEQ)
-            {
-                result = LV_QFILTER_T;
-                goto _return;
-            }
-        }
-
-        field += sizeof(uint32_t);
-
-        if (filter->op == LV_QOP_EQ)
-        {
-            result = memcmp(field, filter->value.value.str.string, len) == 0 ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
-        }
-        else if (filter->op == LV_QOP_NEQ)
-        {
-            result = memcmp(field, filter->value.value.str.string, len) != 0 ? LV_QFILTER_T : LV_QFILTER_F;
-            goto _return;
-        }
-    }
+    case LV_QOP_LTE:
+      result = value <= to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
 
     default:
-        break;
+      break;
     }
+    break;
+  }
+
+  case LV_META_INT: {
+    int64_t value = 0;
+    memcpy(&value, field, sizeof(int64_t));
+    int64_t to_cmp = filter->value.value.i64;
+
+    switch (filter->op) {
+    case LV_QOP_EQ:
+      result = value == to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
+
+    case LV_QOP_NEQ:
+      result = value != to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
+
+    case LV_QOP_GT:
+      result = value > to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
+
+    case LV_QOP_GTE:
+      result = value >= to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
+
+    case LV_QOP_LT:
+      result = value < to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
+
+    case LV_QOP_LTE:
+      result = value <= to_cmp ? LV_QFILTER_T : LV_QFILTER_F;
+      goto _return;
+
+    default:
+      break;
+    }
+
+    break;
+  }
+
+  case LV_META_STRING: {
+    uint32_t len = 0;
+    memcpy(&len, field, sizeof(uint32_t));
+
+    if (len != filter->value.value.str.len) {
+      if (filter->op == LV_QOP_EQ) {
+        result = LV_QFILTER_F;
+        goto _return;
+      }
+      if (filter->op == LV_QOP_NEQ) {
+        result = LV_QFILTER_T;
+        goto _return;
+      }
+    }
+
+    field += sizeof(uint32_t);
+
+    if (filter->op == LV_QOP_EQ) {
+      result = memcmp(field, filter->value.value.str.string, len) == 0
+                   ? LV_QFILTER_T
+                   : LV_QFILTER_F;
+      goto _return;
+    } else if (filter->op == LV_QOP_NEQ) {
+      result = memcmp(field, filter->value.value.str.string, len) != 0
+                   ? LV_QFILTER_T
+                   : LV_QFILTER_F;
+      goto _return;
+    }
+  }
+
+  default:
+    break;
+  }
 
 _return:
-    return result;
+  return result;
 }
 
-void query_destroy_ast(LVAstNode* node)
-{
-    if (!node)
-        return;
-    if (node->type != LV_AST_FILTER)
-    {
-        query_destroy_ast(node->value.logic.left);
-        query_destroy_ast(node->value.logic.right);
-    }
-    if (node->type == LV_AST_FILTER && node->value.filter.value.type == LV_META_STRING)
-    {
-        free(node->value.filter.value.value.str.string);
-    }
-    free(node);
+void query_destroy_ast(LVAstNode *node) {
+  if (!node)
+    return;
+  if (node->type != LV_AST_FILTER) {
+    query_destroy_ast(node->value.logic.left);
+    query_destroy_ast(node->value.logic.right);
+  }
+  if (node->type == LV_AST_FILTER &&
+      node->value.filter.value.type == LV_META_STRING) {
+    free(node->value.filter.value.value.str.string);
+  }
+  free(node);
 }
 
 /*
@@ -324,334 +316,308 @@ void query_destroy_ast(LVAstNode* node)
  * query.h note). That's why each op case does complexity_score += 1.
  */
 
-LVStatus query_tokenize(const char* sql, LVSQLParser* parser)
-{
-    LVStatus result = LV_OK;
-    LVSQLLexer lexer = { .sql = sql, .sql_len = strlen(sql), .current_index = 0, .current_char = sql[0], .lparen_count = 0 };
+LVStatus query_tokenize(const char *sql, LVSQLParser *parser) {
+  LVStatus result = LV_OK;
+  LVSQLLexer lexer = {.sql = sql,
+                      .sql_len = strlen(sql),
+                      .current_index = 0,
+                      .current_char = sql[0],
+                      .lparen_count = 0};
 
-    while (lexer.current_index < lexer.sql_len)
-    {
-        query_lexer_skip_whitespace(&lexer);
-        if (lexer.lparen_count < 0)
-        { // parentheses unclosed
-            result = LV_ERR_INVALID_QUERY;
-            goto _return;
-        }
-        if (query_lexer_isdigit((unsigned char)(lexer.current_char))) // tokenize numbers
-        {
-            LVSize32_t start_index = lexer.current_index;
-            int is_float = 0;
-
-            // leading minus: consume it, then require an actual digit to follow
-            // (a lone '-' isn't a valid number).
-            if (lexer.current_char == '-')
-            {
-                query_advance_lexer(&lexer);
-            }
-            if (!isdigit(lexer.current_char)) // '-' not followed by digit -> error
-            {
-                result = LV_ERR_INVALID_QUERY;
-                goto _return;
-            }
-            while (!query_lexer_is_stop_char(lexer.current_char))
-            {
-                if (lexer.current_char == '.')
-                {
-                    if (is_float)
-                    {
-                        result = LV_ERR_INVALID_QUERY;
-                        goto _return;
-                    }
-                    is_float = 1;
-                }
-                else if ((!isdigit((unsigned char)(lexer.current_char))))
-                { // expect a digit or point
-                    result = LV_ERR_INVALID_QUERY;
-                    goto _return;
-                }
-                query_advance_lexer(&lexer);
-            }
-            
-            // tokens store (start, size) pointing INTO sql, not copies — cheap, but sql
-            // must stay alive through parsing.
-            LVSize32_t size = lexer.current_index - start_index;
-            const char* start = lexer.sql + start_index;
-            if (is_float)
-            {
-                if ((result = query_append_token(parser, LV_TOKEN_FLOAT, start, size)) != LV_OK)
-                {
-                    goto _return;
-                }
-            }
-            else
-            {
-                if ((result = query_append_token(parser, LV_TOKEN_INT, start, size)) != LV_OK)
-                {
-                    goto _return;
-                }
-            }
-        }
-        else
-        { // tokenize strings
-            switch (lexer.current_char)
-            {
-            case '(':
-                if ((result = query_append_token(parser, LV_TOKEN_LPAREN, lexer.sql + lexer.current_index, 1)) != LV_OK)
-                {
-                    goto _return;
-                }
-
-                ++lexer.lparen_count;
-                // current '('
-                query_advance_lexer(&lexer); // move to next
-                break;
-
-            case ')':
-                if ((result = query_append_token(parser, LV_TOKEN_RPAREN, lexer.sql + lexer.current_index, 1)) != LV_OK)
-                {
-                    goto _return;
-                }
-                --lexer.lparen_count;
-
-                // current ')'
-                query_advance_lexer(&lexer); // move to next
-                break;
-
-            case '>':
-            {
-                if (query_lexer_expect_next(&lexer, '='))
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_GTE, lexer.sql + lexer.current_index, 2)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                    // current '>'
-                    query_advance_lexer(&lexer); // move to '='
-                    // current '='
-                    query_advance_lexer(&lexer); // move to next
-                }
-                else
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_GT, lexer.sql + lexer.current_index, 1)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                    // current '>'
-                    query_advance_lexer(&lexer); // move to next
-                }
-
-                parser->complexity_score += 1;
-                break;
-            }
-
-            case '<':
-            {
-                if (query_lexer_expect_next(&lexer, '='))
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_LTE, lexer.sql + lexer.current_index, 2)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                    // current '<'
-                    query_advance_lexer(&lexer); // move to '='
-                    // current '='
-                    query_advance_lexer(&lexer); // move to next
-                }
-                else
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_LT, lexer.sql + lexer.current_index, 1)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                    // current '<'
-                    query_advance_lexer(&lexer); // move to next
-                }
-                parser->complexity_score += 1;
-                break;
-            }
-
-            case '=':
-            {
-                if (query_lexer_expect_next(&lexer, '='))
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_EQ, lexer.sql + lexer.current_index, 2)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                    // current '='
-                    query_advance_lexer(&lexer); // move to '='
-                    // current '='
-                    query_advance_lexer(&lexer); // move to next
-
-                    parser->complexity_score += 1;
-                }
-                else
-                {
-                    // expect '==' but got else
-                    // this case is an error
-
-                    result = LV_ERR_INVALID_QUERY;
-                    goto _return;
-                }
-                break;
-            }
-
-            case '!':
-            {
-                if (query_lexer_expect_next(&lexer, '='))
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_NEQ, lexer.sql + lexer.current_index, 2)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                    // current '!'
-                    query_advance_lexer(&lexer); // move to '='
-                    // current '='
-                    query_advance_lexer(&lexer); // move to next
-
-                    parser->complexity_score += 1;
-                }
-                else
-                {
-                    // expect '!=' but got else
-                    // error
-                    result = LV_ERR_INVALID_QUERY;
-                    goto _return;
-                }
-                break;
-            }
-
-            case '\'': // string value
-            {
-                query_advance_lexer(&lexer);
-                LVSize32_t start_index = lexer.current_index;
-                while (lexer.current_index < lexer.sql_len && (lexer.current_char != '\''))
-                {
-                    query_advance_lexer(&lexer);
-                }
-                if (lexer.current_char != '\'') // not closed
-                {
-                    result = LV_ERR_INVALID_QUERY;
-                    goto _return;
-                }
-                LVSize32_t size = lexer.current_index - start_index;
-                if ((result = query_append_token(parser, LV_TOKEN_STR, lexer.sql + start_index, size)) != LV_OK)
-                {
-                    goto _return;
-                }
-                // current '\''
-                query_advance_lexer(&lexer); // move to next
-                break;
-            }
-
-            default: // ident or 'AND' or 'OR'
-                LVSize32_t start_index = lexer.current_index;
-                while (!query_lexer_is_stop_char(lexer.current_char))
-                {
-                    query_advance_lexer(&lexer);
-                }
-                LVSize32_t size = lexer.current_index - start_index;
-                if (size == 3 && strncasecmp(lexer.sql + start_index, "and", 3) == 0)
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_AND, lexer.sql + start_index, size)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                }
-
-                else if (size == 2 && strncasecmp(lexer.sql + start_index, "or", 2) == 0)
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_OR, lexer.sql + start_index, size)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                }
-
-                else
-                {
-                    if ((result = query_append_token(parser, LV_TOKEN_IDENT, lexer.sql + start_index, size)) != LV_OK)
-                    {
-                        goto _return;
-                    }
-                }
-                break;
-            }
-        }
+  while (lexer.current_index < lexer.sql_len) {
+    query_lexer_skip_whitespace(&lexer);
+    if (lexer.lparen_count < 0) { // parentheses unclosed
+      result = LV_ERR_INVALID_QUERY;
+      goto _return;
     }
+    if (query_lexer_isdigit(
+            (unsigned char)(lexer.current_char))) // tokenize numbers
+    {
+      LVSize32_t start_index = lexer.current_index;
+      int is_float = 0;
 
-    if (lexer.lparen_count != 0) {
+      // leading minus: consume it, then require an actual digit to follow
+      // (a lone '-' isn't a valid number).
+      if (lexer.current_char == '-') {
+        query_advance_lexer(&lexer);
+      }
+      if (!isdigit(lexer.current_char)) // '-' not followed by digit -> error
+      {
         result = LV_ERR_INVALID_QUERY;
         goto _return;
-    }
+      }
+      while (!query_lexer_is_stop_char(lexer.current_char)) {
+        if (lexer.current_char == '.') {
+          if (is_float) {
+            result = LV_ERR_INVALID_QUERY;
+            goto _return;
+          }
+          is_float = 1;
+        } else if ((!isdigit((
+                       unsigned char)(lexer.current_char)))) { // expect a digit
+                                                               // or point
+          result = LV_ERR_INVALID_QUERY;
+          goto _return;
+        }
+        query_advance_lexer(&lexer);
+      }
 
-    if ((result = query_append_token(parser, LV_TOKEN_EOF, NULL, 0)) != LV_OK)
-    {
-        goto _return;
+      // tokens store (start, size) pointing INTO sql, not copies — cheap, but
+      // sql must stay alive through parsing.
+      LVSize32_t size = lexer.current_index - start_index;
+      const char *start = lexer.sql + start_index;
+      if (is_float) {
+        if ((result = query_append_token(parser, LV_TOKEN_FLOAT, start,
+                                         size)) != LV_OK) {
+          goto _return;
+        }
+      } else {
+        if ((result = query_append_token(parser, LV_TOKEN_INT, start, size)) !=
+            LV_OK) {
+          goto _return;
+        }
+      }
+    } else { // tokenize strings
+      switch (lexer.current_char) {
+      case '(':
+        if ((result = query_append_token(parser, LV_TOKEN_LPAREN,
+                                         lexer.sql + lexer.current_index, 1)) !=
+            LV_OK) {
+          goto _return;
+        }
+
+        ++lexer.lparen_count;
+        // current '('
+        query_advance_lexer(&lexer); // move to next
+        break;
+
+      case ')':
+        if ((result = query_append_token(parser, LV_TOKEN_RPAREN,
+                                         lexer.sql + lexer.current_index, 1)) !=
+            LV_OK) {
+          goto _return;
+        }
+        --lexer.lparen_count;
+
+        // current ')'
+        query_advance_lexer(&lexer); // move to next
+        break;
+
+      case '>': {
+        if (query_lexer_expect_next(&lexer, '=')) {
+          if ((result = query_append_token(parser, LV_TOKEN_GTE,
+                                           lexer.sql + lexer.current_index,
+                                           2)) != LV_OK) {
+            goto _return;
+          }
+          // current '>'
+          query_advance_lexer(&lexer); // move to '='
+          // current '='
+          query_advance_lexer(&lexer); // move to next
+        } else {
+          if ((result = query_append_token(parser, LV_TOKEN_GT,
+                                           lexer.sql + lexer.current_index,
+                                           1)) != LV_OK) {
+            goto _return;
+          }
+          // current '>'
+          query_advance_lexer(&lexer); // move to next
+        }
+
+        parser->complexity_score += 1;
+        break;
+      }
+
+      case '<': {
+        if (query_lexer_expect_next(&lexer, '=')) {
+          if ((result = query_append_token(parser, LV_TOKEN_LTE,
+                                           lexer.sql + lexer.current_index,
+                                           2)) != LV_OK) {
+            goto _return;
+          }
+          // current '<'
+          query_advance_lexer(&lexer); // move to '='
+          // current '='
+          query_advance_lexer(&lexer); // move to next
+        } else {
+          if ((result = query_append_token(parser, LV_TOKEN_LT,
+                                           lexer.sql + lexer.current_index,
+                                           1)) != LV_OK) {
+            goto _return;
+          }
+          // current '<'
+          query_advance_lexer(&lexer); // move to next
+        }
+        parser->complexity_score += 1;
+        break;
+      }
+
+      case '=': {
+        if (query_lexer_expect_next(&lexer, '=')) {
+          if ((result = query_append_token(parser, LV_TOKEN_EQ,
+                                           lexer.sql + lexer.current_index,
+                                           2)) != LV_OK) {
+            goto _return;
+          }
+          // current '='
+          query_advance_lexer(&lexer); // move to '='
+          // current '='
+          query_advance_lexer(&lexer); // move to next
+
+          parser->complexity_score += 1;
+        } else {
+          // expect '==' but got else
+          // this case is an error
+
+          result = LV_ERR_INVALID_QUERY;
+          goto _return;
+        }
+        break;
+      }
+
+      case '!': {
+        if (query_lexer_expect_next(&lexer, '=')) {
+          if ((result = query_append_token(parser, LV_TOKEN_NEQ,
+                                           lexer.sql + lexer.current_index,
+                                           2)) != LV_OK) {
+            goto _return;
+          }
+          // current '!'
+          query_advance_lexer(&lexer); // move to '='
+          // current '='
+          query_advance_lexer(&lexer); // move to next
+
+          parser->complexity_score += 1;
+        } else {
+          // expect '!=' but got else
+          // error
+          result = LV_ERR_INVALID_QUERY;
+          goto _return;
+        }
+        break;
+      }
+
+      case '\'': // string value
+      {
+        query_advance_lexer(&lexer);
+        LVSize32_t start_index = lexer.current_index;
+        while (lexer.current_index < lexer.sql_len &&
+               (lexer.current_char != '\'')) {
+          query_advance_lexer(&lexer);
+        }
+        if (lexer.current_char != '\'') // not closed
+        {
+          result = LV_ERR_INVALID_QUERY;
+          goto _return;
+        }
+        LVSize32_t size = lexer.current_index - start_index;
+        if ((result = query_append_token(parser, LV_TOKEN_STR,
+                                         lexer.sql + start_index, size)) !=
+            LV_OK) {
+          goto _return;
+        }
+        // current '\''
+        query_advance_lexer(&lexer); // move to next
+        break;
+      }
+
+      default: { // ident or 'AND' or 'OR'
+        LVSize32_t start_index = lexer.current_index;
+        while (!query_lexer_is_stop_char(lexer.current_char)) {
+          query_advance_lexer(&lexer);
+        }
+        LVSize32_t size = lexer.current_index - start_index;
+        if (size == 3 && strncasecmp(lexer.sql + start_index, "and", 3) == 0) {
+          if ((result = query_append_token(parser, LV_TOKEN_AND,
+                                           lexer.sql + start_index, size)) !=
+              LV_OK) {
+            goto _return;
+          }
+        }
+
+        else if (size == 2 &&
+                 strncasecmp(lexer.sql + start_index, "or", 2) == 0) {
+          if ((result = query_append_token(parser, LV_TOKEN_OR,
+                                           lexer.sql + start_index, size)) !=
+              LV_OK) {
+            goto _return;
+          }
+        }
+
+        else {
+          if ((result = query_append_token(parser, LV_TOKEN_IDENT,
+                                           lexer.sql + start_index, size)) !=
+              LV_OK) {
+            goto _return;
+          }
+        }
+        break;
+      }
+      }
     }
+  }
+
+  if (lexer.lparen_count != 0) {
+    result = LV_ERR_INVALID_QUERY;
+    goto _return;
+  }
+
+  if ((result = query_append_token(parser, LV_TOKEN_EOF, NULL, 0)) != LV_OK) {
+    goto _return;
+  }
 
 _return:
-    return result;
+  return result;
 }
 
-LVStatus query_append_token(LVSQLParser* parser, const LVQueryToken token, const char* start, const LVSize32_t size)
-{
-    if (parser->size >= parser->capacity)
-    {
-        LVSize32_t new_capacity = parser->capacity * 2;
-        LVSQLToken* tmp = realloc(parser->tokens, sizeof(LVSQLToken) * new_capacity);
-        if (!tmp)
-        {
-            return LV_ERR_FULL;
-        }
-        parser->capacity = new_capacity;
-        parser->tokens = tmp;
+LVStatus query_append_token(LVSQLParser *parser, const LVQueryToken token,
+                            const char *start, const LVSize32_t size) {
+  if (parser->size >= parser->capacity) {
+    LVSize32_t new_capacity = parser->capacity * 2;
+    LVSQLToken *tmp =
+        realloc(parser->tokens, sizeof(LVSQLToken) * new_capacity);
+    if (!tmp) {
+      return LV_ERR_FULL;
     }
+    parser->capacity = new_capacity;
+    parser->tokens = tmp;
+  }
 
-    parser->tokens[parser->size].token = token;
-    parser->tokens[parser->size].start = start;
-    parser->tokens[parser->size].size = size;
+  parser->tokens[parser->size].token = token;
+  parser->tokens[parser->size].start = start;
+  parser->tokens[parser->size].size = size;
 
-    parser->size += 1;
-    return LV_OK;
+  parser->size += 1;
+  return LV_OK;
 }
 
-void query_advance_lexer(LVSQLLexer* lexer)
-{
-    lexer->current_index += 1;
-    if (lexer->current_index < lexer->sql_len)
-    {
-        lexer->current_char = lexer->sql[lexer->current_index];
-    }
-    else
-    {
-        lexer->current_char = '\0';
-    }
+void query_advance_lexer(LVSQLLexer *lexer) {
+  lexer->current_index += 1;
+  if (lexer->current_index < lexer->sql_len) {
+    lexer->current_char = lexer->sql[lexer->current_index];
+  } else {
+    lexer->current_char = '\0';
+  }
 }
 
-void query_lexer_skip_whitespace(LVSQLLexer* lexer)
-{
-    while (isspace((unsigned char)(lexer->current_char)))
-    {
-        query_advance_lexer(lexer);
-    }
+void query_lexer_skip_whitespace(LVSQLLexer *lexer) {
+  while (isspace((unsigned char)(lexer->current_char))) {
+    query_advance_lexer(lexer);
+  }
 }
 
-int query_lexer_expect_next(const LVSQLLexer* lexer, const char expected)
-{
-    if (lexer->current_index < lexer->sql_len - 1)
-    {
-        return lexer->sql[lexer->current_index + 1] == expected;
-    }
-    return 0;
+int query_lexer_expect_next(const LVSQLLexer *lexer, const char expected) {
+  if (lexer->current_index < lexer->sql_len - 1) {
+    return lexer->sql[lexer->current_index + 1] == expected;
+  }
+  return 0;
 }
 
-int query_lexer_expect_next_not(const LVSQLLexer* lexer, const char expected)
-{
-    if (lexer->current_index < lexer->sql_len - 1)
-    {
-        return lexer->sql[lexer->current_index + 1] != expected;
-    }
-    return 0;
+int query_lexer_expect_next_not(const LVSQLLexer *lexer, const char expected) {
+  if (lexer->current_index < lexer->sql_len - 1) {
+    return lexer->sql[lexer->current_index + 1] != expected;
+  }
+  return 0;
 }
 
 /*
@@ -660,260 +626,244 @@ int query_lexer_expect_next_not(const LVSQLLexer* lexer, const char expected)
  * literals (e.g. -30) tokenize correctly. This is why we don't just call the
  * standard isdigit here — do NOT drop the '-' case.
  */
-int query_lexer_isdigit(int c)
-{
-    return isdigit(c) || c == '-';
+int query_lexer_isdigit(int c) { return isdigit(c) || c == '-'; }
+
+int query_lexer_is_stop_char(char c) {
+  return isspace(c) || c == '(' || c == ')' || c == '>' || c == '<' ||
+         c == '=' || c == '!' || c == '\'' || c == '\0';
 }
 
-int query_lexer_is_stop_char(char c)
-{
-    return isspace(c) || c == '(' || c == ')' || c == '>' || c == '<' || c == '=' || c == '!' || c == '\'' || c == '\0';
-}
+LVSQLParser *query_create_parser(void) {
+  LVSQLParser *parser = NULL;
+  LVSQLToken *tokens = NULL;
+  parser = malloc(sizeof(LVSQLParser));
+  if (!parser) {
+    goto cleanup;
+  }
+  parser->capacity = LV_DEFAULT_CAPACITY;
+  parser->size = 0;
+  parser->cursor = 0;
+  parser->current_token = NULL;
+  parser->complexity_score = 0;
 
-LVSQLParser* query_create_parser() {
-    LVSQLParser* parser = NULL;
-    LVSQLToken* tokens = NULL;
-    parser = malloc(sizeof(LVSQLParser));
-    if (!parser) {
-        goto cleanup;
-    }
-    parser->capacity = LV_DEFAULT_CAPACITY;
-    parser->size = 0;
-    parser->cursor = 0;
-    parser->current_token = NULL;
-    parser->complexity_score = 0;
+  tokens = malloc(sizeof(LVSQLToken) * LV_DEFAULT_CAPACITY);
+  if (!tokens)
+    goto cleanup;
+  parser->tokens = tokens;
 
-    tokens = malloc(sizeof(LVSQLToken) * LV_DEFAULT_CAPACITY);
-    if (!tokens)  goto cleanup;
-    parser->tokens = tokens;
-
-    return parser;
+  return parser;
 cleanup:
-    query_destroy_parser(parser);
+  query_destroy_parser(parser);
+  return NULL;
+}
+
+void query_destroy_parser(LVSQLParser *parser) {
+  if (parser) {
+    free(parser->tokens);
+    free(parser);
+  }
+}
+LVAstNode *query_parse(LVSQLParser *parser, const LVSchema *schema) {
+  if (parser->size == 0)
     return NULL;
+  parser->cursor = 0;
+  parser->current_token = &parser->tokens[0];
+  LVAstNode *ast = query_parse_or(parser, schema);
+  if (ast && parser->current_token->token != LV_TOKEN_EOF) {
+    query_destroy_ast(ast);
+    return NULL;
+  }
+  return ast;
 }
 
-void query_destroy_parser(LVSQLParser* parser) {
-    if (parser) {
-        free(parser->tokens);
-        free(parser);
-    }
+LVAstNode *query_parse_or(LVSQLParser *parser, const LVSchema *schema) {
+  LVAstNode *node = query_parse_and(parser, schema); // left
+  while (query_parser_match(parser, LV_TOKEN_OR)) {
+    LVAstNode *right = query_parse_and(parser, schema);
+    node = query_create_or_node(node, right);
+  }
+  return node;
 }
-LVAstNode* query_parse(LVSQLParser* parser, const LVSchema* schema)
-{
-    if (parser->size == 0)return NULL;
-    parser->cursor = 0;
-    parser->current_token = &parser->tokens[0];
-    LVAstNode* ast = query_parse_or(parser, schema);
-    if (ast && parser->current_token->token != LV_TOKEN_EOF) {
-        query_destroy_ast(ast);
-        return NULL;
-    }
-    return ast;
+LVAstNode *query_parse_and(LVSQLParser *parser, const LVSchema *schema) {
+  LVAstNode *node = query_parse_term(parser, schema); // left
+  while (query_parser_match(parser, LV_TOKEN_AND)) {
+    LVAstNode *right = query_parse_term(parser, schema);
+    node = query_create_and_node(node, right);
+  }
+  return node;
 }
-
-LVAstNode* query_parse_or(LVSQLParser* parser, const LVSchema* schema)
-{
-    LVAstNode* node = query_parse_and(parser, schema); // left
-    while (query_parser_match(parser, LV_TOKEN_OR))
-    {
-        LVAstNode* right = query_parse_and(parser, schema);
-        node = query_create_or_node(node, right);
+LVAstNode *query_parse_term(LVSQLParser *parser, const LVSchema *schema) {
+  if (query_parser_match(parser, LV_TOKEN_LPAREN)) {
+    LVAstNode *node = query_parse_or(parser, schema);
+    if (query_parser_consume(parser, LV_TOKEN_RPAREN) != LV_OK) {
+      query_destroy_ast(node);
+      return NULL;
     }
     return node;
-}
-LVAstNode* query_parse_and(LVSQLParser* parser, const LVSchema* schema)
-{
-    LVAstNode* node = query_parse_term(parser, schema); // left
-    while (query_parser_match(parser, LV_TOKEN_AND))
-    {
-        LVAstNode* right = query_parse_term(parser, schema);
-        node = query_create_and_node(node, right);
-    }
-    return node;
-}
-LVAstNode* query_parse_term(LVSQLParser* parser, const LVSchema* schema)
-{
-    if (query_parser_match(parser, LV_TOKEN_LPAREN))
-    {
-        LVAstNode* node = query_parse_or(parser, schema);
-        if (query_parser_consume(parser, LV_TOKEN_RPAREN) != LV_OK) {
-            query_destroy_ast(node);
-            return NULL;
-        }
-        return node;
-    }
-    return query_parse_filter(parser, schema);
+  }
+  return query_parse_filter(parser, schema);
 }
 
-LVAstNode* query_parse_filter(LVSQLParser* parser, const LVSchema* schema)
-{
-    if (parser->size - parser->cursor < 3)
-    { // filter requires 3 tokens, check remaining tokens are at least three
-        return NULL;
-    }
+LVAstNode *query_parse_filter(LVSQLParser *parser, const LVSchema *schema) {
+  if (parser->size - parser->cursor <
+      3) { // filter requires 3 tokens, check remaining tokens are at least
+           // three
+    return NULL;
+  }
 
-    if (parser->current_token->token != LV_TOKEN_IDENT || !query_is_op_token(parser->tokens[parser->cursor + 1].token) || !query_is_value_token(parser->tokens[parser->cursor + 2].token))
-    {
-        return NULL;
-    }
+  if (parser->current_token->token != LV_TOKEN_IDENT ||
+      !query_is_op_token(parser->tokens[parser->cursor + 1].token) ||
+      !query_is_value_token(parser->tokens[parser->cursor + 2].token)) {
+    return NULL;
+  }
 
-    LVMetaFieldHash* hash = schema_search_field_hash(schema->field_hashes, parser->current_token->start, parser->current_token->size);
-    if (!hash)
-    { // invalid ident, not found
-        return NULL;
-    }
+  const LVMetaFieldHash *hash = schema_search_field_hash(schema->field_hashes,
+                                                   parser->current_token->start,
+                                                   parser->current_token->size);
+  if (!hash) { // invalid ident, not found
+    return NULL;
+  }
 
-    if (query_parser_consume(parser, LV_TOKEN_IDENT) != LV_OK) return NULL;
+  if (query_parser_consume(parser, LV_TOKEN_IDENT) != LV_OK)
+    return NULL;
 
-    LVQueryOp filter_op;
-    switch (parser->current_token->token)
-    {
-    case LV_TOKEN_GT:
-        filter_op = LV_QOP_GT;
-        break;
+  LVQueryOp filter_op;
+  switch (parser->current_token->token) {
+  case LV_TOKEN_GT:
+    filter_op = LV_QOP_GT;
+    break;
 
-    case LV_TOKEN_GTE:
-        filter_op = LV_QOP_GTE;
-        break;
+  case LV_TOKEN_GTE:
+    filter_op = LV_QOP_GTE;
+    break;
 
-    case LV_TOKEN_LT:
-        filter_op = LV_QOP_LT;
-        break;
+  case LV_TOKEN_LT:
+    filter_op = LV_QOP_LT;
+    break;
 
-    case LV_TOKEN_LTE:
-        filter_op = LV_QOP_LTE;
-        break;
+  case LV_TOKEN_LTE:
+    filter_op = LV_QOP_LTE;
+    break;
 
-    case LV_TOKEN_EQ:
-        filter_op = LV_QOP_EQ;
-        break;
+  case LV_TOKEN_EQ:
+    filter_op = LV_QOP_EQ;
+    break;
 
-    case LV_TOKEN_NEQ:
-        filter_op = LV_QOP_NEQ;
-        break;
-    default:
-        return NULL;
-    }
+  case LV_TOKEN_NEQ:
+    filter_op = LV_QOP_NEQ;
+    break;
+  default:
+    return NULL;
+  }
 
-    if (query_parser_consume(parser, parser->current_token->token) != LV_OK) return NULL;
+  if (query_parser_consume(parser, parser->current_token->token) != LV_OK)
+    return NULL;
 
-    LVFilterValue filter_value;
+  LVFilterValue filter_value;
 
-    filter_value.type = hash->type;
-    switch (filter_value.type)
-    {
-    case LV_META_FLOAT:
-        filter_value.value.f64 = query_strtod(parser->current_token->start, parser->current_token->size);
-        break;
+  filter_value.type = hash->type;
+  switch (filter_value.type) {
+  case LV_META_FLOAT:
+    filter_value.value.f64 =
+        query_strtod(parser->current_token->start, parser->current_token->size);
+    break;
 
-    case LV_META_INT:
-        filter_value.value.i64 = query_strtol(parser->current_token->start, parser->current_token->size);
-        break;
+  case LV_META_INT:
+    filter_value.value.i64 =
+        query_strtol(parser->current_token->start, parser->current_token->size);
+    break;
 
-    case LV_META_STRING:
-        filter_value.value.str.len = parser->current_token->size;
-        filter_value.value.str.string = parser->current_token->start;
-        break;
-    default:
-        break;
-    }
+  case LV_META_STRING:
+    filter_value.value.str.len = parser->current_token->size;
+    filter_value.value.str.string = (char*)parser->current_token->start;
+    break;
+  default:
+    break;
+  }
 
-    if (query_parser_consume(parser, parser->current_token->token) != LV_OK) return NULL;
+  if (query_parser_consume(parser, parser->current_token->token) != LV_OK)
+    return NULL;
 
-    return query_create_filter_node(hash->field_name, filter_op, &filter_value);
+  return query_create_filter_node(hash->field_name, filter_op, &filter_value);
 }
 
-int64_t query_strtol(const char* ptr, const LVSize32_t size)
-{
-    int is_negative = ptr[0] == '-';
-    int start_index = is_negative;
-    int64_t result = 0;
-    for (int i = start_index; i < size; ++i)
-    {
-        result = result * 10 + (ptr[i] - '0');
+int64_t query_strtol(const char *ptr, const LVSize32_t size) {
+  int is_negative = ptr[0] == '-';
+  int start_index = is_negative;
+  int64_t result = 0;
+  for (LVSize32_t i = start_index; i < size; ++i) {
+    result = result * 10 + (ptr[i] - '0');
+  }
+  return is_negative ? -result : result;
+}
+
+double query_strtod(const char *ptr, const LVSize32_t size) {
+  int is_negative = (ptr[0] == '-');
+
+  const char *num_start = is_negative ? ptr + 1 : ptr;
+  LVSize32_t num_size = is_negative ? size - 1 : size;
+
+  int point_idx = -1;
+  for (LVSize32_t i = 0; i < num_size; i++) {
+    if (num_start[i] == '.') {
+      point_idx = i;
+      break;
     }
+  }
+
+  if (point_idx == -1) {
+    double result = (double)query_strtol(num_start, num_size);
     return is_negative ? -result : result;
+  }
+
+  double int_part = (double)query_strtol(num_start, point_idx);
+
+  double frac_part =
+      (double)query_strtol(num_start + point_idx + 1, num_size - point_idx - 1);
+
+  double divisor = 1.0;
+  int frac_len = num_size - point_idx - 1;
+  for (int i = 0; i < frac_len; i++) {
+    divisor *= 10.0;
+  }
+
+  double final_value = int_part + (frac_part / divisor);
+
+  return is_negative ? -final_value : final_value;
 }
 
-double query_strtod(const char* ptr, const LVSize32_t size)
-{
-    int is_negative = (ptr[0] == '-');
-
-    const char* num_start = is_negative ? ptr + 1 : ptr;
-    LVSize32_t num_size = is_negative ? size - 1 : size;
-
-    int point_idx = -1;
-    for (int i = 0; i < num_size; i++)
-    {
-        if (num_start[i] == '.')
-        {
-            point_idx = i;
-            break;
-        }
-    }
-
-    if (point_idx == -1)
-    {
-        double result = (double)query_strtol(num_start, num_size);
-        return is_negative ? -result : result;
-    }
-
-    double int_part = (double)query_strtol(num_start, point_idx);
-
-    double frac_part = (double)query_strtol(num_start + point_idx + 1, num_size - point_idx - 1);
-
-    double divisor = 1.0;
-    int frac_len = num_size - point_idx - 1;
-    for (int i = 0; i < frac_len; i++)
-    {
-        divisor *= 10.0;
-    }
-
-    double final_value = int_part + (frac_part / divisor);
-
-    return is_negative ? -final_value : final_value;
+void query_advance_parser(LVSQLParser *parser) {
+  if (parser->current_token->token != LV_TOKEN_EOF) {
+    parser->cursor += 1;
+    parser->current_token = &parser->tokens[parser->cursor];
+  }
 }
 
-void query_advance_parser(LVSQLParser* parser)
-{
-    if (parser->current_token->token != LV_TOKEN_EOF)
-    {
-        parser->cursor += 1;
-        parser->current_token = &parser->tokens[parser->cursor];
-    }
+LVStatus query_parser_consume(LVSQLParser *parser, const LVQueryToken token) {
+  if (parser->current_token->token == token) {
+    query_advance_parser(parser);
+    return LV_OK;
+  } else {
+    return LV_ERR_INVALID_QUERY;
+  }
 }
 
-LVStatus query_parser_consume(LVSQLParser* parser, const LVQueryToken token)
-{
-    if (parser->current_token->token == token)
-    {
-        query_advance_parser(parser);
-        return LV_OK;
-    }
-    else {
-        return LV_ERR_INVALID_QUERY;
-    }
+int query_parser_match(LVSQLParser *parser, const LVQueryToken expected) {
+  int match = parser->current_token->token == expected;
+  if (match) {
+    query_advance_parser(parser);
+  }
+  return match;
 }
 
-int query_parser_match(LVSQLParser* parser, const LVQueryToken expected)
-{
-    int match = parser->current_token->token == expected;
-    if (match)
-    {
-        query_advance_parser(parser);
-    }
-    return match;
+LVFieldMask32_t query_get_field_mask(const LVAstNode *node,
+                                     const LVSchema *schema) {
+  if (node->type == LV_AST_FILTER) {
+    const char *field_name = node->value.filter.field_name;
+    const LVMetaFieldHash *hash = schema_search_field_hash(
+        schema->field_hashes, field_name, strlen(field_name));
+    return hash ? hash->mask : 0;
+  }
+  return query_get_field_mask(node->value.logic.left, schema) |
+         query_get_field_mask(node->value.logic.right, schema);
 }
-
-LVFieldMask32_t query_get_field_mask(const LVAstNode* node, const LVSchema* schema)
-{
-    if (node->type == LV_AST_FILTER)
-    {
-        const char* field_name = node->value.filter.field_name;
-        LVMetaFieldHash* hash = schema_search_field_hash(schema->field_hashes, field_name, strlen(field_name));
-        return hash ? hash->mask : 0;
-    }
-    return query_get_field_mask(node->value.logic.left, schema) | query_get_field_mask(node->value.logic.right, schema);
-}
-
