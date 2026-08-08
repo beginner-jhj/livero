@@ -3,10 +3,8 @@
 #include "storage.h"
 #include "arena.h"
 #include "node.h"
-#include "helper.h"
 #include "query.h"
 #include "schema.h"
-#include "vector.h"
 
 /*
  * Create an empty memtable: an arena, plus head and tail sentinel nodes linked
@@ -16,7 +14,7 @@
  * state is cleaned up via table_destroy, which tolerates NULLs).
  */
 
-LVMemTable* table_create()
+LVMemTable* table_create(void)
 {
     LVMemTable* table = malloc(sizeof(LVMemTable));
     if (!table) goto cleanup;
