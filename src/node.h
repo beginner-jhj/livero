@@ -40,7 +40,7 @@ typedef struct LVNode
     LVFieldMask32_t field_mask;
     LVCount32_t field_count;
     LVVectorId64_t vector_id;
-    LVHnswNode* hnsw_node;
+    const LVHnswNode* hnsw_node;
     struct LVNode* levels[];
 } LVNode;
 
