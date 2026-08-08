@@ -4,12 +4,12 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include "livero_types.h"
 #include "util.h"
 #include "schema.h"
 #include "wal.h"
 #include "storage.h"
 #include "vector.h"
-#include "helper.h"
 #include "query.h"
 #include "node.h"
 #include "sst.h"
@@ -200,10 +200,10 @@ LVStatus lv_put(Livero* db, const void* key, const LVKeyLen32_t key_len, const v
 
     LVFieldMask32_t field_mask = 0;
 
-    for (int i = 0; i < field_count; ++i)
+    for (LVCount32_t i = 0; i < field_count; ++i)
     {
-        LVMetaField* current_field = fields + i;
-        LVMetaFieldHash* search_result = schema_search_field_hash(db->schema->field_hashes, current_field->name, strlen(current_field->name));
+        const LVMetaField* current_field = fields + i;
+        const LVMetaFieldHash* search_result = schema_search_field_hash(db->schema->field_hashes, current_field->name, strlen(current_field->name));
 
         if (!search_result)
         { // check field name exists
@@ -223,7 +223,7 @@ LVStatus lv_put(Livero* db, const void* key, const LVKeyLen32_t key_len, const v
     if (field_size > 0) {
         char field_buffer[field_size];
 
-        schema_serialize_field(db->schema, field_buffer, fields, field_count, 0);
+        schema_serialize_field(db->schema->field_hashes, field_buffer, fields, field_count, 0);
 
         result = lv_put_internal(db, LV_PUT, current_seq, current_vector_id, key, key_len, value, value_len, vector, field_mask, field_count, field_size, field_buffer);
     }
@@ -727,7 +727,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
 
     new_field_size = found_field_size;
 
-    for (int offset = 0; offset < field_count; ++offset) {
+    for (LVSize32_t offset = 0; offset < field_count; ++offset) {
         const LVMetaField* current_field = fields + offset;
 
         const LVMetaFieldHash* searched_hash = schema_search_field_hash(db->schema->field_hashes, current_field->name, strlen(current_field->name));
@@ -799,13 +799,13 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
     LVCount32_t upd_cnt = 0;
     LVCount32_t new_cnt = 0;
     LVSize32_t acc_offset = 0;
-    for (int new_field_number = 0; new_field_number < new_field_count; ++new_field_number) {
+    for (LVCount32_t new_field_number = 0; new_field_number < new_field_count; ++new_field_number) {
         LVFieldMask32_t current_field_mask = node_field_number_to_mask(new_field_mask, new_field_number); // field mask is always same.
         LVMetaType current_type = LV_META_FLOAT;
         uint32_t current_str_len = 0;
 
         if (current_field_mask & field_mask_to_update) {
-            LVMetaField* upd_field = fields + update_fields_offsets[upd_cnt];
+            const LVMetaField* upd_field = fields + update_fields_offsets[upd_cnt];
 
             current_type = upd_field->type;
             if (current_type == LV_META_STRING) {
@@ -815,7 +815,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
         }
 
         else if (current_field_mask & field_mask_to_add) {
-            LVMetaField* new_field = fields + new_fields_offsets[new_cnt];
+            const LVMetaField* new_field = fields + new_fields_offsets[new_cnt];
 
             current_type = new_field->type;
             if (current_type == LV_META_STRING) {
@@ -852,7 +852,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
     }
 
     LVCount32_t update_done_count = 0;
-    for (int i = 0; i < found_field_count; ++i) {
+    for (LVCount32_t i = 0; i < found_field_count; ++i) {
         LVFieldMask32_t current_field_mask = node_field_number_to_mask(new_field_mask, i);
         int prev_field_number = node_field_number_of_mask(found_field_mask, current_field_mask);
         char* prev_field_ptr = (char*)node_field_buffer_access(found_field, prev_field_number);
@@ -861,7 +861,7 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
         char* new_field_ptr = (char*)new_field + new_field_accrued_offsets[new_field_number];
 
         if (current_field_mask & field_mask_to_update && update_done_count < field_count_to_update) {
-            LVMetaField* update_field_data = fields + update_fields_offsets[update_done_count];
+            const LVMetaField* update_field_data = fields + update_fields_offsets[update_done_count];
 
             uint8_t type_to_save = (uint8_t)update_field_data->type;
             memcpy(new_field_ptr, &type_to_save, sizeof(uint8_t));
@@ -912,10 +912,10 @@ LVStatus lv_update_field(Livero* db, const void* key, const LVKeyLen32_t key_len
         }
     }
 
-    for (int i = 0; i < field_count_to_add; ++i) {
+    for (LVSize32_t i = 0; i < field_count_to_add; ++i) {
         int field_number = node_field_number_of_mask(new_field_mask, new_field_masks[i]);
         char* field_ptr = (char*)new_field + new_field_accrued_offsets[field_number];
-        LVMetaField* new_field_data = fields + new_fields_offsets[i];
+        const LVMetaField* new_field_data = fields + new_fields_offsets[i];
 
         uint8_t type_to_save = (uint8_t)new_field_data->type;
         memcpy(field_ptr, &type_to_save, sizeof(uint8_t));
@@ -1225,7 +1225,7 @@ _return:
 void lv_destroy_query_result_set(LVQueryResultSet* qrset) {
     if (qrset) {
         if (qrset->results) {
-            for (int i = 0; i < qrset->size; ++i) {
+            for (LVSize32_t i = 0; i < qrset->size; ++i) {
                 free(qrset->results[i].key);
                 free(qrset->results[i].value);
             }
@@ -1721,9 +1721,9 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
         db->next_vector_id += 1; // increase vector id for next
     }
 
-    void* KEY = key;
+    const void* KEY = key;
     LVKeyLen32_t KEY_LEN = key_len;
-    void* VALUE = value;
+    const void* VALUE = value;
     LVValueLen32_t VALUE_LEN = value_len;
 
     // no key given: use this record's seq as a unique key (always distinct,
@@ -1771,7 +1771,7 @@ static LVStatus lv_put_internal(Livero* db, const LVNodeOp op, const LVSeq64_t c
 
     // append to MemTable
 
-    const LVNode* inserted_memtable_node = table_insert(db->memtable, op, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, memory_field_buffer);
+    LVNode* inserted_memtable_node = table_insert(db->memtable, op, current_seq, new_level, KEY_LEN, KEY, VALUE_LEN, VALUE, vector ? current_vector_id : LV_NO_VECTOR_ID, field_mask, field_count, field_size, memory_field_buffer);
 
     if (!inserted_memtable_node)
     {
@@ -1951,9 +1951,9 @@ static LVStatus lv_qvset_light_append_internal(LVQVSet* qvset, const LVSeq64_t n
 
     qvset->values[index].node_seq = node_seq;
     qvset->values[index].vector_id = vector_id;
-    qvset->values[index].key = key; //must be pre-heap allocated
+    qvset->values[index].key = (void*)key; //must be pre-heap allocated
     qvset->values[index].key_len = key_len;
-    qvset->values[index].value = value; //must be pre-heap allocated
+    qvset->values[index].value = (void*)value; //must be pre-heap allocated
     qvset->values[index].value_len = value_len;
     qvset->values[index].vector_score = vector_score;
     qvset->values[index].ordbyvalue = ordbyvalue;
@@ -1967,7 +1967,7 @@ _return:
 static void lv_destroy_qvset_internal(LVQVSet* qvset) {
     if (qvset) {
         if (qvset->values) {
-            for (int i = 0; i < qvset->size; ++i) {
+            for (LVSize32_t i = 0; i < qvset->size; ++i) {
                 free(qvset->values[i].key);
                 free(qvset->values[i].value);
             }
