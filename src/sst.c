@@ -1,11 +1,12 @@
 #include "sst.h"
 #include "helper.h"
+#include "livero_types.h"
 #include "node.h"
 #include "util.h"
-#include "vector.h"
 #include "query.h"
 #include "storage.h"
 #include "schema.h"
+#include <string.h>
 
 /*
  * Flush the memtable to a new SST, optionally MERGING with an existing SST.
@@ -84,7 +85,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     LVSeq64_t next_seq = 0;
     LVVectorId64_t next_vector_id = 0;
     if (old_fd < 0) {
-        LVNode* current_node = node;
+        const LVNode* current_node = node;
         LVSeq64_t last_seq = 0;
         LVVectorId64_t last_vector_id = 0;
         while (current_node->type != LV_NODE_TAIL) {
@@ -135,7 +136,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
         int has_old_entry = 1;
 
         uint64_t record_read = 0;
-        LVNode* current_node = node;
+        const LVNode* current_node = node;
         LVSeq64_t last_seq = 0;
         LVVectorId64_t last_vector_id = 0;
 
@@ -346,7 +347,7 @@ LVStatus sst_flush(const int new_fd, const int old_fd, const int vector_index_fd
     const uint64_t index_block_offset = lseek(new_fd, 0, SEEK_CUR);
 
     //write index_block
-    for (int i = 0; i < index_set->size; ++i) {
+    for (LVSize32_t i = 0; i < index_set->size; ++i) {
         put_fixed_32(BUF_32, index_set->entries[i].key_len);
         if ((result = write_helper(new_fd, BUF_32, 4)) != LV_OK) goto _return;
 
@@ -649,7 +650,7 @@ LVStatus sst_indexblockset_append(LVSSTIndexBlockSet* index_buffer, const LVKeyL
 void sst_destroy_indexblockset(LVSSTIndexBlockSet* index_block) {
     if (index_block) {
         if (index_block->entries) {
-            for (int i = 0; i < index_block->size; ++i) {
+            for (LVSize32_t i = 0; i < index_block->size; ++i) {
                 free(index_block->entries[i].key);
             }
             free(index_block->entries);
@@ -662,8 +663,6 @@ void sst_destroy_indexblockset(LVSSTIndexBlockSet* index_block) {
 
 LVStatus sst_query_filter_scan(const int fd, const LVSchema* schema, const LVAstNode* query, const LVFieldMask32_t query_field_mask, const LVOrdbyType ordbytype, const LVFieldMask32_t ordby_field_mask, const LVQVSetAppendFn qv_append_fn, LVQVSet* qv_set) {
     LVStatus result = LV_OK;
-    uint8_t BUF_32[4];
-    uint8_t BUF_64[8];
 
     if (fd < 0) goto _return;
 
@@ -854,7 +853,6 @@ _return:
 
 LVStatus sst_query_with_hnsw(const int fd, const int vector_index_fd, const LVVectorId64_t vector_id, const LVSchema* schema, const LVAstNode* query, const LVSSTQueryCtx* query_ctx) {
     LVStatus result = LV_OK;
-    uint8_t BUF_32[4];
     uint8_t BUF_64[8];
 
     if (fd < 0) goto _return;
@@ -869,12 +867,11 @@ LVStatus sst_query_with_hnsw(const int fd, const int vector_index_fd, const LVVe
     LVLevel8_t level;
     LVKeyLen32_t key_len;
     LVValueLen32_t value_len;
-    LVVectorId64_t saved_vector_id;
     LVFieldMask32_t field_mask;
     LVSize32_t field_count;
     LVSize32_t field_size;
 
-    if ((result = sst_read_record_head(fd, record_offset, &seq, &op, &level, &key_len, &value_len, &vector_id, &field_mask, &field_count, &field_size, &record_head_size)) != LV_OK) goto _return;
+    if ((result = sst_read_record_head(fd, record_offset, &seq, &op, &level, &key_len, &value_len, NULL, &field_mask, &field_count, &field_size, &record_head_size)) != LV_OK) goto _return;
     const uint64_t tail_offset = record_offset + record_head_size;
 
     if (field_count > 0 && (query_ctx->query_field_mask & field_mask)) {
