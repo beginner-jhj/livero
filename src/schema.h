@@ -50,16 +50,16 @@ LVStatus schema_read(const int fd, LVSchema* schema);
 void schema_destroy_field_hashes(LVMetaFieldHash** hashes);
 LVStatus schema_insert_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVMetaType type, const LVFieldMask32_t mask);
 
-LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash** hashes, const char* field_name, const LVSize32_t field_len);
+const LVMetaFieldHash* schema_search_field_hash(LVMetaFieldHash* const* hashes, const char* field_name, const LVSize32_t field_len);
 
 LVSize32_t schema_field_serialized_size(const LVMetaField* fields, const LVCount32_t field_count);
 
-void schema_serialize_field(const LVSchema* schema, void* buffer, const LVMetaField* fields, const LVCount32_t field_count, const int is_on_disk);
+void schema_serialize_field(LVMetaFieldHash* const* hashes, void* buffer, const LVMetaField* fields, const LVCount32_t field_count, const int is_on_disk);
 
 void schema_field_memmory_to_disk(const void* src, const LVSize32_t field_size, void* dest);
 void schema_field_disk_to_memory(const void* src, const LVSize32_t field_size, void* dest);
 
-LVMetaField* schema_deserialize_field(const LVMetaFieldHash** hashes, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk);
+LVMetaField* schema_deserialize_field(LVMetaFieldHash* const* hashes, const LVFieldMask32_t field_mask, const LVCount32_t field_count, const void* src, const int is_on_disk);
 
 void schema_destroy_fields(LVCount32_t field_count, LVMetaField* fields);
 #endif
