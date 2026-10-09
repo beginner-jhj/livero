@@ -18,12 +18,12 @@ const char* TEST_DIR = "./TEST_DB/";
 const LVConfig TEST_CONFIG = {
     .max_disk_bytes = _1mb, .vector_dimension = TEST_VECTOR_DIM, .vector_type = TEST_VECTOR_TYPE};
 
-typedef struct LVPutAnswer {
+typedef struct LVTestAnswer {
     LVSeq_t key;
     char value[TEST_MAX_VALUE_LEN];
     LVSize_t value_len;
     LVDate date;
-} LVPutAnswer;
+} LVTestAnswer;
 
 int test_create(Livero** out) {
     clean_test_dir(TEST_DIR);
@@ -143,33 +143,41 @@ cleanup:
     return result;
 }
 
-int test_put(Livero* db, LVPutAnswer* answer, const void* vector) {
-    assert(db && answer);
+int test_put(Livero* db, const void* vector, const LVDate* date, const void* value, const uint16_t* value_len,
+             LVTestAnswer* answer) {
+    assert(db);
 
     float FP32_VECTOR[TEST_VECTOR_DIM] = {0.0f};
     int8_t INT8_VECTOR[TEST_VECTOR_DIM] = {0};
+    int DUMMY_VALUE_LEN = rand_int(TEST_MIN_VALUE_LEN, TEST_MAX_VALUE_LEN);
+    char DUMMY_VALUE[DUMMY_VALUE_LEN];
+    if (!value) {
+        fill_random_chr_data(DUMMY_VALUE_LEN, DUMMY_VALUE);
+    }
+    LVDate DUMMY_DATE;
+    if (!date) {
+        fill_random_date(&DUMMY_DATE, 2000, 2026);
+    }
 
-    const int value_len = rand_int(TEST_MIN_VALUE_LEN, TEST_MAX_VALUE_LEN);
+    const void* vector_to_put = nullptr;
+    const LVDate* date_to_put = date ? date : &DUMMY_DATE;
+    const void* value_to_put = value ? value : DUMMY_VALUE;
+    const uint16_t value_len_to_put = value_len ? *value_len : DUMMY_VALUE_LEN;
+    LVSeq_t key = 0;
 
-    memset(answer->value, 0, value_len);
-    fill_random_chr_data(value_len, answer->value);
-    answer->value_len = value_len;
-    fill_random_date(&answer->date);
-
-    LVStatus status = LV_OK;
     if (vector) {
-        status = lv_put(db, vector, &answer->date, answer->value, value_len, &answer->key);
+        vector_to_put = vector;
     } else {
         if (TEST_CONFIG.vector_type == LV_VEC_TYPE_FP32) {
-            memset(FP32_VECTOR, 0, sizeof(float) * TEST_CONFIG.vector_dimension);
             fill_fp32_vector(TEST_CONFIG.vector_dimension, FP32_VECTOR);
-            status = lv_put(db, FP32_VECTOR, &answer->date, answer->value, value_len, &answer->key);
+            vector_to_put = FP32_VECTOR;
         } else if (TEST_CONFIG.vector_type == LV_VEC_TYPE_INT8) {
-            memset(INT8_VECTOR, 0, TEST_CONFIG.vector_dimension);
             fill_int8_vector(TEST_CONFIG.vector_dimension, INT8_VECTOR);
-            status = lv_put(db, INT8_VECTOR, &answer->date, answer->value, value_len, &answer->key);
+            vector_to_put = INT8_VECTOR;
         }
     }
+
+    LVStatus status = lv_put(db, vector_to_put, date_to_put, value_to_put, value_len_to_put, &key);
 
     if (status != LV_OK) {
         fprintf(stderr, "Failed to put.\n");
@@ -177,10 +185,17 @@ int test_put(Livero* db, LVPutAnswer* answer, const void* vector) {
         return -1;
     }
 
+    if (answer) {
+        answer->key = key;
+        answer->date = *date_to_put;
+        memcpy(answer->value, value_to_put, value_len_to_put);
+        answer->value_len = value_len_to_put;
+    }
+
     return 0;
 }
 
-int test_get(const Livero* db, const LVPutAnswer* answer) {
+int test_get(const Livero* db, const LVTestAnswer* answer) {
     assert(db && answer);
 
     char SAVED_VALUE[TEST_MAX_VALUE_LEN] = {0};
@@ -237,6 +252,61 @@ int test_delete(Livero* db, const LVSeq_t key) {
     return 0;
 }
 
+int test_query(Livero* db, const LVTopK_t top_k, const void* query_vector, const LVDate* date1, const LVDate* date2,
+               const LVTestAnswer* ground_truth_set, const LVSize_t ground_truth_set_size,
+               const int expected_query_size) {
+    LVQueryResult* query_result = nullptr;
+    LVSize_t query_result_size = 0;
+
+    LVStatus status = lv_query(db, top_k, query_vector, date1, date2, &query_result, &query_result_size);
+    if (status != LV_OK) {
+        fprintf(stderr, "Failed to query.\n");
+        print_status(status);
+        return -1;
+    }
+
+    if (expected_query_size >= 0) {
+        if ((const LVSize_t)expected_query_size != query_result_size) {
+            fprintf(stderr, "Failed to query. The result size is incorrect. (Expect:%u, Got:%u)\n", expected_query_size,
+                    query_result_size);
+            return -1;
+        }
+    }
+    for (LVSize_t j = 0; j < ground_truth_set_size; ++j) {
+        bool found = false;
+        for (LVSize_t i = 0; i < query_result_size; ++i) {
+            if (query_result[i].key == ground_truth_set[j].key) {
+                if (query_result[i].value_len != ground_truth_set[j].value_len) {
+                    fprintf(stderr, "Failed to qeury. The key matched, but value_len is incorrect.\n");
+                    return -1;
+                }
+                if (memcmp(query_result[i].value, ground_truth_set[j].value, query_result[i].value_len) != 0) {
+                    fprintf(stderr, "Failed to query. The key matched, but value is incorrect.\n");
+                    return -1;
+                }
+                LVDate query_result_date = {.year = query_result[i].year,
+                                            .month = query_result[i].month,
+                                            .day = query_result[i].day,
+                                            .hour = query_result[i].hour,
+                                            .min = query_result[i].min,
+                                            .sec = query_result[i].sec};
+                if (compare_date(&query_result_date, &ground_truth_set[j].date) != 0) {
+                    fprintf(stderr, "Failed to query. The key matched, but date is incorrect.\n");
+                    return -1;
+                }
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            fprintf(stderr, "Failed to query. The key does not match any ground truth keys.\n");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 int test_1(void) {
     /*
         1. Create a db.
@@ -251,14 +321,14 @@ int test_1(void) {
     const uint32_t PUT_COUNT = 200;
     const uint32_t GET_COUNT = 30;
 
-    LVPutAnswer ANSWERS[PUT_COUNT];
+    LVTestAnswer ANSWERS[PUT_COUNT];
 
     if ((result = test_create(&db)) < 0) {
         goto cleanup;
     }
 
     for (uint32_t i = 0; i < PUT_COUNT; ++i) {
-        if ((result = test_put(db, &ANSWERS[i], nullptr)) < 0) {
+        if ((result = test_put(db, nullptr, nullptr, nullptr, nullptr, &ANSWERS[i])) < 0) {
             goto cleanup;
         }
     }
@@ -309,15 +379,15 @@ int test_2(void) {
     int result = 0;
     const uint32_t PUT1_COUNT = 30, GET1_COUNT = 30;
     const uint32_t PUT2_COUNT = 10, GET2_COUNT = 10;
-    LVPutAnswer PUT1_ANSWERS[PUT1_COUNT];
-    LVPutAnswer PUT2_ANSWERS[PUT2_COUNT];
+    LVTestAnswer PUT1_ANSWERS[PUT1_COUNT];
+    LVTestAnswer PUT2_ANSWERS[PUT2_COUNT];
 
     if ((result = test_create(&db)) < 0) {
         goto cleanup;
     }
 
     for (uint32_t i = 0; i < PUT1_COUNT; ++i) {
-        if ((result = test_put(db, &PUT1_ANSWERS[i], nullptr)) < 0) {
+        if ((result = test_put(db, nullptr, nullptr, nullptr, nullptr, &PUT1_ANSWERS[i])) < 0) {
             goto cleanup;
         }
     }
@@ -345,7 +415,7 @@ int test_2(void) {
     }
 
     for (uint32_t i = 0; i < PUT2_COUNT; ++i) {
-        if ((result = test_put(db, &PUT2_ANSWERS[i], nullptr)) < 0) {
+        if ((result = test_put(db, nullptr, nullptr, nullptr, nullptr, &PUT2_ANSWERS[i])) < 0) {
             goto cleanup;
         }
     }
@@ -389,14 +459,14 @@ int test_3(void) {
     int result = 0;
     const LVSize_t put_count = 10;
     const LVSeq_t key_to_delete = 3;
-    LVPutAnswer answers[put_count];
+    LVTestAnswer answers[put_count];
 
     if ((result = test_create(&db)) < 0) {
         goto cleanup;
     }
 
     for (LVSize_t i = 0; i < put_count; ++i) {
-        if ((result = test_put(db, &answers[i], nullptr)) < 0) {
+        if ((result = test_put(db, nullptr, nullptr, nullptr, nullptr, &answers[i])) < 0) {
             goto cleanup;
         }
     }
@@ -419,9 +489,9 @@ int test_3(void) {
         goto cleanup;
     }
 
-    for(LVSize_t key=0; key<put_count; ++key){
-        if(key != key_to_delete){
-            if((result = test_get(db, &answers[key])) <0){
+    for (LVSize_t key = 0; key < put_count; ++key) {
+        if (key != key_to_delete) {
+            if ((result = test_get(db, &answers[key])) < 0) {
                 goto cleanup;
             }
         }
@@ -452,69 +522,29 @@ int test_4(void) {
 
     int result = 0;
 
-    LVPutAnswer QUERY_GROUND_TRUTH[ground_truth_set_size];
+    LVTestAnswer QUERY_GROUND_TRUTH[ground_truth_set_size];
     float fp32_query_vector[TEST_VECTOR_DIM] = {0.0f};
     fill_fp32_vector(TEST_CONFIG.vector_dimension, fp32_query_vector);
-
-    char tmp_value[TEST_MAX_VALUE_LEN] = {0};
-    float tmp_vector[TEST_VECTOR_DIM] = {0.0f};
 
     if ((result = test_create(&db)) < 0) {
         goto cleanup;
     }
 
     for (LVSize_t i = 0; i < ground_truth_set_size; ++i) {
-        if ((result = test_put(db, &QUERY_GROUND_TRUTH[i], fp32_query_vector)) < 0) {
+        if ((result = test_put(db, fp32_query_vector, nullptr, nullptr, nullptr, &QUERY_GROUND_TRUTH[i])) < 0) {
             goto cleanup;
         }
     }
 
     for (LVSize_t i = 0; i < put_count; ++i) {
-        fill_random_chr_data(TEST_MAX_VALUE_LEN, tmp_value);
-        fill_fp32_vector(TEST_VECTOR_DIM, tmp_vector);
-        LVStatus status = lv_put(db, tmp_vector, nullptr, tmp_value, TEST_MAX_VALUE_LEN, nullptr);
-        if (status != LV_OK) {
-            fprintf(stderr, "Failed to put the dummy data at test_5\n");
-            print_status(status);
-            result = -1;
+        if ((result = test_put(db, nullptr, nullptr, nullptr, nullptr, nullptr)) < 0) {
             goto cleanup;
         }
     }
 
-    LVQueryResult* query_result = nullptr;
-    LVSize_t query_result_size = 0;
-
-    LVStatus status = lv_query(db, top_k, fp32_query_vector, nullptr, nullptr, &query_result, &query_result_size);
-    if (status != LV_OK) {
-        fprintf(stderr, "Failed to query.\n");
-        print_status(status);
-        result = -1;
+    if ((result = test_query(db, top_k, fp32_query_vector, nullptr, nullptr, QUERY_GROUND_TRUTH, ground_truth_set_size,
+                             top_k)) < 0) {
         goto cleanup;
-    }
-
-    /*
-        k is under the record count and there is no date filter, so it must return k query results.
-    */
-    if (query_result_size != top_k) {
-        fprintf(stderr, "Failed to query. The result size is incorrect. (Expect:%u, Got:%u)\n", top_k,
-                query_result_size);
-        result = -1;
-        goto cleanup;
-    }
-
-    for (LVSize_t j = 0; j < ground_truth_set_size; ++j) {
-        bool found = false;
-        for (LVSize_t i = 0; i < query_result_size; ++i) {
-            if (query_result[i].key == QUERY_GROUND_TRUTH[j].key) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) { 
-            fprintf(stderr, "Failed to query. The key does not match any ground truth keys.\n");
-            result = -1;
-            goto cleanup;
-        }
     }
 
 cleanup:
@@ -523,6 +553,129 @@ cleanup:
         fprintf(stderr, "TEST4 FAILED.\n");
     } else {
         fprintf(stdout, "TEST4 SUCCEEDED. \n");
+    }
+    return result;
+}
+
+int test_5(void) {
+    /*
+        1. Create a db
+        2. Make a ground truth set with specific dates (Size:9, (1-3): in 2024, (4-6): in 2025,(7-9): in 2026)
+        3. Put N
+        4. Query each group with the date range filters
+        5. Query with a date filter which can cover the date range of group 2,3 (2025-2026)
+        6. Query out of range date filter over 2027
+    */
+
+    Livero* db = nullptr;
+    int result = 0;
+    const LVSize_t ground_truth_size = 9;
+    const LVSize_t ground_truth_group_size = 3;
+    const LVTopK_t top_k = 10;
+    const LVSize_t put_count = 500;
+    LVTestAnswer ground_truth[ground_truth_size];
+    LVTestAnswer ground_truth_group1[ground_truth_group_size];
+    LVTestAnswer ground_truth_group2[ground_truth_group_size];
+    LVTestAnswer ground_truth_group3[ground_truth_group_size];
+    float query_vector[TEST_VECTOR_DIM] = {0.0f};
+    fill_fp32_vector(TEST_VECTOR_DIM, query_vector);
+
+    if ((result = test_create(&db)) < 0) {
+        goto cleanup;
+    }
+
+    LVDate ground_truth_date;
+    for (LVSize_t i = 0; i < ground_truth_group_size; ++i) {
+        if (i == 0) {
+            make_first_date(2024, &ground_truth_date);
+        } else {
+            fill_random_date(&ground_truth_date, 2024, 2024);
+        }
+
+        if ((result = test_put(db, query_vector, &ground_truth_date, nullptr, nullptr, &ground_truth_group1[i])) < 0) {
+            goto cleanup;
+        }
+    }
+    memcpy(&ground_truth[0], ground_truth_group1, sizeof(LVTestAnswer) * ground_truth_group_size);
+
+    for (LVSize_t i = 0; i < ground_truth_group_size; ++i) {
+        if (i == 0) {
+            make_first_date(2025, &ground_truth_date);
+        } else {
+            fill_random_date(&ground_truth_date, 2025, 2025);
+        }
+        if ((result = test_put(db, query_vector, &ground_truth_date, nullptr, nullptr, &ground_truth_group2[i])) < 0) {
+            goto cleanup;
+        }
+    }
+    memcpy(&ground_truth[3], ground_truth_group2, sizeof(LVTestAnswer) * ground_truth_group_size);
+    for (LVSize_t i = 0; i < ground_truth_group_size; ++i) {
+        if (i == 0) {
+            make_first_date(2026, &ground_truth_date);
+        } else {
+            fill_random_date(&ground_truth_date, 2026, 2026);
+        }
+        if ((result = test_put(db, query_vector, &ground_truth_date, nullptr, nullptr, &ground_truth_group3[i])) < 0) {
+            goto cleanup;
+        }
+    }
+    memcpy(&ground_truth[6], ground_truth_group3, sizeof(LVTestAnswer) * ground_truth_group_size);
+
+    // Dummies live strictly before 2024, so every tested range
+    // (2024, 2025, 2026) contains only planted ground truths.
+    LVDate dummy_date;
+    for (LVSize_t i = 0; i < put_count; ++i) {
+        fill_random_date(&dummy_date, 2000, 2023);
+        if ((result = test_put(db, nullptr, &dummy_date, nullptr, nullptr, nullptr)) < 0) {
+            goto cleanup;
+        }
+    }
+    LVDate _2024_start;
+    make_first_date(2024, &_2024_start);
+    LVDate _2024_end;
+    make_last_date(2024, &_2024_end);
+
+    LVDate _2025_start;
+    make_first_date(2025, &_2025_start);
+    LVDate _2025_end;
+    make_last_date(2025, &_2025_end);
+
+    LVDate _2026_start;
+    make_first_date(2026, &_2026_start);
+    LVDate _2026_end;
+    make_last_date(2026, &_2026_end);
+
+    if ((result = test_query(db, top_k, query_vector, &_2024_start, &_2024_end, ground_truth_group1,
+                             ground_truth_group_size, 3)) < 0) {
+        goto cleanup;
+    }
+
+    if ((result = test_query(db, top_k, query_vector, &_2025_start, &_2025_end, ground_truth_group2,
+                             ground_truth_group_size, 3)) < 0) {
+        goto cleanup;
+    }
+
+    if ((result = test_query(db, top_k, query_vector, &_2026_start, &_2026_end, ground_truth_group3,
+                             ground_truth_group_size, 3)) < 0) {
+        goto cleanup;
+    }
+
+    if ((result = test_query(db, top_k, query_vector, &_2025_start, nullptr, &ground_truth[3], 6, 6)) < 0) {
+        goto cleanup;
+    }
+
+    LVDate _2027_start;
+    make_first_date(2027, &_2027_start);
+    if ((result = test_query(db, top_k, query_vector, &_2027_start, nullptr, nullptr, 0, 0)) < 0) {
+        goto cleanup;
+    }
+cleanup:
+    lv_close(db);
+
+    if (result < 0) {
+        fprintf(stderr, "TEST5 FAILED.\n");
+    } else {
+        fprintf(stdout, "TEST5 SUCCEEDED.\n");
     }
     return result;
 }
@@ -548,6 +701,10 @@ int main(void) {
     }
 
     if (test_4() < 0) {
+        return -1;
+    }
+
+    if (test_5() < 0) {
         return -1;
     }
     return 0;
