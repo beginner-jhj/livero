@@ -349,17 +349,19 @@ LVStatus lv_query(Livero* db, const LVTopK_t k, const void* query_vector, const 
         }
     }
 
-    LVQueryIndex query_index_result[query_index_heap_size];
     const LVSize_t copied_query_index_heap_size = query_index_heap_size;
-    for (int i = copied_query_index_heap_size - 1; i >= 0; --i) {
-        lv_query_heap_pop(query_index_heap, &query_index_heap_size, &query_index_result[i]);
-    }
+    if (query_index_heap_size > 0) {
+        LVQueryIndex query_index_result[query_index_heap_size];
+        for (int i = copied_query_index_heap_size - 1; i >= 0; --i) {
+            lv_query_heap_pop(query_index_heap, &query_index_heap_size, &query_index_result[i]);
+        }
 
-    for (LVSize_t i = 0; i < copied_query_index_heap_size; ++i) {
-        LVStatus status = db_file_query_result(db->db_file_fd, db->val_log_fd, query_index_result[i].internal_seq,
-                                               &db->reserved_query_results[i]);
-        if (status != LV_OK) {
-            return status;
+        for (LVSize_t i = 0; i < copied_query_index_heap_size; ++i) {
+            LVStatus status = db_file_query_result(db->db_file_fd, db->val_log_fd, query_index_result[i].internal_seq,
+                                                   &db->reserved_query_results[i]);
+            if (status != LV_OK) {
+                return status;
+            }
         }
     }
     if (result_out) {
@@ -369,7 +371,6 @@ LVStatus lv_query(Livero* db, const LVTopK_t k, const void* query_vector, const 
     if (result_size_out) {
         *result_size_out = copied_query_index_heap_size;
     }
-
     return LV_OK;
 }
 
