@@ -4,6 +4,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "internal/internal.h"
@@ -15,37 +16,58 @@ LVSize_t ternary_chunks_count(const LVDim_t dim) {
     return dim / LV_TERNARY_CHUNK_CAPACITY;
 }
 
-static void ternary_convert_fp32(const float* vector, const LVDim_t dim, LVTernaryChunk* chunks) {
-    assert(vector && dim > 0);
-    double sum = 0.0;
-    for (LVDim_t i = 0; i < dim; ++i) {
-        sum += vector[i];
+static void ternary_make(LVTernaryChunk* chunks, const int ternary, const LVDim_t i) {
+    const LVDim_t chunk = i / LV_TERNARY_CHUNK_CAPACITY;
+    const LVDim_t bit = i % LV_TERNARY_CHUNK_CAPACITY;
+    const uint64_t mask_bit = 1ull << (LV_TERNARY_CHUNK_CAPACITY - 1 - bit);
+    if (ternary != 0) {
+        chunks[chunk].mask |= mask_bit;
     }
-    float mean = (float)(sum / (double)dim);
-    const LVSize_t chunks_count = ternary_chunks_count(dim);
-    for (LVDim_t i = 0; i < dim; ++i) {
-        float rounded = roundf(vector[i] / (mean + FLT_EPSILON));
-        int ternary = rounded < 1.0f ? rounded : 1.0f;
-        ternary = ternary > -1.0f ? ternary : -1.0f;
-        chunks[i / LV_TERNARY_CHUNK_CAPACITY].mask |= ternary != 0 ? (1ul << (63 - (i % 64))) : 0ull;
-        chunks[i / LV_TERNARY_CHUNK_CAPACITY].sign |= ternary < 0 ? (1ul << (63 - (i % 64))) : 0ull;
+    if (ternary < 0) {
+        chunks[chunk].sign |= mask_bit;
     }
 }
 
+static void ternary_convert_fp32(const float* vector, const LVDim_t dim, LVTernaryChunk* chunks) {
+    assert(vector && dim > 0);
+
+    double sum = 0.0;
+    for (LVDim_t i = 0; i < dim; ++i) {
+        sum += fabs((double)vector[i]);
+    }
+    // gamma >= 0 now, so adding epsilon only guards the all-zero vector.
+    const float gamma = (float)(sum / (double)dim) + FLT_EPSILON;
+
+    for (LVDim_t i = 0; i < dim; ++i) {
+        float r = roundf(vector[i] / gamma);
+
+        if (r > 1.0f) {
+            r = 1.0f;
+        }
+        if (r < -1.0f) {
+            r = -1.0f;
+        }
+        const int ternary = (int)r;  // exactly -1, 0, or 1 at this point
+        ternary_make(chunks, ternary, i);
+    }
+}
 static void ternary_convert_int8(const int8_t* vector, const LVDim_t dim, LVTernaryChunk* chunks) {
     assert(vector && dim > 0);
-    int sum = 0;
+    uint64_t sum = 0;
     for (LVDim_t i = 0; i < dim; ++i) {
-        sum += vector[i];
+        sum += abs(vector[i]);
     }
-    double mean = (double)(sum) / dim;
-    const LVSize_t chunks_count = ternary_chunks_count(dim);
+    const float gamma = (float)(sum / (double)dim) + FLT_EPSILON;
     for (LVDim_t i = 0; i < dim; ++i) {
-        double rounded = round((double)vector[i] / mean);
-        int ternary = rounded < 1.0 ? rounded : 1.0;
-        ternary = ternary > -1.0 ? ternary : -1.0;
-        chunks[i / LV_TERNARY_CHUNK_CAPACITY].mask |= ternary != 0 ? (1ul << (63 - (i % 64))) : 0ull;
-        chunks[i / LV_TERNARY_CHUNK_CAPACITY].sign |= ternary < 0 ? (1ul << (63 - (i % 64))) : 0ull;
+        float r = roundf(vector[i] / gamma);
+        if (r > 1.0f) {
+            r = 1.0f;
+        }
+        if (r < -1.0f) {
+            r = -1.0f;
+        }
+        const int ternary = (int)r;
+        ternary_make(chunks, ternary, i);
     }
 }
 
