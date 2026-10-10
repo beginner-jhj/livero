@@ -23,6 +23,7 @@ typedef struct LVTestAnswer {
     char value[TEST_MAX_VALUE_LEN];
     LVSize_t value_len;
     LVDate date;
+    bool tombstone;
 } LVTestAnswer;
 
 int test_create(Livero** out) {
@@ -190,6 +191,7 @@ int test_put(Livero* db, const void* vector, const LVDate* date, const void* val
         answer->date = *date_to_put;
         memcpy(answer->value, value_to_put, value_len_to_put);
         answer->value_len = value_len_to_put;
+        answer->tombstone = false;
     }
 
     return 0;
@@ -273,6 +275,7 @@ int test_query(Livero* db, const LVTopK_t top_k, const void* query_vector, const
         }
     }
     for (LVSize_t j = 0; j < ground_truth_set_size; ++j) {
+        const bool is_tombstone = ground_truth_set[j].tombstone;
         bool found = false;
         for (LVSize_t i = 0; i < query_result_size; ++i) {
             if (query_result[i].key == ground_truth_set[j].key) {
@@ -298,9 +301,17 @@ int test_query(Livero* db, const LVTopK_t top_k, const void* query_vector, const
                 break;
             }
         }
-        if (!found) {
-            fprintf(stderr, "Failed to query. The key does not match any ground truth keys.\n");
-            return -1;
+
+        if (is_tombstone) {
+            if (found) {
+                fprintf(stderr, "Failed to query. The tombstone was found.\n");
+                return -1;
+            }
+        } else {
+            if (!found) {
+                fprintf(stderr, "Failed to query. The key does not match any ground truth keys.\n");
+                return -1;
+            }
         }
     }
 
@@ -680,6 +691,76 @@ cleanup:
     return result;
 }
 
+int test_6(void) {
+    /*
+        1. Create a db.
+        2. Make a ground truth set (Size:10)
+        3. Put N
+        4. Delete one ground truth in the set (key=2)
+        5. Query ground trutes and check that Query result does not contain the tombstone
+        6. Close the db
+        7. Reopen the db
+        8. Repeat 5.
+    */
+
+    Livero* db = nullptr;
+    int result = 0;
+    const LVSize_t ground_truth_size = 10;
+    const LVSeq_t key_to_delete = 2;
+    const LVTopK_t top_k = 10;
+    const LVSize_t put_count = 300;
+    LVTestAnswer ground_truth[ground_truth_size];
+
+    float query_vector[TEST_VECTOR_DIM] = {0.0f};
+    fill_fp32_vector(TEST_VECTOR_DIM, query_vector);
+
+    if ((result = test_create(&db)) < 0) {
+        goto cleanup;
+    }
+
+    for (LVSize_t i = 0; i < ground_truth_size; ++i) {
+        if ((result = test_put(db, query_vector, nullptr, nullptr, nullptr, &ground_truth[i])) < 0) {
+            goto cleanup;
+        }
+    }
+
+    for (LVSize_t i = 0; i < put_count; ++i) {
+        if ((result = test_put(db, nullptr, nullptr, nullptr, nullptr, nullptr)) < 0) {
+            goto cleanup;
+        }
+    }
+
+    if ((result = test_delete(db, key_to_delete)) < 0) {
+        goto cleanup;
+    }
+    ground_truth[key_to_delete].tombstone = true;
+
+    if ((result = test_query(db, top_k, query_vector, nullptr, nullptr, ground_truth, ground_truth_size,
+                             ground_truth_size)) < 0) {
+        goto cleanup;
+    }
+
+    lv_close(db);
+    db = nullptr;
+    if ((result = test_open(&db, nullptr)) < 0) {
+        goto cleanup;
+    }
+
+    if ((result = test_query(db, top_k, query_vector, nullptr, nullptr, ground_truth, ground_truth_size,
+                             ground_truth_size)) < 0) {
+        goto cleanup;
+    }
+
+cleanup:
+    lv_close(db);
+    if (result < 0) {
+        fprintf(stderr, "TEST6 FAILED.\n");
+    } else {
+        fprintf(stdout, "TEST6 SUCCEEDED.\n");
+    }
+    return result;
+}
+
 int main(void) {
     if (test_create(nullptr) < 0) {
         return -1;
@@ -705,6 +786,9 @@ int main(void) {
     }
 
     if (test_5() < 0) {
+        return -1;
+    }
+    if (test_6() < 0) {
         return -1;
     }
     return 0;
