@@ -247,7 +247,7 @@ LVStatus lv_put(Livero* db, const void* vector, const LVDate* date, const void* 
     return LV_OK;
 }
 
-LVStatus lv_get(const Livero* db, const LVSeq_t key, LVDate* date_out, void* value_out) {
+LVStatus lv_get(const Livero* db, const LVSeq_t key, LVDate* date_out, void* value_out, uint16_t* value_len_out) {
     if (!db) {
         LIVERO_ERROR("You missed a db.");
         return LV_ERR_INVALID_PARAM;
@@ -272,6 +272,10 @@ LVStatus lv_get(const Livero* db, const LVSeq_t key, LVDate* date_out, void* val
 
     if (date_out) {
         convert_epoch_to_date(epoch_time, date_out);
+    }
+
+    if(value_len_out){
+        *value_len_out = value_len;
     }
 
     return LV_OK;
