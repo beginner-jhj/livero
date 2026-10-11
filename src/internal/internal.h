@@ -18,7 +18,6 @@
 #endif
 
 #define LV_MAX_K 64
-#define LV_MAX_VALUE_LEN 487
 #define LV_MAX_VECTOR_DIMENSION 768
 #define LV_RAM_USAGE (1u << 10 ) * 32
 
