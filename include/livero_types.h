@@ -3,7 +3,9 @@
 
 #include <stdint.h>
 #include <assert.h>
-#include "internal/internal.h"
+#include <stdbool.h>
+
+#define LV_MAX_VALUE_LEN 487
 
 typedef enum LVStatus {
     LV_OK = -1,
@@ -22,10 +24,11 @@ typedef uint32_t LVOffset_t;
 typedef uint16_t LVDim_t;
 typedef uint8_t LVTopK_t;
 
-typedef enum LVVectorType : uint8_t {
+typedef uint8_t LVVectorType;
+enum{
     LV_VEC_TYPE_INT8 = 0,
     LV_VEC_TYPE_FP32 = 1
-} LVVectorType;
+};
 
 typedef struct LVConfig {
     LVSize_t max_disk_bytes;
