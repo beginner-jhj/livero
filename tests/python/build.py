@@ -1,4 +1,5 @@
-from _path import *
+from _path import ROOT_DIR, INCLUDE_DIR, SRC_DIR
+import os
 CDEF = """
 typedef struct Livero Livero;
 #define LV_MAX_VALUE_LEN 487
