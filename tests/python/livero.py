@@ -1,24 +1,24 @@
 from typing import TypedDict
 from enum import Enum
-from _livero_debug import lib, ffi
 import sys
 import os
-from _path import ROOT_DIR
+from _path import ROOT_DIR, TESTS_DIR
 from dataclasses import dataclass
 import datetime
 
 sys.path.insert(0, os.path.join(ROOT_DIR, "build", "cffi"))
 
+from _livero_debug import lib, ffi # noqa: E402  (must come after sys.path setup)
 
 class LVStatus(Enum):
-    LV_OK = -1
-    LV_ERR_INVALID_PARAM = 0
-    LV_ERR_IO = 1
-    LV_ERR_EXSIST = 2
-    LV_ERR_DNEXSIST = 3
-    LV_ERR_DISK_FULL = 4
-    LV_ERR_NOT_FOUND = 5
-    LV_ERR_INIT = 7
+    LV_OK = lib.LV_OK
+    LV_ERR_INVALID_PARAM = lib.LV_ERR_INVALID_PARAM
+    LV_ERR_IO = lib.LV_ERR_IO
+    LV_ERR_EXSIST = lib.LV_ERR_EXSIST
+    LV_ERR_DNEXSIST = lib.LV_ERR_DNEXSIST
+    LV_ERR_DISK_FULL = lib.LV_ERR_DISK_FULL
+    LV_ERR_NOT_FOUND =lib.LV_ERR_NOT_FOUND
+    LV_ERR_INIT = lib.LV_ERR_INIT
 
 
 class LVVectorType(Enum):
@@ -31,8 +31,8 @@ class LVConfig(TypedDict):
     vector_type: LVVectorType
     vector_dimension: int
 
-
-class LVDate(dataclass):
+@dataclass
+class LVDate:
     year: int
     month: int
     day: int
@@ -40,14 +40,14 @@ class LVDate(dataclass):
     min: int
     sec: int
 
-
-class LVQueryResult(dataclass):
+@dataclass
+class LVQueryResult:
     key: int
     date: datetime.datetime
     value: bytes
 
-
-class LVDBInfo(dataclass):
+@dataclass
+class LVDBInfo:
     max_disk_bytes: int
     vector_type: LVVectorType
     vector_dimension: int
@@ -62,6 +62,8 @@ class LVDBInfo(dataclass):
 class Livero:
     def __init__(self, path: str | None = None):
         self.db = ffi.NULL
+        self.__vector_dim = 0
+        self.__vector_type:LVVectorType | None = None
         if path:
             s = self.open(path)
             if s != LVStatus.LV_OK:
@@ -87,6 +89,8 @@ class Livero:
 
         if status == lib.LV_OK:
             self.db = c_db_ptr[0]
+            self.__vector_dim = config["vector_dimension"]
+            self.__vector_type = config["vector_type"]
 
         return LVStatus(status)
 
@@ -97,11 +101,14 @@ class Livero:
         status = lib.lv_open(c_path, c_db_ptr)
         if status == lib.LV_OK:
             self.db = c_db_ptr[0]
+            db_info = self.db_info()
+            self.__vector_dim = db_info.vector_dimension
+            self.__vector_type =db_info.vector_type
         return LVStatus(status)
 
-    def put(self, vector: list[float | int], date: LVDate,  value: bytes) -> tuple[LVStatus, int]:
+    def put(self, vector: list[float | int], date: LVDate|None,  value: bytes) -> tuple[LVStatus, int]:
         c_vector = self.__p2c_vector(vector)
-        c_date = self.__p2c_date(date)
+        c_date = self.__p2c_date(date) if date else ffi.NULL
         c_key_out = ffi.new("LVSeq_t *")
 
         status = lib.lv_put(self.db, c_vector, c_date,
@@ -109,7 +116,7 @@ class Livero:
 
         return (LVStatus(status), c_key_out[0])
 
-    def get(self, key: int) -> tuple[LVStatus, LVDate | None, bytes|None]:
+    def get(self, key: int) -> tuple[LVStatus, LVDate | None, bytes | None]:
         c_date_out = ffi.new("LVDate *")
         c_value_out = ffi.new(f"uint8_t[{lib.LV_MAX_VALUE_LEN}]")
         c_value_len_out = ffi.new("uint16_t *")
@@ -117,14 +124,14 @@ class Livero:
                             c_value_out, c_value_len_out)
 
         if status == lib.LV_OK:
-            date: LVDate = {
-                "year": c_date_out[0].year,
-                "month": c_date_out[0].month,
-                "day": c_date_out[0].day,
-                "hour": c_date_out[0].hour,
-                "min": c_date_out[0].min,
-                "sec": c_date_out[0].sec
-            }
+            date = LVDate(
+                year =  c_date_out[0].year,
+                month =  c_date_out[0].month,
+                day =  c_date_out[0].day,
+                hour =  c_date_out[0].hour,
+                min =  c_date_out[0].min,
+                sec =  c_date_out[0].sec)
+            
             value = bytes(ffi.buffer(c_value_out, c_value_len_out[0]))
             return (LVStatus(status), date, value)
         else:
@@ -132,7 +139,7 @@ class Livero:
 
     def query(self, query_vector: list[float | int], k: int, date1: LVDate | None, date2: LVDate | None) -> tuple[LVStatus, list[LVQueryResult] | None]:
         c_query_result_out = ffi.new("LVQueryResult **")
-        c_query_result_size_out = ffi.new("LVSize *")
+        c_query_result_size_out = ffi.new("LVSize_t *")
         c_query_vector = self.__p2c_vector(query_vector)
         c_date1 = self.__p2c_date(date1) if date1 is not None else ffi.NULL
         c_date2 = self.__p2c_date(date2) if date2 is not None else ffi.NULL
@@ -142,8 +149,9 @@ class Livero:
 
         if status == lib.LV_OK:
             out = []
+            results = c_query_result_out[0]
             for i in range(c_query_result_size_out[0]):
-                r = c_query_result_out[i]
+                r = results[i]
                 out.append(LVQueryResult(
                     key=r.key,
                     value=bytes(ffi.buffer(r.value, r.value_len)),
@@ -182,17 +190,133 @@ class Livero:
         self.db = ffi.NULL
 
     def __p2c_vector(self, vector: list[float | int]):
-        if self.__vector_type.value == LVVectorType.LV_VEC_FLOAT32.value:
+        if self.__vector_type == LVVectorType.LV_VEC_TYPE_FP32:
             return ffi.new(f"float[{self.__vector_dim}]", vector)
-        else:
+        elif self.__vector_type == LVVectorType.LV_VEC_TYPE_INT8:
             return ffi.new(f"int8_t[{self.__vector_dim}]", vector)
+        else:
+            raise RuntimeError(f"Invalid vector type. {self.__vector_type}")
 
     def __p2c_date(self, date: LVDate):
         return ffi.new("LVDate *", {
-            "year": date['year'],
-            "month": date['month'],
-            "day": date["day"],
-            "hour": date["hour"],
-            "min": date["min"],
-            "sec": date["sec"]
+            "year": date.year,
+            "month": date.month,
+            "day": date.day,
+            "hour": date.hour,
+            "min": date.min,
+            "sec": date.sec
         })
+
+
+if __name__ == "__main__":
+    import random
+    import string
+    import shutil
+    test_db_path = os.path.join(TESTS_DIR, "python", "tmp")
+    if os.path.exists(test_db_path):
+        shutil.rmtree(test_db_path)
+    os.makedirs(test_db_path)
+    test_dim = 384
+    test_answers: list[tuple[int, LVDate, bytes]] = []
+    test_top_k = 10
+    test_query_truth: list[int] = []
+    test_put_count = 10
+    test_answer_date = LVDate(year=2026, month=10, day=10, hour=10, min=10, sec=10)
+    key_to_get = 4
+    key_to_delete = 1
+    string_pool = string.ascii_letters + string.digits
+    livero = Livero()
+    config: LVConfig = {
+        "max_disk_bytes": (1 << 10)*1000,
+        "vector_type": LVVectorType.LV_VEC_TYPE_FP32,
+        "vector_dimension": test_dim
+    }
+    try:
+        status: LVStatus = livero.create(test_db_path, config)
+
+        if status != LVStatus.LV_OK:
+            raise RuntimeError("Failed to create a db.")
+
+        else:
+            print("A db is created.")
+
+        for _ in range(test_put_count):
+            vector: list[float] = [random.random() for _ in range(test_dim)]
+            value = "".join(random.choices(string_pool, k=10))
+            status, key = livero.put(vector, test_answer_date, value.encode())
+
+            if status != LVStatus.LV_OK:
+                raise RuntimeError("Failed to put a data.")
+            else:
+                test_answers.append((key, test_answer_date, value.encode()))
+
+        print(f"Succeeded to put {test_put_count}")
+
+        status, date, value = livero.get(key_to_get)
+
+        if status != LVStatus.LV_OK:
+            raise RuntimeError(f"Failed to get an item (key: {key_to_get})")
+        else:
+            if date != test_answer_date:
+                raise RuntimeError("Failed to get, date is incorrect.")
+
+            if value != test_answers[key_to_get][2]:
+                raise RuntimeError("Failed to get, value is incorrect.")
+
+        print("Succeeded to get an item.")
+
+        status = livero.delete(key_to_delete)
+        if status != LVStatus.LV_OK:
+            raise RuntimeError(f"Failed to delete an item (key: {key_to_delete})")
+        else:
+            print("Succeeded to delete an item")
+
+        livero.close()
+        status = livero.open(test_db_path)
+
+        if status != LVStatus.LV_OK:
+            raise RuntimeError("Faield to reopen a db.")
+        else:
+            print("Succeeded to reopen a db")
+
+
+        must_be_not_found,*_ = livero.get(key_to_delete)
+
+        if must_be_not_found != LVStatus.LV_ERR_NOT_FOUND:
+            raise RuntimeError(f"Expect key to be Not Found, but got an item key {key_to_delete}")
+        else:
+            print("Succeeded to keep the deleted data")
+
+        query_vector: list[float] = [random.random() for _ in range(test_dim)]
+        for _ in range(test_top_k):
+            value = "".join(random.choices(string_pool, k=10))
+            status, key = livero.put(query_vector, test_answer_date, value.encode())
+
+            test_query_truth.append(key)
+
+        print("Succeeded to put query ground truth.")
+
+        status, query_result = livero.query(
+            query_vector, test_top_k, None, None)
+
+        if status != LVStatus.LV_OK:
+            raise RuntimeError("Failed to qeury.")
+
+        else:
+            if test_top_k !=  len(query_result):
+                raise RuntimeError(f"Failed to query, result size is incorrect. (Expect:{test_top_k}, Got:{len(query_result)})")
+            for r in query_result:
+                if r.key not in test_query_truth:
+                    raise RuntimeError(
+                        "Failed to query, key is not in the ground truth.")
+
+            print("Succeeded to query.")
+
+        print("Succeeded to a smoke test.")
+
+    except Exception as e:
+        print(str(e))
+        sys.exit(1)
+
+    finally:
+        livero.close()
