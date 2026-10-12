@@ -32,7 +32,7 @@ class LVConfig(TypedDict):
     vector_dimension: int
 
 
-class LVDate(TypedDict):
+class LVDate(dataclass):
     year: int
     month: int
     day: int
@@ -109,7 +109,7 @@ class Livero:
 
         return (LVStatus(status), c_key_out[0])
 
-    def get(self, key: int) -> tuple[LVStatus, LVDate | None, bytes:None]:
+    def get(self, key: int) -> tuple[LVStatus, LVDate | None, bytes|None]:
         c_date_out = ffi.new("LVDate *")
         c_value_out = ffi.new(f"uint8_t[{lib.LV_MAX_VALUE_LEN}]")
         c_value_len_out = ffi.new("uint16_t *")
