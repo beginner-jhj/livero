@@ -2,7 +2,7 @@ from typing import TypedDict
 from enum import Enum
 import sys
 import os
-from _path import ROOT_DIR, TESTS_DIR
+from _path import ROOT_DIR, PYTHON_TESTS_DIR
 from dataclasses import dataclass
 import datetime
 
@@ -212,7 +212,7 @@ if __name__ == "__main__":
     import random
     import string
     import shutil
-    test_db_path = os.path.join(TESTS_DIR, "python", "tmp")
+    test_db_path = os.path.join(PYTHON_TESTS_DIR, "tmp")
     if os.path.exists(test_db_path):
         shutil.rmtree(test_db_path)
     os.makedirs(test_db_path)
