@@ -1,0 +1,9 @@
+build/
+compile_commands.json
+.clang-format
+.vscode
+.cache/
+.DS_Store
+.venv
+tests/python/tmp
+tests/python/__pycache__
