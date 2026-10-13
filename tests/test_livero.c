@@ -202,15 +202,21 @@ int test_get(const Livero* db, const LVTestAnswer* answer) {
 
     char SAVED_VALUE[TEST_MAX_VALUE_LEN] = {0};
     LVDate SAVED_DATE;
+    uint16_t saved_value_len = 0;
 
     memset(SAVED_VALUE, 0, sizeof(SAVED_VALUE));
     memset(&SAVED_DATE, 0, sizeof(SAVED_DATE));
 
-    LVStatus status = lv_get(db, answer->key, &SAVED_DATE, SAVED_VALUE);
+    LVStatus status = lv_get(db, answer->key, &SAVED_DATE, SAVED_VALUE, &saved_value_len);
     if (status != LV_OK) {
         fprintf(stderr, "Failed to get an item at (Key: %llu Value Len: %d, Epoch Date: %llu, Status: %d) \n",
                 answer->key, answer->value_len, convert_date_to_epoch(&answer->date), status);
         print_status(status);
+        return -1;
+    }
+
+    if(answer->value_len != saved_value_len){
+        fprintf(stderr, "The value length is incorrect. (Expect: %d, Got: %d)", answer->value_len, saved_value_len);
         return -1;
     }
 
@@ -231,7 +237,7 @@ int test_get(const Livero* db, const LVTestAnswer* answer) {
 int test_not_found(const Livero* db, const LVSeq_t non_exsists) {
     assert(db);
 
-    LVStatus status = lv_get(db, non_exsists, nullptr, nullptr);
+    LVStatus status = lv_get(db, non_exsists, nullptr, nullptr, nullptr);
     if (status == LV_ERR_NOT_FOUND) {
         return 0;
     } else {
