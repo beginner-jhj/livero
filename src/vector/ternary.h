@@ -10,6 +10,8 @@ typedef struct LVTernaryChunk {
     uint64_t sign;
 } LVTernaryChunk;
 
+static_assert(sizeof(LVTernaryChunk) == 16, "LVTernaryChunk size is incorrect, must be 16B.");
+
 #define LV_TERNARY_CHUNK_CAPACITY 64
 
 LVSize_t ternary_chunks_count(const LVDim_t vector_dim);
