@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <memory.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -72,7 +73,7 @@ LVStatus lv_create(const char* db_path, const LVConfig* config, Livero** db_out)
     int val_log_fd = -1;
     int vec_log_fd = -1;
 
-    const int create_flag = O_CREAT | O_EXCL | O_RDWR | O_FSYNC;
+    const int create_flag = O_CREAT | O_EXCL | O_RDWR | O_SYNC;
 
     LVStatus status = open_file(db_path, DB_FILE_NAME, create_flag, &db_fd);
 
@@ -127,7 +128,7 @@ LVStatus lv_open(const char* db_path, Livero** db_out) {
     int val_log_fd = -1;
     int vec_log_fd = -1;
 
-    const int open_flag = O_RDWR | O_FSYNC;
+    const int open_flag = O_RDWR | O_SYNC;
 
     LVStatus status = open_file(db_path, DB_FILE_NAME, open_flag, &db_fd);
 
@@ -452,9 +453,8 @@ static LVStatus lv_memory_init(const LVMemoryInitCtx* ctx, Livero** db_out) {
 
     void* memory_arena = nullptr;
 
-    memory_arena = mmap(NULL, LV_RAM_USAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-
-    if (memory_arena == MAP_FAILED) {
+    memory_arena = aligned_alloc(64, LV_RAM_USAGE);
+    if (!memory_arena) {
         LIVERO_ERROR("Failed to allocate a memory arena.");
         return LV_ERR_INIT;
     }
