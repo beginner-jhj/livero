@@ -47,3 +47,7 @@ function(lv_add_test name file)
 endfunction()
 
 lv_add_test(test_livero tests/test_livero.c)
+
+add_executable(benchmark tests/benchmark.c ${LV_TEST_HELPER})
+target_link_libraries(benchmark PRIVATE livero)
+target_include_directories(benchmark PRIVATE src include)
