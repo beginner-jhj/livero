@@ -436,9 +436,7 @@ void lv_close(Livero* db) {
         close_file(db->val_log_fd);
         close_file(db->vec_log_fd);
 
-        if (db != MAP_FAILED) {
-            munmap(db, LV_RAM_USAGE);
-        }
+        free(db);
     }
 }
 
