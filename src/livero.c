@@ -17,6 +17,7 @@
 
 struct Livero {
     LVQueryResult* reserved_query_results;
+    LVTernaryChunk* reserved_vector_chunks;
     int db_file_fd;
     int val_log_fd;
     int vec_log_fd;
@@ -27,7 +28,7 @@ struct Livero {
     LVSize_t max_disk_bytes;
     LVDim_t vector_dim;
     LVVectorType vector_type;
-    uint8_t __pad[21];
+    uint8_t __pad[13];
 };
 
 static_assert(sizeof(Livero) == 64, "Livero size is incorrect.");
@@ -218,7 +219,7 @@ LVStatus lv_put(Livero* db, const void* vector, const LVDate* date, const void* 
     }
 
     /*
-        db->vector_dim is always <= LV_MAX_VECTOR_DIMENSION = 768DIM. Ternary Chunks are under 16Words = 256B.
+        db->vector_dim is always <= LV_MAX_VECTOR_DIMENSION = 768DIM. Ternary Chunks are under 12Words = 192B.
     */
     LVTernaryChunk converted_vector[ternary_chunks_count(db->vector_dim)];
     ternary_convert(vector, db->vector_type, db->vector_dim, converted_vector);
@@ -274,7 +275,7 @@ LVStatus lv_get(const Livero* db, const LVSeq_t key, LVDate* date_out, void* val
         convert_epoch_to_date(epoch_time, date_out);
     }
 
-    if(value_len_out){
+    if (value_len_out) {
         *value_len_out = value_len;
     }
 
@@ -287,80 +288,107 @@ LVStatus lv_query(Livero* db, const LVTopK_t k, const void* query_vector, const 
         LIVERO_ERROR("You missed a db.");
         return LV_ERR_INVALID_PARAM;
     }
-
     if (!query_vector) {
         LIVERO_ERROR("You must pass a vector to query.");
         return LV_ERR_INVALID_PARAM;
     }
-
     if (k > LV_MAX_K || k == 0) {
         LIVERO_ERROR("The requested k invalid. (Max: %d)", LV_MAX_K);
         return LV_ERR_INVALID_PARAM;
     }
 
-    const LVTopK_t TOP_K = k <= db->record_count ? k : db->record_count;
+    if (db->record_count == 0) {
+        if (result_out) {
+            *result_out = db->reserved_query_results;
+        }
+        if (result_size_out) {
+            *result_size_out = 0;
+        }
+        return LV_OK;
+    }
+
+    const LVTopK_t TOP_K = k <= db->record_count ? k : (LVTopK_t)db->record_count;
 
     /*
-        It will filter target dates like this: date1 <= target <= date2.
-        But date1 and date2 are both optional.
-        To remove if branch, make the default range cover all.
+        Filter rule: min_date <= target <= max_date. Both bounds are optional;
+        a missing bound defaults to the full range so the scan has no branch for it.
     */
     uint64_t date1_epoch = 0;
     uint64_t date2_epoch = UINT64_MAX;
-
     if (date1) {
         date1_epoch = convert_date_to_epoch(date1);
     }
-
     if (date2) {
         date2_epoch = convert_date_to_epoch(date2);
     }
-
     const uint64_t min_date = date1_epoch < date2_epoch ? date1_epoch : date2_epoch;
     const uint64_t max_date = date2_epoch > date1_epoch ? date2_epoch : date1_epoch;
 
-    LVSize_t words = ternary_chunks_count(db->vector_dim);
-    LVSize_t vector_bytes = ternary_chunks_size(db->vector_dim);
-    LVTernaryChunk vector[words];
+    const LVSize_t words = ternary_chunks_count(db->vector_dim);
+    const LVSize_t vector_bytes = ternary_chunks_size(db->vector_dim);
+
     LVTernaryChunk converted_query_vector[words];
     memset(converted_query_vector, 0, vector_bytes);
     ternary_convert(query_vector, db->vector_type, db->vector_dim, converted_query_vector);
 
-    LVQueryIndex query_index_heap[TOP_K];  // min heap.
+    LVQueryIndex query_index_heap[TOP_K];  // min-heap: [0] is the current k-th best (the "threshold")
     LVSize_t query_index_heap_size = 0;
-    for (uint32_t internal_seq = 0; internal_seq < db->record_count; ++internal_seq) {
-        bool needs_calc = false;
-        LVStatus status = db_file_date_filter(db->db_file_fd, internal_seq, min_date, max_date, &needs_calc);
+
+    // How many whole vectors fit in the fixed scan buffer.
+    // If a vector were larger than the buffer this would be 0 and the loop
+    // below would never advance, so fail loudly instead.
+    const LVSize_t vector_batch_count = LV_VECTOR_BATCH_SIZE / vector_bytes;
+    assert(vector_batch_count > 0);
+
+    for (LVSize_t base = 0; base < db->record_count; base += vector_batch_count) {
+        // The last batch is usually partial. Read and process only the vectors
+        // that actually exist; this is what handles the "leftover" records,
+        // so no separate tail loop is needed.
+        const LVSize_t remaining = db->record_count - base;
+        const LVSize_t n = remaining < vector_batch_count ? remaining : vector_batch_count;
+
+        LVStatus status =
+            pread_helper(db->vec_log_fd, db->reserved_vector_chunks, n * vector_bytes, (LVOffset_t)base * vector_bytes);
         if (status != LV_OK) {
             return status;
-        } else {
-            if (needs_calc) {
-                memset(vector, 0, vector_bytes);
-                if ((status = db_file_get_vector(db->vec_log_fd, internal_seq, db->vector_dim, vector)) != LV_OK) {
-                    return status;
-                }
-                int64_t dot_result = ternary_dot(converted_query_vector, vector, words);
-                LVQueryIndex index = {.dot_result = dot_result, .internal_seq = internal_seq};
-                if (query_index_heap_size < TOP_K) {
-                    lv_query_heap_insert(query_index_heap, index, &query_index_heap_size);
-                } else {
-                    if (index.dot_result > query_index_heap[0].dot_result) {
-                        lv_query_heap_pop(query_index_heap, &query_index_heap_size, nullptr);
-                        lv_query_heap_insert(query_index_heap, index, &query_index_heap_size);
-                    }
-                }
+        }
+
+        for (LVSize_t j = 0; j < n; ++j) {
+            // Vector j starts at chunk j * words: each vector spans `words` chunks.
+            const LVTernaryChunk* candidate = &db->reserved_vector_chunks[j * words];
+            const int64_t dot_result = ternary_dot(converted_query_vector, candidate, words);
+
+            const bool heap_full = query_index_heap_size >= TOP_K;
+            if (heap_full && dot_result <= query_index_heap[0].dot_result) {
+                continue;
             }
+
+            const uint32_t internal_seq = (uint32_t)(base + j);
+            bool passes_filter = false;
+            status = db_file_date_filter(db->db_file_fd, internal_seq, min_date, max_date, &passes_filter);
+            if (status != LV_OK) {
+                return status;
+            }
+            if (!passes_filter) {
+                continue;
+            }
+
+            const LVQueryIndex index = {.dot_result = dot_result, .internal_seq = internal_seq};
+            if (heap_full) {
+                lv_query_heap_pop(query_index_heap, &query_index_heap_size, nullptr);
+            }
+            lv_query_heap_insert(query_index_heap, index, &query_index_heap_size);
         }
     }
 
-    const LVSize_t copied_query_index_heap_size = query_index_heap_size;
-    if (query_index_heap_size > 0) {
-        LVQueryIndex query_index_result[query_index_heap_size];
-        for (int i = copied_query_index_heap_size - 1; i >= 0; --i) {
+    const LVSize_t result_count = query_index_heap_size;
+    if (result_count > 0) {
+        LVQueryIndex query_index_result[result_count];
+        // Pop smallest first and fill from the back -> descending by score.
+        for (LVSize_t i = result_count; i-- > 0;) {
             lv_query_heap_pop(query_index_heap, &query_index_heap_size, &query_index_result[i]);
         }
-
-        for (LVSize_t i = 0; i < copied_query_index_heap_size; ++i) {
+        for (LVSize_t i = 0; i < result_count; ++i) {
             LVStatus status = db_file_query_result(db->db_file_fd, db->val_log_fd, query_index_result[i].internal_seq,
                                                    &db->reserved_query_results[i]);
             if (status != LV_OK) {
@@ -368,16 +396,15 @@ LVStatus lv_query(Livero* db, const LVTopK_t k, const void* query_vector, const 
             }
         }
     }
+
     if (result_out) {
         *result_out = db->reserved_query_results;
     }
-
     if (result_size_out) {
-        *result_size_out = copied_query_index_heap_size;
+        *result_size_out = result_count;
     }
     return LV_OK;
 }
-
 LVStatus lv_delete(Livero* db, const LVSeq_t key) {
     if (!db) {
         LIVERO_ERROR("You missed a db.");
@@ -435,6 +462,8 @@ static LVStatus lv_memory_init(const LVMemoryInitCtx* ctx, Livero** db_out) {
     *db_out = (Livero*)memory_arena;
 
     (*db_out)->reserved_query_results = (LVQueryResult*)((uint8_t*)memory_arena + sizeof(Livero));
+    (*db_out)->reserved_vector_chunks =
+        (LVTernaryChunk*)((uint8_t*)memory_arena + sizeof(Livero) + sizeof(LVQueryResult) * LV_MAX_K);
     (*db_out)->db_file_fd = ctx->db_fd;
     (*db_out)->val_log_fd = ctx->val_log_fd;
     (*db_out)->vec_log_fd = ctx->vec_log_fd;
