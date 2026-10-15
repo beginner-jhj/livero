@@ -228,7 +228,7 @@ livero manages data with three files. All of them are append-only.
 - `vec_log.lv`: quantized vectors.
 - `db.lv`: database state (disk usage, metadata for each file), plus key, date, value_len, and val_log_offset for each record.
 
-Writes go `val_log.lv` → `vec_log.lv` → `db.lv`, and the `db.lv` header is written last. Writing the header is the commit point: if power is lost midway, only the range the header points to is treated as valid.
+Writes go `vec_log.lv` → `val_log.lv` → `db.lv`, and the `db.lv` header is written last. Writing the header is the commit point: if power is lost midway, only the range the header points to is treated as valid.
 
 ### Keys
 
