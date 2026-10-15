@@ -9,3 +9,4 @@ tests/python/tmp
 tests/python/__pycache__
 tests/python/demo_data
 tests/python/emb_cache
+build-release
