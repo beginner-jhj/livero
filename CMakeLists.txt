@@ -37,6 +37,11 @@ target_include_directories(livero PUBLIC include PRIVATE src)
 
 target_compile_definitions(livero PRIVATE _POSIX_C_SOURCE=200809L)
 
+find_library(LV_MATH_LIB m)
+if(LV_MATH_LIB)
+    target_link_libraries(livero PUBLIC ${LV_MATH_LIB})
+endif()
+
 enable_testing()
 
 add_library(test_helper STATIC tests/test_helper.c)
