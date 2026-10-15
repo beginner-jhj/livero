@@ -42,6 +42,19 @@ if(LV_MATH_LIB)
     target_link_libraries(livero PUBLIC ${LV_MATH_LIB})
 endif()
 
+option(LV_ENABLE_POPCNT "Use the hardware POPCNT instruction on x86-64" ON)
+
+include(CheckCCompilerFlag)
+check_c_compiler_flag(-mpopcnt LV_COMPILER_HAS_MPOPCNT)
+
+
+if(LV_ENABLE_POPCNT
+   AND LV_COMPILER_HAS_MPOPCNT
+   AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+  target_compile_options(livero PRIVATE -mpopcnt)
+  message(STATUS "livero: hardware POPCNT enabled")
+endif()
+
 enable_testing()
 
 add_library(test_helper STATIC tests/test_helper.c)
