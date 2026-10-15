@@ -1,9 +1,9 @@
 model,dim,oversampling,k,recall_at_10,recall_min,latency_ms_mean,latency_ms_p99,wrong_item_true_rank_median,wrong_items_within_rank_20
-sentence-transformers/all-MiniLM-L6-v2,384,1,10,0.7684,0.2,5.631,5.827,16.0,0.668
-sentence-transformers/all-MiniLM-L6-v2,384,2,20,0.926,0.4,5.704,7.523,,
-sentence-transformers/all-MiniLM-L6-v2,384,3,30,0.9648,0.5,5.672,5.864,,
-sentence-transformers/all-MiniLM-L6-v2,384,5,50,0.9864,0.7,5.718,5.917,,
-BAAI/bge-base-en-v1.5,768,1,10,0.7878,0.3,6.056,6.173,16,0.695
-BAAI/bge-base-en-v1.5,768,2,20,0.9366,0.4,6.066,6.173,,
-BAAI/bge-base-en-v1.5,768,3,30,0.9692,0.5,6.091,6.448,,
-BAAI/bge-base-en-v1.5,768,5,50,0.9884,0.6,6.108,6.181,,
+sentence-transformers/all-MiniLM-L6-v2,384,1,10,0.7684,0.2,0.2,0.222,16.0,0.668
+sentence-transformers/all-MiniLM-L6-v2,384,2,20,0.926,0.4,0.232,0.254,,
+sentence-transformers/all-MiniLM-L6-v2,384,3,30,0.9648,0.5,0.262,0.29,,
+sentence-transformers/all-MiniLM-L6-v2,384,5,50,0.9864,0.7,0.324,0.592,,
+BAAI/bge-base-en-v1.5,768,1,10,0.7878,0.3,0.343,0.375,16,0.695
+BAAI/bge-base-en-v1.5,768,2,20,0.9366,0.4,0.373,0.396,,
+BAAI/bge-base-en-v1.5,768,3,30,0.9692,0.5,0.402,0.428,,
+BAAI/bge-base-en-v1.5,768,5,50,0.9884,0.6,0.46,0.5,,
