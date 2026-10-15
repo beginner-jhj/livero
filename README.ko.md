@@ -49,7 +49,7 @@ AG News 10,000개 문서, 쿼리 500개 기준으로, fp32 전수조사 결과�
 | all-MiniLM-L6-v2 | 384 | 0.7684 |
 | bge-base-en-v1.5 | 768 | 0.7878 |
 
-실험 코드: [`tests/python/recall_experiment.py`](tests/python/recall_experiment.py)
+실험 코드: [`tests/python/recall_experiment.py`](tests/python/recall_test.py)
 
 ## 벤치마크
 
@@ -97,7 +97,7 @@ x86-64에서는 기본으로` -mpopcnt`가 켜집니다(`-DLV_ENABLE_POPCNT=OFF`
 
 재오픈 후 레코드 수는 모든 조건에서 일치했습니다.
 
-실험 코드: [`tests/python/capacity_experiment.py`](tests/python/capacity_experiment.py)
+실험 코드: [`tests/python/capacity_experiment.py`](tests/python/capacity_test.py)
 
 ## 빌드
 
