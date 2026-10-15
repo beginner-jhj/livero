@@ -265,3 +265,7 @@ dot = popcount(M) - 2 * popcount(X)
 
 - The dot product currently uses `__builtin_popcountll`. SIMD kernels are planned.
 - Files are opened with `O_SYNC` for durability, so on Linux a single PUT takes about 6.7ms. The plan is to let users choose the durability level and use an internal cache.
+
+## License
+
+MIT

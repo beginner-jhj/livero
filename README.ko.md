@@ -267,3 +267,7 @@ dot = popcount(M) - 2 * popcount(X)
 
 - 현재 dot 연산에는 `__builtin_popcountll`을 사용합니다. SIMD 커널을 추가할 계획입니다.
 - 내구성을 보장하기 위해 파일을 `O_SYNC`로 열어서, Linux에서는 PUT 하나에 약 6.7ms가 걸립니다. 사용자가 내구성 수준을 선택할 수 있게 하고, 내부 캐시를 사용할 예정입니다.
+
+## License
+
+MIT
