@@ -35,6 +35,8 @@ set(LV_SOURCES
 add_library(livero STATIC ${LV_SOURCES})
 target_include_directories(livero PUBLIC include PRIVATE src)
 
+target_compile_definitions(livero PRIVATE _POSIX_C_SOURCE=200809L)
+
 enable_testing()
 
 set(LV_TEST_HELPER tests/test_helper.c)
