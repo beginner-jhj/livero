@@ -17,7 +17,7 @@
 
 struct Livero {
     LVQueryResult* reserved_query_results;
-    LVTernaryChunk* reserved_vector_chunks;
+    LVTernaryChunk* reserved_vector_batch;
     int db_file_fd;
     int val_log_fd;
     int vec_log_fd;
@@ -348,14 +348,14 @@ LVStatus lv_query(Livero* db, const LVTopK_t k, const void* query_vector, const 
         const LVSize_t n = remaining < vector_batch_count ? remaining : vector_batch_count;
 
         LVStatus status =
-            pread_helper(db->vec_log_fd, db->reserved_vector_chunks, n * vector_bytes, (LVOffset_t)base * vector_bytes);
+            pread_helper(db->vec_log_fd, db->reserved_vector_batch, n * vector_bytes, (LVOffset_t)base * vector_bytes);
         if (status != LV_OK) {
             return status;
         }
 
         for (LVSize_t j = 0; j < n; ++j) {
             // Vector j starts at chunk j * words: each vector spans `words` chunks.
-            const LVTernaryChunk* candidate = &db->reserved_vector_chunks[j * words];
+            const LVTernaryChunk* candidate = &db->reserved_vector_batch[j * words];
             const int64_t dot_result = ternary_dot(converted_query_vector, candidate, words);
 
             const bool heap_full = query_index_heap_size >= TOP_K;
@@ -443,11 +443,11 @@ void lv_close(Livero* db) {
 
 static LVStatus lv_memory_init(const LVMemoryInitCtx* ctx, Livero** db_out) {
     /*
-        Livero use fixed ram size 32KiB which is 32768B.
+        Livero use fixed ram size 48KiB which is 49152B.
         [Livero (64B)]
         [Reserved Query Results (504B * 64 = 32256B)]
-
-        Total exaxt ram size is 64B + 32256B = 32320B < 32KiB.
+        [Reserved Vector Batch (16KiB)]
+         exaxt ram size is 64B + 32256B + 16,384B  = 47KiB < 48KiB.
     */
 
     void* memory_arena = nullptr;
@@ -462,7 +462,7 @@ static LVStatus lv_memory_init(const LVMemoryInitCtx* ctx, Livero** db_out) {
     *db_out = (Livero*)memory_arena;
 
     (*db_out)->reserved_query_results = (LVQueryResult*)((uint8_t*)memory_arena + sizeof(Livero));
-    (*db_out)->reserved_vector_chunks =
+    (*db_out)->reserved_vector_batch =
         (LVTernaryChunk*)((uint8_t*)memory_arena + sizeof(Livero) + sizeof(LVQueryResult) * LV_MAX_K);
     (*db_out)->db_file_fd = ctx->db_fd;
     (*db_out)->val_log_fd = ctx->val_log_fd;
