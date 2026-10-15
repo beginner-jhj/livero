@@ -213,13 +213,6 @@ LVStatus db_file_date_filter(const int fd, const uint32_t internal_seq, const ui
     return LV_OK;
 }
 
-LVStatus db_file_get_vector(const int vec_log_fd, const uint32_t internal_seq, const LVDim_t dim, void* vector_out) {
-    assert(vec_log_fd != -1 && vector_out);
-    LVSize_t ternary_size = ternary_chunks_size(dim);
-    LVOffset_t offset_to_read = ternary_size * internal_seq;
-    return pread_helper(vec_log_fd, vector_out, ternary_size, offset_to_read);
-}
-
 LVStatus db_file_query_result(const int db_file_fd, const int val_log_fd, const uint32_t internal_seq,
                               LVQueryResult* query_result_out) {
     assert(db_file_fd != -1 && val_log_fd != -1 && query_result_out);

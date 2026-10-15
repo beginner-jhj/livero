@@ -38,8 +38,6 @@ LVStatus db_file_search(const int fd, const LVSize_t record_count, const LVSeq_t
 LVStatus db_file_get_value(const int val_log_fd, const LVOffset_t offset, const LVSize_t len, void* out_buf);
 LVStatus db_file_date_filter(const int fd, const uint32_t internal_seq, const uint64_t date1, const uint64_t date2,
                              bool* result_out);
-LVStatus db_file_get_vector(const int vec_log_fd, const uint32_t internal_seq, const LVDim_t vector_dim,
-                            void* vector_out);
 LVStatus db_file_query_result(const int db_file_fd, const int val_log_fd, const uint32_t internal_seq,
                               LVQueryResult* query_result_out);
 LVStatus db_file_delete(const int fd, const LVSize_t record_count, const LVSeq_t key);
