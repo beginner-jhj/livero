@@ -39,17 +39,20 @@ target_compile_definitions(livero PRIVATE _POSIX_C_SOURCE=200809L)
 
 enable_testing()
 
-set(LV_TEST_HELPER tests/test_helper.c)
+add_library(test_helper STATIC tests/test_helper.c)
+target_compile_definitions(test_helper PUBLIC _XOPEN_SOURCE=700)
+target_link_libraries(test_helper PUBLIC livero)
+target_include_directories(test_helper PRIVATE src)
 
 function(lv_add_test name file)
-    add_executable(${name} ${file} ${LV_TEST_HELPER})
-    target_link_libraries(${name} PRIVATE livero)
+    add_executable(${name} ${file})
+    target_link_libraries(${name} PRIVATE test_helper)
     target_include_directories(${name} PRIVATE src include)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
 lv_add_test(test_livero tests/test_livero.c)
 
-add_executable(benchmark tests/benchmark.c ${LV_TEST_HELPER})
-target_link_libraries(benchmark PRIVATE livero)
+add_executable(benchmark tests/benchmark.c)
+target_link_libraries(benchmark PRIVATE test_helper)
 target_include_directories(benchmark PRIVATE src include)
