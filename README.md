@@ -49,7 +49,7 @@ recall@10 on 10,000 AG News documents with 500 queries, using fp32 brute-force r
 | all-MiniLM-L6-v2 | 384 | 0.7684 |
 | bge-base-en-v1.5 | 768 | 0.7878 |
 
-Experiment code: [`tests/python/recall_experiment.py`](tests/python/recall_test.py)
+Experiment code: [`tests/python/recall_test.py`](tests/python/recall_test.py)
 
 ## Benchmarks
 
@@ -96,7 +96,7 @@ Per-record metadata is a constant 23B.
 
 The record count after reopening matched in every case.
 
-Experiment code: [`tests/python/capacity_experiment.py`](tests/python/capacity_test.py)
+Experiment code: [`tests/python/capacity_test.py`](tests/python/capacity_test.py)
 
 ## Build
 
