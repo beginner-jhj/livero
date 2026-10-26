@@ -5,6 +5,7 @@
 #define DB_FILE_NAME "db.lv"
 #define VAL_LOG_FILE_NAME "val_log.lv"
 #define VEC_LOG_FILE_NAME "vec_log.lv"
+#define COMMIT_FILE_NAME "commit.lv"
 #define LV_DIM_MULTIPLE 64
 
 #ifndef NDEBUG
