@@ -30,6 +30,9 @@ set(LV_SOURCES
     src/file/file.c
     src/helper/crc32c.c
     src/vector/ternary.c
+    src/struct/row.c
+    src/struct/commit.c
+    src/struct/config.c
 )
 
 add_library(livero STATIC ${LV_SOURCES})
