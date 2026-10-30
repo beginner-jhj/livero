@@ -7,8 +7,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "helper/crc32c.h"
 #include "livero_internal.h"
+#include "livero_types.h"
 
 static LVStatus lv_concat_path(const char* path, const char* file_name, char* outbuf, const LVSize32_t outbuf_size) {
     assert(outbuf_size <= LV_MAX_PATH_LEN);
@@ -82,6 +82,22 @@ LVStatus lv_write_file(int fd, const void* data, const LVSize32_t size, const LV
     return LV_OK;
 }
 
+LVStatus lv_read_file(const int fd, void* buf, const LVSize32_t size, const LVOffset_t offset) {
+    LVSize32_t _read = pread(fd, buf, size, offset);
+    if (_read < 0) {
+        return LV_ERR_IO;
+    }
+
+    return LV_OK;
+}
+
+LVStatus lv_sync_file(int fd) {
+    if (fsync(fd) < 0) {
+        return LV_ERR_IO;
+    }
+    return LV_OK;
+}
+
 void lv_put_fixed_16(uint8_t* buf, uint16_t value) {
     buf[0] = (uint8_t)(value & 0xff);
     buf[1] = (uint8_t)((value >> 8) & 0xff);
@@ -114,28 +130,4 @@ uint64_t lv_get_fixed_64(const uint8_t* buf) {
     }
 
     return result;
-}
-
-LVConfigDisk lv_config_m2d(const LVConfig* config) {
-    assert(config);
-    LVConfigDisk cfg_disk;
-    uint32_t checksum = lv_crc32c_begin();
-
-    lv_put_fixed_32(cfg_disk.max_disk_bytes, config->max_disk_bytes);
-    checksum = lv_crc32c_update(checksum, cfg_disk.max_disk_bytes, 4);
-
-    lv_put_fixed_32(cfg_disk.disk_sector_bytes, config->disk_sector_bytes);
-    checksum = lv_crc32c_update(checksum, cfg_disk.disk_sector_bytes, 4);
-
-    lv_put_fixed_16(cfg_disk.max_value_len, config->max_value_len);
-    checksum = lv_crc32c_update(checksum, cfg_disk.max_value_len, 2);
-
-    lv_put_fixed_16(cfg_disk.vector_dimension, config->vector_dimension);
-    checksum = lv_crc32c_update(checksum, cfg_disk.vector_dimension, 2);
-
-    cfg_disk.vector_type = config->vector_type;
-
-    lv_put_fixed_32(cfg_disk.checksum, checksum);
-
-    return cfg_disk;
 }
