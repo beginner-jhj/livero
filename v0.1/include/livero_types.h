@@ -12,6 +12,8 @@ typedef enum LVStatus {
     LV_ERR_DISK_FULL = 4,
     LV_ERR_NOT_FOUND = 5,
     LV_ERR_ALLOCATE_MEMORY = 6,
+    LV_ERR_CORRUPT = 7,
+    LV_ERR_MEDIA_CRASHED = 8
 } LVStatus;
 
 typedef uint64_t LVSeq_t;
@@ -23,11 +25,7 @@ typedef uint16_t LVDim_t;
 typedef uint8_t LVTopK_t;
 
 typedef uint8_t LVVectorType;
-enum{
-    LV_VEC_TYPE_INT8 = 0,
-    LV_VEC_TYPE_FP32 = 1
-};
-
+enum { LV_VEC_TYPE_INT8 = 0, LV_VEC_TYPE_FP32 = 1 };
 
 typedef uint8_t LVSyncMode;
 enum {
@@ -36,16 +34,15 @@ enum {
     LV_SYNC_NONE = 2,
 };
 
-typedef struct LVConfig{
+typedef struct LVConfig {
     LVSize32_t max_disk_bytes;
-    LVSize32_t disk_sector_bytes;
     LVSize16_t max_value_len;
     LVDim_t vector_dimension;
     LVVectorType vector_type;
 } LVConfig;
 
-typedef struct LVOption{
-    LVCount_t read_batch_m; 
+typedef struct LVOption {
+    LVCount_t read_batch_m;
     LVCount_t write_batch_m;
     LVSyncMode sync_mode;
 } LVOption;
