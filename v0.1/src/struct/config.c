@@ -36,7 +36,7 @@ LVStatus lv_config_d2m(const int fd, LVConfig* config_out) {
 
     uint32_t checksum = lv_crc32c(&cfg_disk, LV_CONFIG_DISK_BYTES - sizeof(cfg_disk.checksum));
     if (checksum != lv_get_fixed_32(cfg_disk.checksum)) {
-        return LV_ERR_CORRUPT;
+        return LV_ERR_DATA_CORRUPT;
     }
 
     config_out->max_disk_bytes = lv_get_fixed_32(cfg_disk.max_disk_bytes);
