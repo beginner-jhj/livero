@@ -38,28 +38,35 @@ static_assert(sizeof(LVCommitDisk) == LV_COMMIT_DISK_BYTES, "LVCommitDisk size m
 #endif
 
 /*
-    Returns commit slot index starting at 0 (0-LV_COMMIT_SLOT_M - 1).
-*/
-static inline int lv_commit_slot_idx(const LVOffset_t slot_offset) {
-    assert(slot_offset <= (LV_COMMIT_SLOT_M - 1) * LV_COMMIT_SECTOR_BYTES);
-    return (slot_offset) / LV_COMMIT_SECTOR_BYTES;
-}
-
-/*
     Write M zero-initialized slots on commit.lv
 */
-LVStatus lv_init_commit(int fd);
+LVStatus commit_init(int fd);
 
 /*
     Convert a LVCommit(memory) to a LVCommitDisk.
     -Every byte is set to little-endian
     -Checksum is calculated based on littel-endian bytes.
 */
-LVCommitDisk lv_commit_m2d(const LVCommit* commit);
+LVCommitDisk commot_m2d(const LVCommit* commit);
+
+typedef enum{
+    LV_COMMIT_OK = -1, // commit is valid
+    LV_COMMIT_EMPTY = 0, //commit seq is 0
+    LV_COMMIT_CORRUPT = 1, // commit is corrupted (checksum mismatch)
+} LVCMTStatus;
+
+typedef struct{
+    LVStatus db;
+    LVCMTStatus commit;
+} LVCommitStatus;
 
 /*
     Convert a LVCommitDisk to a LVCommit
 */
-LVStatus lv_commit_d2m(const int fd, const LVOffset_t offset, LVCommit* commit_out);
+LVCommitStatus commit_d2m(const int fd, const LVOffset_t offset, LVCommit* commit_out);
+
+int commit_sanity(const LVCommit* cmt,const int expected_slot_idx, const LVSize32_t vector_bytes, const LVSize32_t max_disk_bytes);
+
+LVStatus commit_write(const int fd, const LVCommit* commit);
 
 #endif
