@@ -5,10 +5,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "file/file.h"
+#include "helper/helper.h"
 #include "livero_internal.h"
 #include "livero_types.h"
+#include "struct/commit.h"
 #include "struct/config.h"
 #include "struct/row.h"
 #include "vector/ternary.h"
@@ -42,6 +45,7 @@ struct Livero {
 };
 
 static_assert(sizeof(Livero) <= 128, "Livero struct size must be under 128 bytes.");
+
 static inline LVSize32_t lv_total_memory_bytes(const LVCount_t read_batch_m, const LVCount_t write_batch_m,
                                                const LVSize32_t max_value_len, const LVDim_t dim) {
     LVSize32_t total = sizeof(Livero);
@@ -138,7 +142,7 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
         goto cleanup;
     }
 
-    if ((s = lv_init_commit(commit_fd)) != LV_OK) {
+    if ((s = commit_init(commit_fd)) != LV_OK) {
         LIVERO_ERROR("Failed to initialize commit.lv.");
         goto cleanup;
     }
@@ -261,9 +265,12 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
     const LVSize32_t total_memory_size = lv_total_memory_bytes(option->read_batch_m, option->write_batch_m,
                                                                config.max_value_len, config.vector_dimension);
     if ((s = lv_allocate_memory(total_memory_size, &m_arena)) != LV_OK) {
-        LIVERO_ERROR("Failed to allocate %d bytes.");
+        LIVERO_ERROR("Failed to allocate %d bytes.", total_memory_size);
         goto cleanup;
     }
+
+    const LVSeq_t next_commit_seq = commit.commit_seq + 1;                            // starts at 1
+    const LVSeq_t next_seq = commit.reserved_seq == 0 ? 0 : commit.reserved_seq + 1;  // starts at 0
 
     LVInitCtx init_ctx = {
         .row_fd = row_fd,
@@ -277,8 +284,8 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
         .read_batch_m = option->read_batch_m,
         .write_batch_m = option->write_batch_m,
         .sync_mode = option->sync_mode,
-        .next_commit_seq = commit.commit_seq + 1,
-        .next_seq = commit.reserved_seq + 1,
+        .next_commit_seq = next_commit_seq,
+        .next_seq = next_seq,
         .row_bytes = LV_ROW_DISK_BYTES * commit.total_count,
         .vec_bytes = ternary_chunks_bytes(config.vector_dimension) * commit.total_count,
         .val_bytes = commit.total_value_bytes,
@@ -297,6 +304,169 @@ cleanup:
     lv_close_file(commit_fd);
     free(m_arena);
     return s;
+}
+
+LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_len, const LVDate *date,
+                LVSeq_t *seq_out) {
+    if (!db) {
+        LIVERO_ERROR("You miss a db.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (!vector) {
+        LIVERO_ERROR("You must pass vector.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (!value || value_len == 0) {
+        LIVERO_ERROR("You must pass value.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (value_len > db->max_value_len) {
+        LIVERO_ERROR("value_len exceeds max_value_len(%d)", db->max_value_len);
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (date && !lv_date_is_valid(date)) {
+        LIVERO_ERROR("You passed an invalid date object.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    const LVSeq_t current_commit_seq = db->next_commit_seq;
+    const LVSeq_t current_seq = db->next_seq;
+    const LVCount_t current_record_count = db->row_bytes / LV_ROW_DISK_BYTES;
+
+    const uint64_t epoch_time = lv_convert_date_to_epoch(date);
+    const LVSize32_t vector_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const LVOffset_t row_disk_offset = current_record_count * LV_ROW_DISK_BYTES;
+    const LVOffset_t vector_disk_offset = current_record_count * vector_bytes;
+    const LVOffset_t value_disk_offset = db->val_bytes + db->batched_value_bytes;
+
+    ternary_convert(vector, db->vector_type, db->vector_dimension, db->ternary_scratch);
+    LVRowCalcChecksumCtx row_checksum_ctx = {.seq = current_seq,
+                                             .date = epoch_time,
+                                             .value_offset = value_disk_offset,
+                                             .value_len = value_len,
+                                             .vector_dim = db->vector_dimension,
+                                             .value = value,
+                                             .vector = vector};
+    const uint32_t row_checksum = row_calc_checksum(&row_checksum_ctx);
+    LVRow row_data = {.seq = current_seq,
+                          .date = epoch_time,
+                          .value_offset = value_disk_offset,
+                          .value_len = value_len,
+                          .tombstone_flag = 0,
+                          .checksum = row_checksum};
+
+    int flush = 0;
+
+    LVSeq_t first_seq_to_commit = 0;
+    LVSeq_t reserved_seq_to_commit = 0;
+    LVCount_t total_count_to_commit = 0;
+    LVCount_t batch_count_to_commit = 0;
+    LVSize32_t total_value_bytes_to_commit = 0;
+    LVSize32_t batch_value_bytes_to_commit = 0;
+
+    uint8_t *row_buf_to_flush = NULL;
+    uint8_t *vector_buf_to_flush = NULL;
+    uint8_t *value_buf_to_flush = NULL;
+    LVSize32_t row_bytes_to_flush = 0;
+    LVSize32_t vector_bytes_to_flush = 0;
+    LVSize32_t value_bytes_to_flush = 0;
+
+    if (db->sync_mode == LV_SYNC_EVERY_PUT) {
+        uint8_t row_buffer[LV_ROW_DISK_BYTES] = {0};
+        row_write_on_memory(row_buffer, &row_data);
+
+        flush = 1;
+
+        first_seq_to_commit = current_seq;
+        reserved_seq_to_commit = current_seq + 1;
+        total_count_to_commit = current_record_count + 1;
+        batch_count_to_commit = 1;
+        total_value_bytes_to_commit = db->val_bytes + value_len;
+        batch_value_bytes_to_commit = value_len;
+
+        row_buf_to_flush = row_buffer;
+        vector_buf_to_flush = (uint8_t *)db->ternary_scratch;
+        value_buf_to_flush = value;
+        row_bytes_to_flush = LV_ROW_DISK_BYTES;
+        vector_bytes_to_flush = vector_bytes;
+        value_bytes_to_flush = value_len;
+    } else {
+        if (db->batched_count >= db->batch_threshold_count) {
+            flush = 1;
+
+            first_seq_to_commit = row_get_seq(db->write_row_batch);
+            reserved_seq_to_commit = current_seq + db->batched_count;
+            total_count_to_commit = current_record_count + db->batched_count;
+            batch_count_to_commit = db->batched_count;
+            total_value_bytes_to_commit = db->val_bytes + db->batched_value_bytes;
+            batch_value_bytes_to_commit = db->batched_value_bytes;
+
+            row_buf_to_flush = db->write_value_batch;
+            vector_buf_to_flush = db->write_vector_batch;
+            value_buf_to_flush = db->write_value_batch;
+            row_bytes_to_flush = LV_ROW_DISK_BYTES * db->batched_count;
+            vector_bytes_to_flush = vector_bytes * db->batched_count;
+            value_bytes_to_flush = db->batched_value_bytes;
+        }
+    }
+
+    if (flush) {
+        LVCommit commit = {
+            .commit_seq = current_commit_seq,
+            .first_seq = first_seq_to_commit,
+            .reserved_seq = reserved_seq_to_commit,
+            .total_count = total_count_to_commit,
+            .batch_count = batch_count_to_commit,
+            .total_value_bytes = total_value_bytes_to_commit,
+            .batch_value_bytes = batch_value_bytes_to_commit,
+        };
+        LVFlushCtx flush_ctx = {.rows = row_buf_to_flush,
+                                .vecs = vector_buf_to_flush,
+                                .vals = value_buf_to_flush,
+                                .commit = &commit,
+                                .row_fd = db->row_fd,
+                                .vec_fd = db->vec_fd,
+                                .val_fd = db->val_fd,
+                                .commit_fd = db->commit_fd,
+                                .row_bytes_to_flush = row_bytes_to_flush,
+                                .value_bytes_to_flush = value_bytes_to_flush,
+                                .vector_bytes_to_flush = vector_bytes_to_flush,
+                                .row_offset = row_disk_offset,
+                                .vec_offset = vector_disk_offset,
+                                .val_offset = value_disk_offset,
+                                .sync = db->sync_mode != LV_SYNC_NONE};
+
+        LVStatus s = lv_flush(db, &flush_ctx);
+
+        if (s != LV_OK) {
+            LIVERO_ERROR("Failed to flush data.");
+            return s;
+        }
+    }
+
+    if (db->batched_count < db->batch_threshold_count) {
+        LVBatchCtx batch_ctx = {.row_batch_ptr = db->write_row_batch,
+                                .vector_batch_ptr = db->write_vector_batch,
+                                .value_batch_ptr = db->write_value_batch,
+                                .row_batch_offset = db->batched_count * LV_ROW_DISK_BYTES,
+                                .vector_batch_offset = db->batched_count * vector_bytes,
+                                .value_batch_offset = db->batched_value_bytes,
+                                .value_len = value_len,
+                                .vector_bytes = vector_bytes,
+                                .row_data = &row_data,
+                                .vector = db->ternary_scratch,
+                                .value = value};
+
+        lv_batch(db, &batch_ctx);
+    }
+
+    db->next_seq = current_seq + 1;
+
+    return LV_OK;
 }
 
 /*
@@ -391,90 +561,174 @@ void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
 }
 
 LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out) {
-    assert(ctx);
+    assert(ctx && commit_out);
+
     const LVSize32_t vector_bytes = ternary_chunks_bytes(ctx->vector_dim);
-    LVCommit cmt;
-    LVOffset_t offset = 0;
-    LVSeq_t max_commit_seq = LV_COMMIT_SEQ_ZERO;
-    int confirmed_commit_idx = 0;
-    int corrupted_commit_idx = 0;
-    int has_corrupted = 0;
+
+    LVCommit cmt = {0};
+    LVCount_t nonempty_count = 0;
+    LVCommit best = {0};
+    int best_idx = -1;
+    LVCount_t corrupted_count = 0;
+    int corrupted_idx = -1;
+
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVStatus s = lv_commit_d2m(ctx->commit_fd, offset, &cmt);
+        LVCommitStatus cmt_status = commit_d2m(ctx->commit_fd, i * LV_COMMIT_SECTOR_BYTES, &cmt);
 
-        if (s == LV_OK) {
-            if (cmt.commit_seq > max_commit_seq) {
-                const uint64_t saved_bytes =
-                    LV_ROW_DISK_BYTES * cmt.total_count + vector_bytes * cmt.total_count + cmt.total_value_bytes;
-                if (saved_bytes > (uint64_t)ctx->max_disk_bytes || cmt.batch_count > cmt.total_count) {
+        if (cmt_status.db == LV_OK) {
+            if (cmt_status.commit == LV_COMMIT_EMPTY) {
+                /*
+                    This is a zero initialized commit. Neither an error and a corruption
+                */
+                continue;
+            } else if (cmt_status.commit == LV_COMMIT_CORRUPT) {
+                /*
+                    This is a corrupted commit.
+                */
+                corrupted_count++;
+                corrupted_idx = i;
+            } else if (cmt_status.commit == LV_COMMIT_OK) {
+                if (!commit_sanity(&cmt, i, vector_bytes, ctx->max_disk_bytes)) {
                     /*
-                        This commit saved invalid values.
+                        This commit's checksum is correct. But it saved invalid values.
                     */
-                    has_corrupted = 1;
-                    corrupted_commit_idx = lv_commit_slot_idx(offset);
+                    corrupted_count++;
+                    corrupted_idx = i;
                 } else {
-                    LVRowCCFDCtx rccfd;
-                    rccfd.row_fd = ctx->row_fd;
-                    rccfd.vec_fd = ctx->vec_fd;
-                    rccfd.val_fd = ctx->val_fd;
-                    rccfd.vector_dim = ctx->vector_dim;
-                    for (int j = cmt.batch_count; j >= 0; --j) {
-                        rccfd.row_offset = (cmt.total_count - j) * LV_ROW_DISK_BYTES;
-                        rccfd.vec_offset = (cmt.total_count - j) * vector_bytes;
-
-                        LVStatus _s = lv_row_checksum_check_from_disk(&rccfd);
-                        if (_s == LV_ERR_CORRUPT) {
-                            /*
-                                This commit has a corrupted row.
-                            */
-                            has_corrupted = 1;
-                            corrupted_commit_idx = lv_commit_slot_idx(offset);
-                            break;
-                        } else if (_s == LV_ERR_IO) {
-                            return s;
-                        }
+                    /*
+                        The latest valid commit wins
+                    */
+                    if (cmt.commit_seq > best.commit_seq) {
+                        best = cmt;
+                        best_idx = i;
                     }
-
-                    max_commit_seq = cmt.commit_seq;
-                    confirmed_commit_idx = lv_commit_slot_idx(offset);
                 }
             }
-        }
-
-        else if (s == LV_ERR_CORRUPT) {
-            /*
-              This commit is corrupted, skip and find the next valid commit.
-                          */
-            has_corrupted = 1;
-            corrupted_commit_idx = lv_commit_slot_idx(offset);
+            nonempty_count++;
         } else {
-            /*
-                This is an unexpected error.
-            */
+            return cmt_status.db;
+        }
+    }
+
+    if (nonempty_count == 0) {
+        /*
+            This is a new db.
+        */
+        *commit_out = (LVCommit){0};
+        return LV_OK;
+    }
+
+    /* Non-empty slots exist but none is trustworthy. Without this check,
+     * best_idx == -1 would leak into the arithmetic below and make the
+     * "expected slot" silently become slot 0. */
+    if (best_idx < 0) {
+        return LV_ERR_MEDIA_CRASHED;
+    }
+
+    /*
+        Only torn-write that happened in the last write is the expected crash.
+        If the corrupted commit is more than 1 or
+        a corrupted commit is not the exact next one of the latest valid one,
+        it means there was an unpredicted crash on the successfully written commit
+        which is not recoverable.
+    */
+    if (corrupted_count > 1) {
+        return LV_ERR_MEDIA_CRASHED;
+    } else if (corrupted_count == 1 && corrupted_idx != (best_idx + 1) % LV_COMMIT_SLOT_M) {
+        return LV_ERR_MEDIA_CRASHED;
+    }
+
+    /*
+        Finally check batched data that the best commit saved.
+        possible errors are LV_ERR_DATA_CORRUPT or LV_ERR_IO.
+    */
+    LVRowCCFDCtx rccfd = {.row_fd = ctx->row_fd,
+                          .vec_fd = ctx->vec_fd,
+                          .val_fd = ctx->val_fd,
+                          .row_offset = 0,
+                          .vec_offset = 0,
+                          .vector_bytes = vector_bytes};
+
+    for (uint64_t k = (uint64_t)best.total_count - best.batch_count; k < (uint64_t)best.total_count; ++k) {
+        rccfd.row_offset = k * LV_ROW_DISK_BYTES;
+        rccfd.vec_offset = k * vector_bytes;
+
+        LVStatus s = row_checksum_check_from_disk(&rccfd);
+        if (s != LV_OK) {
             return s;
         }
-        offset += LV_COMMIT_SECTOR_BYTES;
     }
 
-    if (has_corrupted) {
-        /*
-            Every commit slot doesn't touch other slots,
-            so in the expected crash scenario, the corrupted commit must be the exact next slot of the confirmed commit.
-
-            If the corrupted commit is not in the exact next slot, this means the hardware is broken and it's not
-           recoverable
-        */
-        if (confirmed_commit_idx == LV_COMMIT_SLOT_M - 1 && corrupted_commit_idx != 0) {
-            return LV_ERR_MEDIA_CRASHED;
-        }
-        if (confirmed_commit_idx + 1 != corrupted_commit_idx) {
-            return LV_ERR_MEDIA_CRASHED;
-        }
-    }
-    if (max_commit_seq == LV_COMMIT_SEQ_ZERO) {
-        memset(commit_out, 0, sizeof(LVCommit));
-    } else {
-        memcpy(commit_out, &cmt, sizeof(cmt));
-    }
+    *commit_out = best;
     return LV_OK;
+}
+
+LVStatus lv_flush(Livero *db, const LVFlushCtx *ctx) {
+    assert(ctx);
+
+    LVStatus s = lv_write_file(ctx->vec_fd, ctx->vecs, ctx->vector_bytes_to_flush, ctx->vec_offset);
+
+    if (s != LV_OK) {
+        LIVERO_ERROR("Failed to flush vector (%d bytes).", ctx->vector_bytes_to_flush);
+        return s;
+    }
+
+    if ((s = lv_write_file(ctx->val_fd, ctx->vals, ctx->value_bytes_to_flush, ctx->val_offset)) != LV_OK) {
+        LIVERO_ERROR("Failed to flush value (%d bytes).", ctx->value_bytes_to_flush);
+        return s;
+    }
+
+    if ((s = lv_write_file(ctx->row_fd, ctx->rows, ctx->row_bytes_to_flush, ctx->row_offset)) != LV_OK) {
+        LIVERO_ERROR("Failed to flush row (%d bytes).", ctx->row_bytes_to_flush);
+        return s;
+    }
+
+    if (ctx->sync) {
+        if ((s = lv_sync_file(ctx->vec_fd)) != LV_OK) {
+            LIVERO_ERROR("Failed to sync vec.lv.");
+            return s;
+        }
+
+        if ((s = lv_sync_file(ctx->val_fd)) != LV_OK) {
+            LIVERO_ERROR("Failed to sync val.lv.");
+            return s;
+        }
+
+        if ((s = lv_sync_file(ctx->row_fd)) != LV_OK) {
+            LIVERO_ERROR("Failed to sync row.lv.");
+            return s;
+        }
+    }
+
+    if ((s = commit_write(ctx->commit_fd, ctx->commit)) != LV_OK) {
+        LIVERO_ERROR("Faield to write a commit on commit.lv");
+        return s;
+    }
+
+    if (ctx->sync) {
+        if ((s = lv_sync_file(ctx->commit_fd)) != LV_OK) {
+            LIVERO_ERROR("Failed to sync commit.lv.");
+            return s;
+        }
+    }
+
+    db->next_commit_seq = ctx->commit->commit_seq + 1;
+    db->row_bytes += ctx->row_bytes_to_flush;
+    db->vec_bytes += ctx->vector_bytes_to_flush;
+    db->val_bytes += ctx->value_bytes_to_flush;
+
+    db->batched_count = 0;
+    db->batched_value_bytes = 0;
+
+    return LV_OK;
+}
+
+void lv_batch(Livero *db, const LVBatchCtx *ctx) {
+    assert(ctx);
+    row_write_on_memory(ctx->row_batch_ptr + ctx->row_batch_offset, ctx->row_data);
+    memcpy(ctx->vector_batch_ptr + ctx->vector_batch_offset, ctx->vector, ctx->vector_bytes);
+    memcpy(ctx->value_batch_ptr + ctx->value_batch_offset, ctx->value, ctx->value_len);
+
+    db->batched_count += 1;
+    db->batched_value_bytes += ctx->value_len;
 }
