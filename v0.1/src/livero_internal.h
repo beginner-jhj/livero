@@ -8,6 +8,7 @@
 
 #include "livero_types.h"
 #include "struct/commit.h"
+#include "struct/row.h"
 
 static void lv_log_error(const char* file, int line, const char* func, const char* fmt, ...) {
     va_list args;
@@ -40,7 +41,6 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 
 int lv_check_option(const LVOption* option);
 LVStatus lv_allocate_memory(const LVSize32_t size, void** ptr_out);
-
 
 typedef struct LVInitCtx {
     LVSeq_t next_seq;
@@ -77,5 +77,38 @@ typedef struct LVRecoverCtx {
 */
 LVStatus lv_recover(const LVRecoverCtx* ctx, LVCommit* commit_out);
 
+typedef struct {
+    const uint8_t* rows;
+    const uint8_t* vecs;
+    const uint8_t* vals;
+    const LVCommit* commit;
+    int row_fd;
+    int vec_fd;
+    int val_fd;
+    int commit_fd;
+    LVSize32_t row_bytes_to_flush;
+    LVSize32_t vector_bytes_to_flush;
+    LVSize32_t value_bytes_to_flush;
+    LVOffset_t row_offset;
+    LVOffset_t vec_offset;
+    LVOffset_t val_offset;
+    uint8_t sync;
+} LVFlushCtx;
+LVStatus lv_flush(Livero* db,const LVFlushCtx* ctx);
+
+typedef struct {
+    uint8_t* row_batch_ptr;
+    uint8_t* vector_batch_ptr;
+    uint8_t* value_batch_ptr;
+    const LVRow* row_data;
+    const void* vector;
+    const void* value;
+    const LVSize32_t vector_bytes;
+    const LVSize32_t value_len;
+    const LVOffset_t row_batch_offset;
+    const LVOffset_t vector_batch_offset;
+    const LVOffset_t value_batch_offset;
+} LVBatchCtx;
+void lv_batch(Livero* db,const LVBatchCtx* ctx);
 
 #endif
