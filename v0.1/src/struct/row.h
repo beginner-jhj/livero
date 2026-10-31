@@ -4,7 +4,13 @@
 #include <stdint.h>
 #include <assert.h>
 
+#include "file/file.h"
 #include "livero_types.h"
+
+/*
+    row follows little endian bytes order on both memory and disk.
+    You should access the row data by using row_get_* functions.
+*/
 
 typedef struct LVRowDisk {
     uint8_t seq[8];
@@ -28,43 +34,41 @@ typedef struct LVRowDisk {
 
 static_assert(sizeof(LVRowDisk) == LV_ROW_DISK_BYTES, "LVRowDisk size must be 27 bytes.");
 
-static inline LVSeq_t lv_get_row_seq(const uint8_t *row) {
+static inline LVSeq_t row_get_seq(const uint8_t *row) {
     assert(row);
-    return *(LVSeq_t *)row;
+    return lv_get_fixed_64(row);
 }
-static inline uint64_t lv_get_row_date(const uint8_t *row) {
+static inline uint64_t row_get_date(const uint8_t *row) {
     assert(row);
-    return *(uint64_t *)(row + LV_ROW_DISK_DATE_OFFSET);
+    return lv_get_fixed_64(row + LV_ROW_DISK_DATE_OFFSET);
 }
-static inline LVOffset_t lv_get_row_value_offset(const uint8_t *row) {
+static inline LVOffset_t row_get_value_offset(const uint8_t *row) {
     assert(row);
-    return *(LVOffset_t *)(row + LV_ROW_DISK_VALOFFSET_OFFSET);
+    return lv_get_fixed_32(row + LV_ROW_DISK_VALOFFSET_OFFSET);
 }
-static inline LVSize16_t lv_get_row_value_len(const uint8_t *row) {
+static inline LVSize16_t row_get_value_len(const uint8_t *row) {
     assert(row);
-    return *(LVSize16_t *)(row + LV_ROW_DISK_VALLEN_OFFSET);
+    return lv_get_fixed_16(row + LV_ROW_DISK_VALLEN_OFFSET);
 }
-static inline int lv_row_is_alive(const uint8_t *row) {
+static inline int row_is_alive(const uint8_t *row) {
     assert(row);
     return *(row + LV_ROW_DISK_TOBSTONEFLAG_OFFSET) == 0;
 }
 
-static inline uint32_t lv_get_row_checksum(const uint8_t *row) {
+static inline uint32_t row_get_checksum(const uint8_t *row) {
     assert(row);
-    return *(uint32_t *)(row + LV_ROW_DISK_CEHCKSUM_OFFSET);
+    return lv_get_fixed_32(row + LV_ROW_DISK_CEHCKSUM_OFFSET);
 }
 
-/*
-    Convert a row buffer to a LVRowDisk.
-    -Every byte is set to little-endian
-*/
-LVRowDisk lv_row_m2d(const uint8_t* row);
-
-/*
-    Convert a LVRowDisk to a LV_ROW_DISK_BYTES buffer
-    -does not check checksum, only move data to the buffer.
-*/
-LVStatus lv_row_d2m(const int fd,const LVOffset_t offset, uint8_t* row_out);
+typedef struct LVRow{
+    LVSeq_t seq;
+    uint64_t date;
+    LVOffset_t value_offset;
+    LVSize16_t value_len;
+    uint8_t tombstone_flag;
+    uint32_t checksum;
+} LVRow;
+void row_write_on_memory(uint8_t* buf, const LVRow* data);
 
 
 typedef struct LVRowCalcChecksumCtx {
@@ -77,7 +81,7 @@ typedef struct LVRowCalcChecksumCtx {
     LVDim_t vector_dim;
 } LVRowCalcChecksumCtx;
 
-uint32_t lv_calc_row_checksum(const LVRowCalcChecksumCtx* ctx);
+uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx);
 
 typedef struct LVRowCCFDCtx {
     int row_fd;
@@ -85,9 +89,10 @@ typedef struct LVRowCCFDCtx {
     int val_fd;
     LVOffset_t row_offset;
     LVOffset_t vec_offset;
-    LVDim_t vector_dim;
+    LVSize32_t vector_bytes;
 } LVRowCCFDCtx;
 
-LVStatus lv_row_checksum_check_from_disk(LVRowCCFDCtx* ctx);
+LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx);
+
 
 #endif
