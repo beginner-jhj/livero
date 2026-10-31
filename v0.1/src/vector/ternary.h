@@ -26,4 +26,6 @@ static inline LVSize32_t ternary_chunks_bytes(const LVDim_t dim){
     return ternary_chunks_count(dim)*LV_TERNARY_CHUNK_BYTES;
 }
 
+void ternary_convert(const void* vector, const LVVectorType type, const LVDim_t dim, LVTernaryChunk* chunks);
+
 #endif
