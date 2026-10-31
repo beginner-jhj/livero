@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+typedef struct Livero Livero;
+
 typedef enum LVStatus {
     LV_OK = -1,
     LV_ERR_INVALID_PARAM = 0,
@@ -12,7 +14,7 @@ typedef enum LVStatus {
     LV_ERR_DISK_FULL = 4,
     LV_ERR_NOT_FOUND = 5,
     LV_ERR_ALLOCATE_MEMORY = 6,
-    LV_ERR_CORRUPT = 7,
+    LV_ERR_DATA_CORRUPT = 7,
     LV_ERR_MEDIA_CRASHED = 8
 } LVStatus;
 
@@ -46,5 +48,15 @@ typedef struct LVOption {
     LVCount_t write_batch_m;
     LVSyncMode sync_mode;
 } LVOption;
+
+typedef struct LVDate{
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t min;
+    uint8_t sec;
+} LVDate;
+
 
 #endif
