@@ -29,6 +29,7 @@ set(LV_SOURCES
     src/livero.c
     src/file/file.c
     src/helper/crc32c.c
+    src/helper/helper.c
     src/vector/ternary.c
     src/struct/row.c
     src/struct/commit.c
