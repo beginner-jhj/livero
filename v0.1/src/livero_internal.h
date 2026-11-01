@@ -9,6 +9,36 @@
 #include "livero_types.h"
 #include "struct/commit.h"
 #include "struct/row.h"
+#include "vector/ternary.h"
+
+struct Livero {
+    LVSeq_t next_seq;
+    LVSeq_t next_commit_seq;
+    LVTernaryChunk* ternary_scratch;
+    LVTernaryChunk* read_vector_batch;
+    LVTernaryChunk* write_vector_batch;
+    uint8_t* read_row_batch;
+    uint8_t* write_row_batch;
+    uint8_t* write_value_batch;
+    int row_fd;
+    int vec_fd;
+    int val_fd;
+    int commit_fd;
+    LVSize32_t row_bytes;
+    LVSize32_t vec_bytes;
+    LVSize32_t val_bytes;
+    LVSize32_t max_disk_bytes;
+    LVCount_t batched_count;
+    LVCount_t read_batch_m;
+    LVCount_t write_batch_m;
+    LVSize16_t batched_value_bytes;
+    LVSize16_t max_value_len;
+    LVDim_t vector_dimension;
+    LVVectorType vector_type;
+    LVSyncMode sync_mode;
+};
+
+static_assert(sizeof(Livero) <= 128, "Livero struct size must be under 128 bytes.");
 
 static void lv_log_error(const char* file, int line, const char* func, const char* fmt, ...) {
     va_list args;
@@ -27,7 +57,6 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 
 #define LV_DEFAULT_SECTOR_BYTES 1024 * 4
 #define LV_MEMORY_ALIGNMENT 64
-#define LV_DIMENSION_MULTIPLE 64
 #define LV_MAX_BATCH_M 64
 
 #define LV_ROW_FILE_NAME "row.lv"
@@ -94,21 +123,37 @@ typedef struct {
     LVOffset_t val_offset;
     uint8_t sync;
 } LVFlushCtx;
-LVStatus lv_flush(Livero* db,const LVFlushCtx* ctx);
+LVStatus lv_flush(Livero* db, const LVFlushCtx* ctx);
+
+LVStatus lv_interpolation_search_from_disk(Livero* db, const LVSeq_t target, LVGetResult* result);
+
+LVStatus lv_binary_search_from_disk(Livero* db, const LVSeq_t target, LVGetResult* result);
+
+typedef enum { LV_BATCH_CENTER, LV_BATCH_LEFT, LV_BATCH_RIGHT } LVBatchAlign;
 
 typedef struct {
-    uint8_t* row_batch_ptr;
-    uint8_t* vector_batch_ptr;
-    uint8_t* value_batch_ptr;
-    const LVRow* row_data;
-    const void* vector;
-    const void* value;
-    const LVSize32_t vector_bytes;
-    const LVSize32_t value_len;
-    const LVOffset_t row_batch_offset;
-    const LVOffset_t vector_batch_offset;
-    const LVOffset_t value_batch_offset;
-} LVBatchCtx;
-void lv_batch(Livero* db,const LVBatchCtx* ctx);
+    int start_idx;
+    int end_idx;
+    LVBatchAlign align;
+} LVBatchReadRange;
+
+int lv_batch(Livero* db, const LVRow* row, const void* ternary_vector, const void* value, const LVSize16_t value_len);
+
+/*
+    Returns a good batch read range.
+    1. [p-m/2, p+m/2] if start >= low and end <= high
+    2. [p, min(p+m-1, high)] if p - m/2 < low
+    3. [max(p-(m-1), low), p] if p + m/2 > high
+*/
+LVBatchReadRange lv_read_batch_range(const int p, const int low, const int high, const int m);
+
+const uint8_t* lv_read_batch_expected_row(const Livero* db, const LVBatchAlign align, const LVCount_t batched_count);
+
+LVStatus lv_read_batch_search(const Livero* db, const LVSeq_t target, const LVBatchAlign align, const LVCount_t count,
+                              LVGetResult* result);
+
+LVStatus lv_write_batch_search(const Livero* db, const LVSeq_t target, LVGetResult* result);
+
+LVStatus lv_fill_get_result(const uint8_t* row, const void* value, const int val_fd, LVGetResult* result);
 
 #endif
