@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <assert.h>
 #include "livero_types.h"
-#include "livero_internal.h"
 
 typedef struct LVTernaryChunk {
     uint64_t mask;
@@ -15,6 +14,9 @@ typedef struct LVTernaryChunk {
 #define LV_TERNARY_CHUNK_BYTES 16
 
 static_assert(sizeof(LVTernaryChunk) == LV_TERNARY_CHUNK_BYTES, "LVTernaryChunk size must be 16bytes.");
+
+#define LV_DIMENSION_MULTIPLE 64
+
 
 
 static inline LVCount_t ternary_chunks_count(const LVDim_t dim) {
