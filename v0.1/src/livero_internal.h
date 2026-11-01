@@ -15,11 +15,11 @@ struct Livero {
     LVSeq_t next_seq;
     LVSeq_t next_commit_seq;
     LVTernaryChunk* ternary_scratch;
-    LVTernaryChunk* read_vector_batch;
-    LVTernaryChunk* write_vector_batch;
-    uint8_t* read_row_batch;
-    uint8_t* write_row_batch;
-    uint8_t* write_value_batch;
+    LVTernaryChunk* vector_read_batch;
+    LVTernaryChunk* vector_write_batch;
+    uint8_t* row_read_batch;
+    uint8_t* row_write_batch;
+    uint8_t* value_write_batch;
     int row_fd;
     int vec_fd;
     int val_fd;
