@@ -8,6 +8,7 @@
 #include "helper/crc32c.h"
 #include "livero_types.h"
 #include "vector/ternary.h"
+#include "livero_internal.h"
 
 void row_write_on_memory(uint8_t* buf, const LVRow* data) {
     assert(buf && data);
