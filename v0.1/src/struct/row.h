@@ -12,27 +12,12 @@
     You should access the row data by using row_get_* functions.
 */
 
-typedef struct LVRowDisk {
-    uint8_t seq[8];
-    uint8_t date[8];
-    uint8_t value_offset[4];
-    uint8_t value_len[2];
-    uint8_t tombstone_flag;
-    /* LVRowDisk checksum covers its own row+vector+value (row->vector->value order).
-    They share the same lifecycle.
-    The tombstone_flag is excluded from checksum because it can vary after checksum calculation.
-    */
-    uint8_t checksum[4];
-} __attribute__((packed)) LVRowDisk;
-
 #define LV_ROW_DISK_BYTES 27
 #define LV_ROW_DISK_DATE_OFFSET 8
 #define LV_ROW_DISK_VALOFFSET_OFFSET 16
 #define LV_ROW_DISK_VALLEN_OFFSET 20
 #define LV_ROW_DISK_TOBSTONEFLAG_OFFSET 22
 #define LV_ROW_DISK_CEHCKSUM_OFFSET 23
-
-static_assert(sizeof(LVRowDisk) == LV_ROW_DISK_BYTES, "LVRowDisk size must be 27 bytes.");
 
 static inline LVSeq_t row_get_seq(const uint8_t *row) {
     assert(row);
