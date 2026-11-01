@@ -49,7 +49,7 @@ typedef struct LVOption {
     LVSyncMode sync_mode;
 } LVOption;
 
-typedef struct LVDate{
+typedef struct LVDate {
     uint16_t year;
     uint8_t month;
     uint8_t day;
@@ -58,5 +58,10 @@ typedef struct LVDate{
     uint8_t sec;
 } LVDate;
 
+typedef struct LVGetResult {
+    LVDate date_out;
+    void* value_out;
+    LVSize16_t value_len_out;
+} LVGetResult;
 
 #endif
