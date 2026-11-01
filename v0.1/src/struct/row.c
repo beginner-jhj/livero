@@ -50,9 +50,6 @@ uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
 LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
     assert(ctx);
     uint8_t row[LV_ROW_DISK_BYTES] = {0};
-    uint8_t BUF64[8];
-    uint8_t BUF32[4];
-    uint8_t BUF16[2];
 
     LVStatus s = lv_read_file(ctx->row_fd, row, LV_ROW_DISK_BYTES, ctx->row_offset);
 
@@ -61,21 +58,10 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
     }
 
     uint32_t checksum = lv_crc32c_begin();
-
-    lv_put_fixed_64(BUF64, row_get_seq(row));
-    checksum = lv_crc32c_update(checksum, BUF64, 8);
-
-    lv_put_fixed_64(BUF64, row_get_date(row));
-    checksum = lv_crc32c_update(checksum, BUF64, 8);
+    checksum = lv_crc32c_update(checksum, row, LV_ROW_DISK_TOBSTONEFLAG_OFFSET);
 
     const LVOffset_t value_offset = row_get_value_offset(row);
-    lv_put_fixed_32(BUF32, value_offset);
-    checksum = lv_crc32c_update(checksum, BUF32, 4);
-
     const LVSize16_t value_len = row_get_value_len(row);
-    lv_put_fixed_16(BUF16, value_len);
-    checksum = lv_crc32c_update(checksum, BUF16, 2);
-
     const LVSize32_t vector_bytes = ctx->vector_bytes;
     const LVSize32_t vec_vla_len = vector_bytes < LV_MAX_VLA_LEN ? vector_bytes : LV_MAX_VLA_LEN;
     uint8_t vector[vec_vla_len];
