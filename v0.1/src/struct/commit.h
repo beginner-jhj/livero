@@ -37,6 +37,8 @@ static_assert(sizeof(LVCommitDisk) == LV_COMMIT_DISK_BYTES, "LVCommitDisk size m
 #define LV_COMMIT_SECTOR_BYTES 1024 * 4
 #endif
 
+#define LV_COMMIT_SEQ_START 1
+
 /*
     Write M zero-initialized slots on commit.lv
 */
