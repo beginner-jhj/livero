@@ -101,7 +101,7 @@ int commit_sanity(const LVCommit* cmt, const int expected_slot_idx, const LVSize
         return 0;
     }
 
-    uint64_t saved = (uint64_t)cmt->total_count * LV_ROW_DISK_BYTES + (uint64_t)cmt->total_count * vector_bytes +
+    uint64_t saved = (uint64_t)cmt->total_count * LV_ROW_BYTES + (uint64_t)cmt->total_count * vector_bytes +
                      cmt->total_value_bytes;
 
     if (saved > (uint64_t)max_disk_bytes) {
