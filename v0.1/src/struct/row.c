@@ -13,11 +13,11 @@
 void row_write_on_memory(uint8_t* buf, const LVRow* data) {
     assert(buf && data);
     lv_put_fixed_64(buf, data->seq);
-    lv_put_fixed_64(buf + LV_ROW_DISK_DATE_OFFSET, data->date);
-    lv_put_fixed_32(buf + LV_ROW_DISK_VALOFFSET_OFFSET, data->value_offset);
-    lv_put_fixed_16(buf + LV_ROW_DISK_VALLEN_OFFSET, data->value_len);
-    memcpy(buf + LV_ROW_DISK_TOBSTONEFLAG_OFFSET, &data->tombstone_flag, sizeof(data->tombstone_flag));
-    lv_put_fixed_32(buf + LV_ROW_DISK_CEHCKSUM_OFFSET, data->checksum);
+    lv_put_fixed_64(buf + LV_ROW_DATE_OFFSET, data->date);
+    lv_put_fixed_32(buf + LV_ROW_VALOFFSET_OFFSET, data->value_offset);
+    lv_put_fixed_16(buf + LV_ROW_VALLEN_OFFSET, data->value_len);
+    memcpy(buf + LV_ROW_TOMBSTONEFLAG_OFFSET, &data->tombstone_flag, sizeof(data->tombstone_flag));
+    lv_put_fixed_32(buf + LV_ROW_CEHCKSUM_OFFSET, data->checksum);
 }
 
 uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
@@ -50,16 +50,16 @@ uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
 
 LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
     assert(ctx);
-    uint8_t row[LV_ROW_DISK_BYTES] = {0};
+    uint8_t row[LV_ROW_BYTES] = {0};
 
-    LVStatus s = lv_read_file(ctx->row_fd, row, LV_ROW_DISK_BYTES, ctx->row_offset);
+    LVStatus s = lv_read_file(ctx->row_fd, row, LV_ROW_BYTES, ctx->row_offset);
 
     if (s != LV_OK) {
         return s;
     }
 
     uint32_t checksum = lv_crc32c_begin();
-    checksum = lv_crc32c_update(checksum, row, LV_ROW_DISK_TOBSTONEFLAG_OFFSET);
+    checksum = lv_crc32c_update(checksum, row, LV_ROW_TOMBSTONEFLAG_OFFSET);
 
     const LVOffset_t value_offset = row_get_value_offset(row);
     const LVSize16_t value_len = row_get_value_len(row);
