@@ -23,8 +23,8 @@ static inline LVSize32_t lv_total_memory_bytes(const LVCount_t read_batch_m, con
     total += vector_bytes;
     total += vector_bytes * read_batch_m;
     total += vector_bytes * write_batch_m;
-    total += LV_ROW_DISK_BYTES * read_batch_m;
-    total += LV_ROW_DISK_BYTES * write_batch_m;
+    total += LV_ROW_BYTES * read_batch_m;
+    total += LV_ROW_BYTES * write_batch_m;
     total += max_value_len * write_batch_m;
     return total;
 }
@@ -122,8 +122,8 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
         goto cleanup;
     }
 
-    LVInitCtx ctx = {.next_seq = 0,
-                     .next_commit_seq = 0,
+    LVInitCtx ctx = {.next_seq = LV_SEQ_START,
+                     .next_commit_seq = LV_COMMIT_SEQ_START,
                      .row_fd = row_fd,
                      .vec_fd = vec_fd,
                      .val_fd = val_fd,
@@ -237,8 +237,17 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
         goto cleanup;
     }
 
-    const LVSeq_t next_commit_seq = commit.commit_seq + 1;                            // starts at 1
-    const LVSeq_t next_seq = commit.reserved_seq == 0 ? 0 : commit.reserved_seq + 1;  // starts at 0
+    const int is_empty_db = commit.commit_seq == LV_COMMIT_SEQ_ZERO;
+    LVSeq_t next_commit_seq;
+    LVSeq_t next_seq;
+
+    if (is_empty_db) {
+        next_commit_seq = LV_COMMIT_SEQ_START;
+        next_seq = LV_SEQ_START;
+    } else {
+        next_commit_seq = commit.commit_seq + 1;
+        next_seq = commit.reserved_seq + 1;
+    }
 
     LVInitCtx init_ctx = {
         .row_fd = row_fd,
@@ -254,7 +263,7 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
         .sync_mode = option->sync_mode,
         .next_commit_seq = next_commit_seq,
         .next_seq = next_seq,
-        .row_bytes = LV_ROW_DISK_BYTES * commit.total_count,
+        .row_bytes = LV_ROW_BYTES * commit.total_count,
         .vec_bytes = ternary_chunks_bytes(config.vector_dimension) * commit.total_count,
         .val_bytes = commit.total_value_bytes,
     };
@@ -301,15 +310,9 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
         return LV_ERR_INVALID_PARAM;
     }
 
-    const LVSeq_t current_commit_seq = db->next_commit_seq;
     const LVSeq_t current_seq = db->next_seq;
-    const LVCount_t current_record_count = db->row_bytes / LV_ROW_DISK_BYTES;
-
     const uint64_t epoch_time = lv_convert_date_to_epoch(date);
-    const LVSize32_t vector_bytes = ternary_chunks_bytes(db->vector_dimension);
-    const LVOffset_t row_disk_offset = current_record_count * LV_ROW_DISK_BYTES;
-    const LVOffset_t vector_disk_offset = current_record_count * vector_bytes;
-    const LVOffset_t value_disk_offset = db->val_bytes + db->batched_value_bytes;
+    const LVOffset_t value_disk_offset = db->val_bytes;
 
     ternary_convert(vector, db->vector_type, db->vector_dimension, db->ternary_scratch);
     LVRowCalcChecksumCtx row_checksum_ctx = {.seq = current_seq,
@@ -318,106 +321,27 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
                                              .value_len = value_len,
                                              .vector_dim = db->vector_dimension,
                                              .value = value,
-                                             .vector = vector};
+                                             .vector = db->ternary_scratch};
     const uint32_t row_checksum = row_calc_checksum(&row_checksum_ctx);
-    LVRow row_data = {.seq = current_seq,
-                      .date = epoch_time,
-                      .value_offset = value_disk_offset,
-                      .value_len = value_len,
-                      .tombstone_flag = 0,
-                      .checksum = row_checksum};
+    LVRow row = {.seq = current_seq,
+                 .date = epoch_time,
+                 .value_offset = value_disk_offset,
+                 .value_len = value_len,
+                 .tombstone_flag = 0,
+                 .checksum = row_checksum};
 
-    int flush = 0;
+    const int pending_result = lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
 
-    LVSeq_t first_seq_to_commit = 0;
-    LVSeq_t reserved_seq_to_commit = 0;
-    LVCount_t total_count_to_commit = 0;
-    LVCount_t batch_count_to_commit = 0;
-    LVSize32_t total_value_bytes_to_commit = 0;
-    LVSize32_t batch_value_bytes_to_commit = 0;
-
-    uint8_t *row_buf_to_flush = NULL;
-    uint8_t *vector_buf_to_flush = NULL;
-    uint8_t *value_buf_to_flush = NULL;
-    LVSize32_t row_bytes_to_flush = 0;
-    LVSize32_t vector_bytes_to_flush = 0;
-    LVSize32_t value_bytes_to_flush = 0;
-
-    if (db->sync_mode == LV_SYNC_EVERY_PUT) {
-        uint8_t row_buffer[LV_ROW_DISK_BYTES] = {0};
-        row_write_on_memory(row_buffer, &row_data);
-
-        flush = 1;
-
-        first_seq_to_commit = current_seq;
-        reserved_seq_to_commit = current_seq + 1;
-        total_count_to_commit = current_record_count + 1;
-        batch_count_to_commit = 1;
-        total_value_bytes_to_commit = db->val_bytes + value_len;
-        batch_value_bytes_to_commit = value_len;
-
-        row_buf_to_flush = row_buffer;
-        vector_buf_to_flush = (uint8_t *)db->ternary_scratch;
-        value_buf_to_flush = value;
-        row_bytes_to_flush = LV_ROW_DISK_BYTES;
-        vector_bytes_to_flush = vector_bytes;
-        value_bytes_to_flush = value_len;
-    } else {
-        if (db->batched_count >= db->write_batch_m) {
-            flush = 1;
-
-            first_seq_to_commit = row_get_seq(db->row_write_batch);
-            reserved_seq_to_commit = current_seq + db->batched_count;
-            total_count_to_commit = current_record_count + db->batched_count;
-            batch_count_to_commit = db->batched_count;
-            total_value_bytes_to_commit = db->val_bytes + db->batched_value_bytes;
-            batch_value_bytes_to_commit = db->batched_value_bytes;
-
-            row_buf_to_flush = db->value_write_batch;
-            vector_buf_to_flush = (uint8_t *)db->vector_write_batch;
-            value_buf_to_flush = db->value_write_batch;
-            row_bytes_to_flush = LV_ROW_DISK_BYTES * db->batched_count;
-            vector_bytes_to_flush = vector_bytes * db->batched_count;
-            value_bytes_to_flush = db->batched_value_bytes;
-        }
-    }
-
-    if (flush) {
-        LVCommit commit = {
-            .commit_seq = current_commit_seq,
-            .first_seq = first_seq_to_commit,
-            .reserved_seq = reserved_seq_to_commit,
-            .total_count = total_count_to_commit,
-            .batch_count = batch_count_to_commit,
-            .total_value_bytes = total_value_bytes_to_commit,
-            .batch_value_bytes = batch_value_bytes_to_commit,
-        };
-        LVFlushCtx flush_ctx = {.rows = row_buf_to_flush,
-                                .vecs = vector_buf_to_flush,
-                                .vals = value_buf_to_flush,
-                                .commit = &commit,
-                                .row_fd = db->row_fd,
-                                .vec_fd = db->vec_fd,
-                                .val_fd = db->val_fd,
-                                .commit_fd = db->commit_fd,
-                                .row_bytes_to_flush = row_bytes_to_flush,
-                                .value_bytes_to_flush = value_bytes_to_flush,
-                                .vector_bytes_to_flush = vector_bytes_to_flush,
-                                .row_offset = row_disk_offset,
-                                .vec_offset = vector_disk_offset,
-                                .val_offset = value_disk_offset,
-                                .sync = db->sync_mode != LV_SYNC_NONE};
-
-        LVStatus s = lv_flush(db, &flush_ctx);
-
+    if (pending_result < 0 || db->sync_mode == LV_SYNC_EVERY_PUT) {
+        LVStatus s = lv_flush(db);
         if (s != LV_OK) {
             LIVERO_ERROR("Failed to flush data.");
             return s;
         }
     }
 
-    if (db->batched_count < db->write_batch_m) {
-        lv_batch(db, &row_data, db->ternary_scratch, value, value_len);
+    if (pending_result < 0) {
+        lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
     }
 
     db->next_seq = current_seq + 1;
@@ -432,7 +356,7 @@ LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
     }
 
     if (!result) {
-        LIVERO_ERROR("You must pass a result buffer.");
+        LIVERO_ERROR("You must pass a LVGetResult buffer.");
         return LV_ERR_INVALID_PARAM;
     }
 
@@ -440,20 +364,200 @@ LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
         return LV_ERR_NOT_FOUND;
     }
 
-    LVStatus s = lv_write_batch_search(db, target_seq, result);
+    LVStatus s = lv_pending_search(db, target_seq, result, NULL);
 
     if (s == LV_OK) {
         return LV_OK;
     }
 
-    s = lv_interpolation_search_from_disk(db, target_seq, result);
+    s = lv_interpolation_search_from_disk(db, target_seq, result, NULL);
 
     if (s == LV_ERR_NOT_FOUND) {
-        return lv_binary_search_from_disk(db, target_seq, result);
+        return lv_binary_search_from_disk(db, target_seq, result, NULL);
     } else {
         return s;
     }
 }
+
+LVStatus lv_delete(Livero *db, const LVSeq_t target_seq) {
+    if (!db) {
+        LIVERO_ERROR("You miss a db.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (target_seq >= db->next_seq) {
+        return LV_ERR_NOT_FOUND;
+    }
+
+    const uint8_t tombstone = 0xff;
+    LVOffset_t row_offset = 0;
+
+    LVStatus s = lv_pending_search(db, target_seq, NULL, &row_offset);
+
+    if (s == LV_OK) {
+        *(db->row_pending + row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET) = tombstone;
+        return LV_OK;
+    }
+
+    else if (s == LV_ERR_NOT_FOUND) {
+        s = lv_binary_search_from_disk(db, target_seq, NULL, &row_offset);
+        if (s == LV_OK) {
+            return lv_write_file(db->row_fd, &tombstone, 1, row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET);
+        }
+        return s;
+    } else {
+        return s;
+    }
+}
+
+LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const LVDate *date1, const LVDate *date2,
+                  LVQueryResult *result, LVSize32_t *result_size) {
+    if (!db) {
+        LIVERO_ERROR("You missed a db.");
+        return LV_ERR_INVALID_PARAM;
+    }
+    if (!query_vector) {
+        LIVERO_ERROR("You must pass a vector to query.");
+        return LV_ERR_INVALID_PARAM;
+    }
+    if (k == 0) {
+        LIVERO_ERROR("The k must be greater than 0.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (k > LV_MAX_K) {
+        LIVERO_ERROR("The k exceeds LV_MAX_K(%d).", LV_MAX_K);
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (!result || !result_size) {
+        LIVERO_ERROR("You must pass both result pointer and result_size pointer.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    const LVCount_t total_record_count = lv_total_record_count(db);
+    const LVTopK_t TOP_K = k <= total_record_count ? k : (LVTopK_t)total_record_count;
+
+    /*
+        Filter rule: min_date <= target <= max_date. Both bounds are optional;
+        a missing bound defaults to the full range so the scan has no branch for it.
+    */
+    uint64_t date1_epoch = 0;
+    uint64_t date2_epoch = UINT64_MAX;
+    if (date1) {
+        date1_epoch = lv_convert_date_to_epoch(date1);
+    }
+    if (date2) {
+        date2_epoch = lv_convert_date_to_epoch(date2);
+    }
+    const uint64_t min_date = date1_epoch < date2_epoch ? date1_epoch : date2_epoch;
+    const uint64_t max_date = date2_epoch > date1_epoch ? date2_epoch : date1_epoch;
+
+    const LVCount_t words = ternary_chunks_count(db->vector_dimension);
+    const LVSize32_t vector_bytes = ternary_chunks_bytes(db->vector_dimension);
+
+    memset(db->ternary_scratch, 0, vector_bytes);
+    ternary_convert(query_vector, db->vector_type, db->vector_dimension, db->ternary_scratch);
+
+    const LVTernaryChunk *q_vector = db->ternary_scratch;
+
+    LVQueryIndex heap[TOP_K];  // min-heap: [0] is the current k-th best (the "threshold")
+    LVSize32_t heap_size = 0;
+    LVQueryHeapCtx h_ctx = {.date_flt1 = min_date, .date_flt2 = max_date, .top_k = TOP_K};
+
+    for (LVCount_t i = 0; i < db->pending_count; i++) {
+        const LVTernaryChunk *candidate = lv_n_pending_ternary(db, i);
+        const int64_t dot_result = ternary_dot(q_vector, candidate, words);
+        if (lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
+            const uint8_t *row = lv_n_pending_row(db, i);
+            h_ctx.row_seq = row_get_seq(row);
+            h_ctx.row_date = row_get_date(row);
+            h_ctx.valuen_len = row_get_value_len(row);
+            h_ctx.dot_result = dot_result;
+            lv_query_heap_update(heap, &heap_size, &h_ctx);
+        }
+    }
+
+    const LVCount_t disk_record_count = lv_disk_record_count(db);
+    const LVCount_t batch_m = db->window_batch_m;
+    for (LVCount_t base = 0; base < disk_record_count; base += batch_m) {
+        const LVCount_t remaining = disk_record_count - base;
+        const LVCount_t n = remaining < batch_m ? remaining : batch_m;
+
+        LVStatus s = lv_read_file(db->vec_fd, db->vector_window, n * vector_bytes, (LVOffset_t)base * vector_bytes);
+
+        if (s != LV_OK) {
+            return s;
+        }
+
+        int fetched = 0;
+        LVOffset_t fetch_idx = 0;
+
+        for (LVCount_t j = 0; j < n; ++j) {
+            const LVTernaryChunk *candidate = lv_n_window_ternary(db, j);
+            const int64_t dot_result = ternary_dot(q_vector, candidate, words);
+            if (lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
+                if (!fetched) {
+                    fetch_idx = j;
+                    const LVCount_t fetch_count = n - fetch_idx;
+                    const LVOffset_t fetch_offset = (LVOffset_t)((base + fetch_count - 1) * LV_ROW_BYTES);
+                    s = lv_read_file(db->row_fd, db->row_window, fetch_count * LV_ROW_BYTES, fetch_offset);
+                    if (s != LV_OK) {
+                        return s;
+                    }
+                    fetched = 1;
+                }
+                const uint8_t *row = lv_n_window_row(db, j - fetch_idx);
+                h_ctx.row_seq = row_get_seq(row);
+                h_ctx.row_date = row_get_date(row);
+                h_ctx.valuen_len = row_get_value_len(row);
+                h_ctx.dot_result = dot_result;
+                lv_query_heap_update(heap, &heap_size, &h_ctx);
+            }
+        }
+    }
+
+    LVSize32_t heap_result_size = (int)heap_size;
+    if (heap_result_size > 0) {
+        LVQueryIndex heap_result[heap_result_size];
+        for (int i = (int)heap_result_size - 1; i >= 0; i--) {
+            lv_query_heap_pop(heap, &heap_result_size, &heap_result[i]);
+        }
+
+        for (LVSize32_t i = 0; i < heap_result_size; i++) {
+            result[i].date = heap_result[i].q_result.date;
+            result[i].seq = heap_result[i].q_result.seq;
+            result[i].value_len = heap_result[i].q_result.value_len;
+        }
+    }
+
+    *result_size = heap_result_size;
+
+    return LV_OK;
+}
+
+LVStatus lv_close(Livero *db) {
+    if (!db) {
+        LIVERO_ERROR("You missed a db.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (db->pending_count > 0) {
+        LVStatus s = lv_flush(db);
+        if (s != LV_OK) {
+            LIVERO_ERROR("Failed to flush data.");
+            return s;
+        }
+    }
+
+    lv_close_file(db->row_fd);
+    lv_close_file(db->vec_fd);
+    lv_close_file(db->val_fd);
+    lv_close_file(db->commit_fd);
+    free(db);
+    return LV_OK;
+}
+
 /*
   Below functions are all internal apis.
 */
@@ -488,6 +592,7 @@ LVStatus lv_allocate_memory(const LVSize32_t size, void **ptr_out) {
 
 void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
     assert(m_arena && ctx);
+    assert((uintptr_t)m_arena % LV_MEMORY_ALIGNMENT == 0);
 
     LVOffset_t offset = 0;
     const LVSize32_t vector_bytes = ternary_chunks_bytes(ctx->vector_dimension);
@@ -498,28 +603,28 @@ void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
     LVTernaryChunk *ternary_scratch = (LVTernaryChunk *)(m_arena + offset);
     offset += vector_bytes;
 
-    LVTernaryChunk *vector_read_batch = (LVTernaryChunk *)(m_arena + offset);
+    LVTernaryChunk *vector_window = (LVTernaryChunk *)(m_arena + offset);
     offset += vector_bytes * ctx->read_batch_m;
 
-    LVTernaryChunk *vector_write_batch = (LVTernaryChunk *)(m_arena + offset);
+    LVTernaryChunk *vector_pending = (LVTernaryChunk *)(m_arena + offset);
     offset += vector_bytes * ctx->write_batch_m;
 
-    uint8_t *row_read_batch = m_arena + offset;
-    offset += LV_ROW_DISK_BYTES * ctx->read_batch_m;
+    uint8_t *row_window = m_arena + offset;
+    offset += LV_ROW_BYTES * ctx->read_batch_m;
 
-    uint8_t *row_write_batch = (m_arena + offset);
-    offset += LV_ROW_DISK_BYTES * ctx->write_batch_m;
+    uint8_t *row_pending = (m_arena + offset);
+    offset += LV_ROW_BYTES * ctx->write_batch_m;
 
-    uint8_t *value_write_batch = m_arena + offset;
+    uint8_t *value_pending = m_arena + offset;
 
     db->next_seq = ctx->next_seq;
     db->next_commit_seq = ctx->next_commit_seq;
     db->ternary_scratch = ternary_scratch;
-    db->vector_read_batch = vector_read_batch;
-    db->vector_write_batch = vector_write_batch;
-    db->row_read_batch = row_read_batch;
-    db->row_write_batch = row_write_batch;
-    db->value_write_batch = value_write_batch;
+    db->vector_window = vector_window;
+    db->vector_pending = vector_pending;
+    db->row_window = row_window;
+    db->row_pending = row_pending;
+    db->value_pending = value_pending;
     db->row_fd = ctx->row_fd;
     db->vec_fd = ctx->vec_fd;
     db->val_fd = ctx->val_fd;
@@ -528,11 +633,11 @@ void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
     db->vec_bytes = ctx->vec_bytes;
     db->val_bytes = ctx->val_bytes;
     db->max_disk_bytes = ctx->max_disk_bytes;
-    db->batched_count = 0;
-    db->read_batch_m = ctx->read_batch_m;
-    db->write_batch_m = ctx->write_batch_m;
+    db->pending_count = 0;
+    db->window_batch_m = ctx->read_batch_m;
+    db->pending_batch_m = ctx->write_batch_m;
     db->max_value_len = ctx->max_value_len;
-    db->batched_value_bytes = 0;
+    db->value_pending_bytes = 0;
     db->vector_dimension = ctx->vector_dimension;
     db->vector_type = ctx->vector_type;
     db->sync_mode = ctx->sync_mode;
@@ -628,7 +733,7 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out) {
                           .vector_bytes = vector_bytes};
 
     for (uint64_t k = (uint64_t)best.total_count - best.batch_count; k < (uint64_t)best.total_count; ++k) {
-        rccfd.row_offset = k * LV_ROW_DISK_BYTES;
+        rccfd.row_offset = k * LV_ROW_BYTES;
         rccfd.vec_offset = k * vector_bytes;
 
         LVStatus s = row_checksum_check_from_disk(&rccfd);
@@ -641,129 +746,163 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out) {
     return LV_OK;
 }
 
-LVStatus lv_flush(Livero *db, const LVFlushCtx *ctx) {
-    assert(db && ctx);
+LVStatus lv_flush(Livero *db) {
+    assert(db);
 
-    LVStatus s = lv_write_file(ctx->vec_fd, ctx->vecs, ctx->vector_bytes_to_flush, ctx->vec_offset);
+    const LVSize32_t teranry_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const LVOffset_t row_offset_to_write = db->row_bytes;
+    const LVOffset_t vec_offset_to_write = db->vec_bytes;
+    const LVOffset_t val_offset_to_write = db->val_bytes;
+    const int sync = db->sync_mode != LV_SYNC_NONE;
+
+    LVSize32_t packed = 0;
+    for (LVCount_t i = 0; i < db->pending_count; ++i) {
+        const LVSize16_t len = row_get_value_len(lv_n_pending_row(db, i));
+        memmove(db->value_pending + packed, lv_n_pending_value(db, i), len);
+        packed += len;
+    }
+
+    LVStatus s = lv_write_file(db->val_fd, db->value_pending, packed, val_offset_to_write);
 
     if (s != LV_OK) {
-        LIVERO_ERROR("Failed to flush vector (%d bytes).", ctx->vector_bytes_to_flush);
         return s;
     }
 
-    if ((s = lv_write_file(ctx->val_fd, ctx->vals, ctx->value_bytes_to_flush, ctx->val_offset)) != LV_OK) {
-        LIVERO_ERROR("Failed to flush value (%d bytes).", ctx->value_bytes_to_flush);
+    if (sync) {
+        if ((s = lv_sync_file(db->val_fd)) != LV_OK) {
+            LIVERO_ERROR("Faield to sync val.lv.");
+            return s;
+        }
+    }
+
+    const LVSize32_t teranry_bytes_to_flush = db->pending_count * teranry_bytes;
+    if ((s = lv_write_file(db->vec_fd, db->vector_pending, teranry_bytes_to_flush, vec_offset_to_write)) != LV_OK) {
         return s;
     }
 
-    if ((s = lv_write_file(ctx->row_fd, ctx->rows, ctx->row_bytes_to_flush, ctx->row_offset)) != LV_OK) {
-        LIVERO_ERROR("Failed to flush row (%d bytes).", ctx->row_bytes_to_flush);
-        return s;
-    }
-
-    if (ctx->sync) {
-        if ((s = lv_sync_file(ctx->vec_fd)) != LV_OK) {
+    if (sync) {
+        if ((s = lv_sync_file(db->vec_fd)) != LV_OK) {
             LIVERO_ERROR("Failed to sync vec.lv.");
             return s;
         }
+    }
 
-        if ((s = lv_sync_file(ctx->val_fd)) != LV_OK) {
-            LIVERO_ERROR("Failed to sync val.lv.");
-            return s;
-        }
+    const LVSize32_t row_bytes_to_flush = db->pending_count * LV_ROW_BYTES;
 
-        if ((s = lv_sync_file(ctx->row_fd)) != LV_OK) {
+    if ((s = lv_write_file(db->row_fd, db->row_pending, row_bytes_to_flush, row_offset_to_write)) != LV_OK) {
+        return s;
+    }
+
+    if (sync) {
+        if ((s = lv_sync_file(db->row_fd)) != LV_OK) {
             LIVERO_ERROR("Failed to sync row.lv.");
             return s;
         }
     }
 
-    if ((s = commit_write(ctx->commit_fd, ctx->commit)) != LV_OK) {
-        LIVERO_ERROR("Faield to write a commit on commit.lv");
+    const LVCommit cmt = {.commit_seq = db->next_commit_seq,
+                          .first_seq = row_get_seq(lv_first_pending_row(db)),
+                          .reserved_seq = row_get_seq(lv_last_pending_row(db)),
+                          .total_count = lv_total_record_count(db),
+                          .batch_count = db->pending_count,
+                          .total_value_bytes = db->row_bytes + db->value_pending_bytes,
+                          .batch_value_bytes = db->value_pending_bytes};
+
+    if ((s = commit_write(db->commit_fd, &cmt)) != LV_OK) {
         return s;
     }
 
-    if (ctx->sync) {
-        if ((s = lv_sync_file(ctx->commit_fd)) != LV_OK) {
+    if (sync) {
+        if ((s = lv_sync_file(db->commit_fd)) != LV_OK) {
             LIVERO_ERROR("Failed to sync commit.lv.");
             return s;
         }
     }
 
-    db->next_commit_seq = ctx->commit->commit_seq + 1;
-    db->row_bytes += ctx->row_bytes_to_flush;
-    db->vec_bytes += ctx->vector_bytes_to_flush;
-    db->val_bytes += ctx->value_bytes_to_flush;
+    db->row_bytes += row_bytes_to_flush;
+    db->vec_bytes += teranry_bytes_to_flush;
+    db->val_bytes += db->value_pending_bytes;
 
-    db->batched_count = 0;
-    db->batched_value_bytes = 0;
+    db->pending_count = 0;
+    db->value_pending_bytes = 0;
 
     return LV_OK;
 }
 
-int lv_batch(Livero *db, const LVRow *row, const void *ternary_vector, const void *value, const LVSize16_t value_len) {
+int lv_pending_append(Livero *db, const LVRow *row, const void *ternary_vector, const void *value,
+                      const LVSize16_t value_len) {
     assert(db && row && ternary_vector && value);
 
-    if (db->batched_count >= db->write_batch_m) {
+    if (db->pending_count >= db->pending_batch_m) {
         return -1;
     }
 
     const LVSize32_t vector_bytes = ternary_chunks_bytes(db->vector_dimension);
-    const LVOffset_t row_batch_offset = db->batched_count * LV_ROW_DISK_BYTES;
-    const LVOffset_t vector_batch_offset = db->batched_count * vector_bytes;
-    const LVOffset_t value_batch_offset = db->batched_count * db->max_value_len;
+    const LVOffset_t row_batch_offset = db->pending_count * LV_ROW_BYTES;
+    const LVOffset_t vector_batch_offset = db->pending_count * vector_bytes;
+    const LVOffset_t value_batch_offset = db->pending_count * db->max_value_len;
 
-    row_write_on_memory(db->row_write_batch + row_batch_offset, row);
-    memcpy((uint8_t *)db->vector_write_batch + vector_batch_offset, ternary_vector, vector_bytes);
-    memcpy(db->value_write_batch + value_batch_offset, value, value_len);
+    row_write_on_memory(db->row_pending + row_batch_offset, row);
+    memcpy((uint8_t *)db->vector_pending + vector_batch_offset, ternary_vector, vector_bytes);
+    memcpy(db->value_pending + value_batch_offset, value, value_len);
 
-    db->batched_count += 1;
-    db->batched_value_bytes += value_len;
+    db->pending_count += 1;
+    db->value_pending_bytes += value_len;
 
     return 0;
 }
 
-LVStatus lv_write_batch_search(const Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
-    assert(db && result);
+LVStatus lv_pending_search(const Livero *db, const LVSeq_t target_seq, LVGetResult *result,
+                           LVOffset_t *row_offset_out) {
+    assert(db);
 
-    if (db->batched_count == 0) {
+    if (db->pending_count == 0) {
         return LV_ERR_NOT_FOUND;
     }
-    const LVSeq_t first_batched_seq = row_get_seq(db->row_write_batch);
+    const LVSeq_t first_pending_seq = row_get_seq(db->row_pending);
 
-    if (target_seq < first_batched_seq || target_seq >= first_batched_seq + db->batched_count) {
+    if (target_seq < first_pending_seq || target_seq >= first_pending_seq + db->pending_count) {
         return LV_ERR_NOT_FOUND;
     }
 
-    const LVOffset_t row_offset = (target_seq - first_batched_seq) * LV_ROW_DISK_BYTES;
-    const LVOffset_t value_offset = (target_seq - first_batched_seq) * db->max_value_len;
+    const LVOffset_t row_offset = (target_seq - first_pending_seq) * LV_ROW_BYTES;
+    const LVOffset_t value_offset = (target_seq - first_pending_seq) * db->max_value_len;
 
-    const uint8_t *row = db->row_write_batch + row_offset;
-    const uint8_t *value = db->value_write_batch + value_offset;
+    const uint8_t *row = db->row_pending + row_offset;
+    const uint8_t *value = db->value_pending + value_offset;
 
-    return lv_fill_get_result(row, value, -1, result);
+    if (result) {
+        lv_fill_get_result(row, value, -1, result);
+    }
+
+    if (row_offset_out) {
+        *row_offset_out = row_offset;
+    }
+
+    return LV_OK;
 }
 
-LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
-    assert(db && result);
+LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetResult *result,
+                                           LVOffset_t *row_offset_out) {
+    assert(db);
 
-    uint8_t low[LV_ROW_DISK_BYTES] = {0};
-    uint8_t high[LV_ROW_DISK_BYTES] = {0};
+    uint8_t low[LV_ROW_BYTES] = {0};
+    uint8_t high[LV_ROW_BYTES] = {0};
 
-    const LVCount_t total_record_count = db->row_bytes / LV_ROW_DISK_BYTES;
-    if (total_record_count == 0) {
+    const LVCount_t disk_record_count = lv_disk_record_count(db);
+    if (disk_record_count == 0) {
         return LV_ERR_NOT_FOUND;
     }
 
     const int low_idx = 0;
-    const int high_idx = (int)(total_record_count - 1);
+    const int high_idx = (int)(disk_record_count - 1);
 
-    LVStatus s = lv_read_file(db->row_fd, low, LV_ROW_DISK_BYTES, (LVOffset_t)low_idx * LV_ROW_DISK_BYTES);
+    LVStatus s = lv_read_file(db->row_fd, low, LV_ROW_BYTES, (LVOffset_t)low_idx * LV_ROW_BYTES);
     if (s != LV_OK) {
         return s;
     }
 
-    s = lv_read_file(db->row_fd, high, LV_ROW_DISK_BYTES, (LVOffset_t)high_idx * LV_ROW_DISK_BYTES);
+    s = lv_read_file(db->row_fd, high, LV_ROW_BYTES, (LVOffset_t)high_idx * LV_ROW_BYTES);
     if (s != LV_OK) {
         return s;
     }
@@ -772,7 +911,7 @@ LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq,
     const LVSeq_t high_seq = row_get_seq(high);
 
     if (low_seq == high_seq) {
-        if (target_seq == low_seq) {
+        if (result && target_seq == low_seq) {
             if ((s = lv_fill_get_result(low, NULL, db->val_fd, result)) != LV_OK) {
                 return s;
             }
@@ -786,64 +925,80 @@ LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq,
 
     const int p_idx = low_idx + (int)(((target_seq - low_seq) * (high_idx - low_idx)) / (high_seq - low_seq));
 
-    LVBatchReadRange read_range = lv_read_batch_range(p_idx, low_idx, high_idx, (int)db->read_batch_m);
+    LVWindowRange r = lv_window_range(p_idx, low_idx, high_idx, (int)db->window_batch_m);
 
-    int start_idx = read_range.start_idx;
-    int end_idx = read_range.end_idx;
+    int start_idx = r.start_idx;
+    int end_idx = r.end_idx;
 
-    LVOffset_t read_offset = (LVOffset_t)start_idx * LV_ROW_DISK_BYTES;
+    LVOffset_t read_offset = (LVOffset_t)start_idx * LV_ROW_BYTES;
     LVCount_t read_count = (LVCount_t)(end_idx - start_idx + 1);
 
-    if ((s = lv_read_file(db->row_fd, db->row_read_batch, read_count * LV_ROW_DISK_BYTES, read_offset)) != LV_OK) {
+    if ((s = lv_read_file(db->row_fd, db->row_window, read_count * LV_ROW_BYTES, read_offset)) != LV_OK) {
         return s;
     }
 
-    return lv_read_batch_search(db, target_seq, read_range.align, read_count, result);
+    const LVOffset_t expected_offset = lv_window_target_offset(db, r.align, read_count, LV_ROW_BYTES);
+    LVOffset_t row_offset = expected_offset;
+    s = lv_window_search(db, target_seq, read_count, expected_offset, result, &row_offset);
+
+    if (s == LV_OK) {
+        if (row_offset_out) {
+            *row_offset_out = read_offset + row_offset;
+        }
+    }
+
+    return s;
 }
 
-LVStatus lv_binary_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
-    assert(db && result);
+LVStatus lv_binary_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetResult *result,
+                                    LVOffset_t *row_offset_out) {
+    assert(db);
 
-    const LVCount_t total_record_count = db->row_bytes / LV_ROW_DISK_BYTES;
+    const LVCount_t disk_record_count = lv_disk_record_count(db);
 
-    if (total_record_count == 0) {
+    if (disk_record_count == 0) {
         return LV_ERR_NOT_FOUND;
     }
 
     int low = 0;
-    int high = (int)(total_record_count - 1);
+    int high = (int)(disk_record_count - 1);
     int mid = low + (high - low) / 2;
 
     while (low <= high) {
-        LVBatchReadRange r = lv_read_batch_range(mid, low, high, (int)db->read_batch_m);
+        LVWindowRange r = lv_window_range(mid, low, high, (int)db->window_batch_m);
 
-        LVOffset_t read_offset = (LVOffset_t)r.start_idx * LV_ROW_DISK_BYTES;
+        LVOffset_t read_offset = (LVOffset_t)r.start_idx * LV_ROW_BYTES;
         LVCount_t read_count = (LVCount_t)(r.end_idx - r.start_idx + 1);
 
-        LVStatus s = lv_read_file(db->row_fd, db->row_read_batch, read_count * LV_ROW_DISK_BYTES, read_offset);
+        LVStatus s = lv_read_file(db->row_fd, db->row_window, read_count * LV_ROW_BYTES, read_offset);
 
         if (s != LV_OK) {
             return s;
         }
 
-        const uint8_t *expected_row = lv_read_batch_expected_row(db, r.align, read_count);
+        const LVOffset_t expected_offset = lv_window_target_offset(db, r.align, read_count, LV_ROW_BYTES);
+        const uint8_t *expected_row = db->row_window + expected_offset;
         const LVSeq_t expected_seq = row_get_seq(expected_row);
+        LVOffset_t row_offset = expected_offset;
 
-        s = lv_read_batch_search(db, target_seq, r.align, read_count, result);
+        s = lv_window_search(db, target_seq, read_count, expected_offset, result, &row_offset);
 
-        if (s != LV_ERR_NOT_FOUND) {
-            /*
-                The answer is found or An error occurred.
-            */
-            return s;
+        if (s == LV_OK) {
+            if (row_offset_out) {
+                *row_offset_out = read_offset + row_offset;
+            }
+
+            return LV_OK;
         }
 
-        else {
+        else if (s == LV_ERR_NOT_FOUND) {
             if (expected_seq < target_seq) {
                 high = mid - 1;
             } else {
                 low = mid + 1;
             }
+        } else {
+            return s;
         }
 
         mid = low + (high - low) / 2;
@@ -851,13 +1006,15 @@ LVStatus lv_binary_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetR
     return LV_ERR_NOT_FOUND;
 }
 
-LVBatchReadRange lv_read_batch_range(const int p, const int low, const int high, const int m) {
+LVWindowRange lv_window_range(const int p, const int low, const int high, const int m) {
+    assert(low <= high);
+    assert(p >= low && p <= high);
     const int read_m = m;
     const int half_m = read_m / 2;
 
     int start_idx = 0;
     int end_idx = 0;
-    LVBatchAlign align = LV_BATCH_CENTER;
+    LVWindowAlign align = LV_BATCH_CENTER;
 
     //[pos - m/2, pos + m/2]
     if (p - half_m >= low && p + (read_m - half_m - 1) <= high) {
@@ -879,42 +1036,64 @@ LVBatchReadRange lv_read_batch_range(const int p, const int low, const int high,
         align = LV_BATCH_RIGHT;
     }
 
-    return (LVBatchReadRange){.start_idx = start_idx, .end_idx = end_idx, .align = align};
+    return (LVWindowRange){.start_idx = start_idx, .end_idx = end_idx, .align = align};
 }
 
-const uint8_t *lv_read_batch_expected_row(const Livero *db, const LVBatchAlign align, const LVCount_t batched_count) {
-    LVOffset_t offset = 0;
+LVOffset_t lv_window_target_offset(const Livero *db, const LVWindowAlign align, const LVCount_t count,
+                                   const LVSize32_t item_size) {
+    assert(db);
+    LVOffset_t idx = 0;
     switch (align) {
         case LV_BATCH_CENTER: {
-            offset = batched_count / 2;
+            idx = count / 2;
             break;
         }
 
         case LV_BATCH_LEFT: {
-            offset = 0;
+            idx = 0;
             break;
         }
         case LV_BATCH_RIGHT: {
-            offset = batched_count - 1;
+            idx = count - 1;
             break;
         }
     }
-    return db->row_read_batch + offset * LV_ROW_DISK_BYTES;
+    return idx * item_size;
 }
 
-LVStatus lv_read_batch_search(const Livero *db, const LVSeq_t target, const LVBatchAlign align, const LVCount_t count,
-                              LVGetResult *result) {
-    assert(db && result && count > 0);
+LVStatus lv_window_search(const Livero *db, const LVSeq_t target_seq, const LVCount_t count,
+                          const LVOffset_t target_offset, LVGetResult *result, LVOffset_t *row_offset_out) {
+    assert(db);
 
-    const uint8_t *expected_row = lv_read_batch_expected_row(db, align, count);
+    const uint8_t *expected_row = db->row_window + target_offset;
     const LVSeq_t expected_seq = row_get_seq(expected_row);
-    if (expected_seq == target) {
-        return lv_fill_get_result(expected_row, NULL, db->val_fd, result);
+    if (expected_seq == target_seq) {
+        if (result) {
+            LVStatus s = lv_fill_get_result(expected_row, NULL, db->val_fd, result);
+            if (s != LV_OK) {
+                return s;
+            }
+        }
+
+        if (row_offset_out) {
+            *row_offset_out = target_offset;
+        }
+        return LV_OK;
     } else {
         for (LVCount_t i = 0; i < count; ++i) {
-            const uint8_t *row = db->row_read_batch + i * LV_ROW_DISK_BYTES;
-            if (row_get_seq(row) == target) {
-                return lv_fill_get_result(row, NULL, db->val_fd, result);
+            const uint8_t *row = db->row_window + i * LV_ROW_BYTES;
+            if (row_get_seq(row) == target_seq) {
+                if (result) {
+                    LVStatus s = lv_fill_get_result(row, NULL, db->val_fd, result);
+                    if (s != LV_OK) {
+                        return s;
+                    }
+                }
+
+                if (row_offset_out) {
+                    *row_offset_out = i * LV_ROW_BYTES;
+                }
+                return LV_OK;
             }
         }
         return LV_ERR_NOT_FOUND;
@@ -926,17 +1105,89 @@ LVStatus lv_fill_get_result(const uint8_t *row, const void *value, const int val
     assert(!value && val_fd != -1);
     const LVOffset_t value_offset = row_get_value_offset(row);
     const LVSize16_t value_len = row_get_value_len(row);
-    if (result->value_out) {
+    if (result->value) {
         if (value) {
-            memcpy(result->value_out, value, value_len);
+            memcpy(result->value, value, value_len);
         } else {
-            LVStatus s = lv_read_file(val_fd, result->value_out, value_len, value_offset);
+            LVStatus s = lv_read_file(val_fd, result->value, value_len, value_offset);
             if (s != LV_OK) {
                 return s;
             }
         }
     }
-    lv_convert_epoch_to_date(row_get_date(row), &result->date_out);
-    result->value_len_out = value_len;
+    lv_convert_epoch_to_date(row_get_date(row), &result->date);
+    result->value_len = value_len;
     return LV_OK;
+}
+
+void lv_query_heap_insert(LVQueryIndex *heap, const LVQueryIndex index, LVSize32_t *heap_size) {
+    assert(*heap_size < LV_MAX_K);
+    heap[*heap_size] = index;
+    int i = *heap_size;
+    (*heap_size)++;
+
+    while (i > 0 && heap[(i - 1) / 2].dot_result > heap[i].dot_result) {
+        LVQueryIndex parent = heap[(i - 1) / 2];
+        heap[(i - 1) / 2] = heap[i];
+        heap[i] = parent;
+        i = (i - 1) / 2;
+    }
+}
+
+void lv_query_heap_pop(LVQueryIndex *heap, LVSize32_t *heap_size, LVQueryIndex *pop_out) {
+    assert(*heap_size > 0);
+    if (pop_out) {
+        *pop_out = heap[0];
+    }
+    (*heap_size)--;
+    heap[0] = heap[*heap_size];
+
+    uint32_t i = 0;
+    while (1) {
+        uint32_t smallest = i;
+        uint32_t left = 2 * i + 1;
+        uint32_t right = 2 * i + 2;
+        if (left < *heap_size && heap[left].dot_result < heap[smallest].dot_result) {
+            smallest = left;
+        }
+
+        if (right < *heap_size && heap[right].dot_result < heap[smallest].dot_result) {
+            smallest = right;
+        }
+
+        if (smallest != i) {
+            LVQueryIndex tmp = heap[i];
+            heap[i] = heap[smallest];
+            heap[smallest] = tmp;
+            i = smallest;
+        } else {
+            break;
+        }
+    }
+}
+
+int lv_query_heap_admit(const LVQueryIndex *heap, const LVSize32_t size, const LVTopK_t threshold,
+                        const int64_t dot_result) {
+    assert(heap);
+    return size < threshold || dot_result > heap[0].dot_result;
+}
+
+void lv_query_heap_update(LVQueryIndex *heap, LVSize32_t *size, const LVQueryHeapCtx *ctx) {
+    assert(heap && size && ctx);
+    const int full = *size >= ctx->top_k;
+    int passes_filter = 0;
+    if (ctx->date_flt1 <= ctx->row_date && ctx->row_date <= ctx->date_flt2) {
+        passes_filter = 1;
+    }
+
+    if (passes_filter) {
+        LVDate d;
+        lv_convert_epoch_to_date(ctx->row_date, &d);
+        const LVQueryResult q_result = {.date = d, .seq = ctx->row_seq, .value_len = ctx->valuen_len};
+        const LVQueryIndex index = {.dot_result = ctx->dot_result, .q_result = q_result};
+        if (full) {
+            lv_query_heap_pop(heap, size, NULL);
+        }
+        lv_query_heap_insert(heap, index, size);
+    }
 }
