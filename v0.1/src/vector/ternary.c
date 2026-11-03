@@ -5,6 +5,7 @@
 #include <math.h>
 #include <memory.h>
 #include <stdlib.h>
+#include "livero_types.h"
 
 static void ternary_make(LVTernaryChunk* chunks, const int ternary, const LVDim_t i) {
     const LVDim_t chunk = i / LV_TERNARY_CHUNK_CAPACITY;
@@ -74,3 +75,35 @@ void ternary_convert(const void* vector, const LVVectorType type, const LVDim_t 
             break;
     }
 }
+
+int64_t ternary_dot(const LVTernaryChunk* a, const LVTernaryChunk* b, const LVCount_t words) {
+    /*
+        Ternary Dot Product's result is (a number of +1s) - (a number of -1s).
+
+        Let's say M is a number of nozeros and S is a number of sign differs.
+
+        A number of +1s is M - S.
+
+        So the formula is (M - S) - S = M - 2S.
+    */
+    int64_t both_nonzero = 0;
+    int64_t sign_differs = 0;
+
+    for (LVSize32_t i = 0; i < words; ++i) {
+        /*
+            Find both non-zero positions which actually join in the calculation.
+        */
+        int64_t m = a[i].mask & b[i].mask;
+
+        /*
+            Find diffrent sign positions where a_i * b_i is -1, and remove signs of zeros by & operation with m.
+        */
+        int64_t s = (a[i].sign ^ b[i].sign) & m;
+
+        both_nonzero += __builtin_popcountll(m);
+        sign_differs += __builtin_popcountll(s);
+    }
+
+    return both_nonzero - 2 * sign_differs;
+}
+

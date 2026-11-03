@@ -30,4 +30,7 @@ static inline LVSize32_t ternary_chunks_bytes(const LVDim_t dim){
 
 void ternary_convert(const void* vector, const LVVectorType type, const LVDim_t dim, LVTernaryChunk* chunks);
 
+int64_t ternary_dot(const LVTernaryChunk* a, const LVTernaryChunk* b, const LVCount_t words);
+
+
 #endif
