@@ -12,12 +12,12 @@
     You should access the row data by using row_get_* functions.
 */
 
-#define LV_ROW_DISK_BYTES 27
-#define LV_ROW_DISK_DATE_OFFSET 8
-#define LV_ROW_DISK_VALOFFSET_OFFSET 16
-#define LV_ROW_DISK_VALLEN_OFFSET 20
-#define LV_ROW_DISK_TOBSTONEFLAG_OFFSET 22
-#define LV_ROW_DISK_CEHCKSUM_OFFSET 23
+#define LV_ROW_BYTES 27
+#define LV_ROW_DATE_OFFSET 8
+#define LV_ROW_VALOFFSET_OFFSET 16
+#define LV_ROW_VALLEN_OFFSET 20
+#define LV_ROW_TOMBSTONEFLAG_OFFSET 22
+#define LV_ROW_CEHCKSUM_OFFSET 23
 
 static inline LVSeq_t row_get_seq(const uint8_t *row) {
     assert(row);
@@ -25,24 +25,24 @@ static inline LVSeq_t row_get_seq(const uint8_t *row) {
 }
 static inline uint64_t row_get_date(const uint8_t *row) {
     assert(row);
-    return lv_get_fixed_64(row + LV_ROW_DISK_DATE_OFFSET);
+    return lv_get_fixed_64(row + LV_ROW_DATE_OFFSET);
 }
 static inline LVOffset_t row_get_value_offset(const uint8_t *row) {
     assert(row);
-    return lv_get_fixed_32(row + LV_ROW_DISK_VALOFFSET_OFFSET);
+    return lv_get_fixed_32(row + LV_ROW_VALOFFSET_OFFSET);
 }
 static inline LVSize16_t row_get_value_len(const uint8_t *row) {
     assert(row);
-    return lv_get_fixed_16(row + LV_ROW_DISK_VALLEN_OFFSET);
+    return lv_get_fixed_16(row + LV_ROW_VALLEN_OFFSET);
 }
 static inline int row_is_alive(const uint8_t *row) {
     assert(row);
-    return *(row + LV_ROW_DISK_TOBSTONEFLAG_OFFSET) == 0;
+    return *(row + LV_ROW_TOMBSTONEFLAG_OFFSET) == 0;
 }
 
 static inline uint32_t row_get_checksum(const uint8_t *row) {
     assert(row);
-    return lv_get_fixed_32(row + LV_ROW_DISK_CEHCKSUM_OFFSET);
+    return lv_get_fixed_32(row + LV_ROW_CEHCKSUM_OFFSET);
 }
 
 typedef struct LVRow{
