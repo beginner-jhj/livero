@@ -316,12 +316,12 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
 
     ternary_convert(vector, db->vector_type, db->vector_dimension, db->ternary_scratch);
     LVRowCalcChecksumCtx row_checksum_ctx = {.seq = current_seq,
-                                             .date = epoch_time,
+                                             .epoch_date = epoch_time,
                                              .value_offset = value_disk_offset,
                                              .value_len = value_len,
                                              .vector_dim = db->vector_dimension,
                                              .value = value,
-                                             .vector = db->ternary_scratch};
+                                             .ternary = db->ternary_scratch};
     const uint32_t row_checksum = row_calc_checksum(&row_checksum_ctx);
     LVRow row = {.seq = current_seq,
                  .date = epoch_time,
@@ -389,7 +389,7 @@ LVStatus lv_delete(Livero *db, const LVSeq_t target_seq) {
         return LV_ERR_NOT_FOUND;
     }
 
-    const uint8_t tombstone = 0xff;
+    const uint8_t tombstone = LV_TOMBSTONE_FLAG;
     LVOffset_t row_offset = 0;
 
     LVStatus s = lv_pending_search(db, target_seq, NULL, &row_offset);
@@ -558,28 +558,33 @@ LVStatus lv_close(Livero *db) {
     return LV_OK;
 }
 
+void lv_stat(const Livero *db, LVDBStat *stat) {
+    if (db && stat) {
+        stat->config.max_disk_bytes = db->max_disk_bytes;
+        stat->config.max_value_len = db->max_value_len;
+        stat->config.vector_dimension = db->vector_dimension;
+        stat->config.vector_type = db->vector_type;
+        stat->option.write_batch_m = db->pending_batch_m;
+        stat->option.read_batch_m = db->window_batch_m;
+        stat->option.sync_mode = db->sync_mode;
+        stat->row_file_bytes = db->row_bytes;
+        stat->vec_file_bytes = db->vec_bytes;
+        stat->val_file_bytes = db->val_bytes;
+        stat->row_pending_bytes = lv_pending_row_bytse(db);
+        stat->vec_pending_bytes = lv_pending_vec_bytes(db);
+        stat->val_pending_bytes = lv_pending_val_bytes(db);
+    }
+}
+
 /*
   Below functions are all internal apis.
 */
 
-int lv_check_option(const LVOption *option) {
-    assert(option);
-    if (option->read_batch_m == 0 || option->write_batch_m == 0) {
-        LIVERO_ERROR("Both read_batch_m and write_batch_m must be greater than 0.");
-        return 0;
-    }
-
-    if (option->read_batch_m > LV_MAX_BATCH_M || option->write_batch_m > LV_MAX_BATCH_M) {
-        LIVERO_ERROR("Both read_batch_mand write_batch_m must be smaller than %d .", LV_MAX_BATCH_M);
-        return 0;
-    }
-    return 1;
-}
-
 LVStatus lv_allocate_memory(const LVSize32_t size, void **ptr_out) {
     assert(ptr_out);
 
-    void *m = aligned_alloc(LV_MEMORY_ALIGNMENT, size);
+    const LVSize16_t rounded = (size + LV_MEMORY_ALIGNMENT - 1) & ~(LV_MEMORY_ALIGNMENT - 1);
+    void *m = aligned_alloc(LV_MEMORY_ALIGNMENT, rounded);
 
     if (!m) {
         return LV_ERR_ALLOCATE_MEMORY;
