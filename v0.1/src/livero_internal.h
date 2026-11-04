@@ -57,7 +57,7 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 #endif
 
 #define LV_MEMORY_ALIGNMENT 64
-#define LV_MAX_BATCH_M 64
+#define LV_MAX_BATCH_M 512
 
 #define LV_ROW_FILE_NAME "row.lv"
 #define LV_VEC_FILE_NAME "vec.lv"
@@ -70,6 +70,7 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 #define LV_MAX_PATH_LEN 512
 #define LV_MAX_VLA_LEN 512
 #define LV_MAX_K 32
+#define LV_TOMBSTONE_FLAG 0xff
 
 static_assert(LV_MAX_K * LV_TERNARY_CHUNK_BYTES <= LV_MAX_VLA_LEN, "top_k vla results can exceed LV_MAX_VLA_LEN.");
 
@@ -111,13 +112,13 @@ static inline const uint8_t* lv_n_window_row(const Livero* db, const LVOffset_t 
 
 static inline const LVTernaryChunk* lv_n_pending_ternary(const Livero* db, const LVOffset_t idx) {
     assert(db);
-    const LVCount_t words = ternary_chunks_bytes(db->vector_dimension);
+    const LVCount_t words = ternary_chunks_count(db->vector_dimension);
     return db->pending_count == 0 ? NULL : &db->vector_pending[idx * words];
 }
 
 static inline const LVTernaryChunk* lv_n_window_ternary(const Livero* db, const LVOffset_t idx) {
     assert(db);
-    const LVCount_t words = ternary_chunks_bytes(db->vector_dimension);
+    const LVCount_t words = ternary_chunks_count(db->vector_dimension);
     return db->window_batch_m == 0 ? NULL : &db->vector_window[idx * words];
 }
 
@@ -126,7 +127,21 @@ static inline const uint8_t* lv_n_pending_value(const Livero* db, const LVOffset
     return db->value_pending_bytes == 0 ? NULL : db->value_pending + idx * db->max_value_len;
 }
 
-int lv_check_option(const LVOption* option);
+static inline LVSize32_t lv_pending_row_bytse(const Livero* db){
+    assert(db);
+    return db->value_pending_bytes*LV_ROW_BYTES;
+}
+
+static inline LVSize32_t lv_pending_vec_bytes(const Livero* db){
+    assert(db);
+    return db->value_pending_bytes*ternary_chunks_bytes(db->vector_dimension);
+}
+
+static inline LVSize32_t lv_pending_val_bytes(const Livero* db){
+    assert(db);
+    return db->value_pending_bytes;
+}
+
 LVStatus lv_allocate_memory(const LVSize32_t size, void** ptr_out);
 
 typedef struct LVInitCtx {
