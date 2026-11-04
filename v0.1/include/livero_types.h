@@ -70,4 +70,15 @@ typedef struct {
     LVSize16_t value_len;
 } LVQueryResult;
 
+typedef struct {
+    LVConfig config;
+    LVOption option;
+    LVSize32_t row_file_bytes;
+    LVSize32_t vec_file_bytes;
+    LVSize32_t val_file_bytes;
+    LVSize32_t row_pending_bytes;
+    LVSize32_t vec_pending_bytes;
+    LVSize32_t val_pending_bytes;
+} LVDBStat;
+
 #endif
