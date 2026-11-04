@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <time.h>
 
+#include "livero_internal.h"
 #include "livero_types.h"
 
 uint64_t lv_convert_date_to_epoch(const LVDate* date) {
@@ -98,5 +99,19 @@ int lv_date_is_valid(const LVDate* date) {
         }
     }
 
+    return 1;
+}
+
+int lv_check_option(const LVOption* option) {
+    assert(option);
+    if (option->read_batch_m == 0 || option->write_batch_m == 0) {
+        LIVERO_ERROR("Both read_batch_m and write_batch_m must be greater than 0.");
+        return 0;
+    }
+
+    if (option->read_batch_m > LV_MAX_BATCH_M || option->write_batch_m > LV_MAX_BATCH_M) {
+        LIVERO_ERROR("Both read_batch_mand write_batch_m must be smaller than %d .", LV_MAX_BATCH_M);
+        return 0;
+    }
     return 1;
 }
