@@ -20,7 +20,7 @@ static_assert(sizeof(LVTernaryChunk) == LV_TERNARY_CHUNK_BYTES, "LVTernaryChunk 
 
 
 static inline LVCount_t ternary_chunks_count(const LVDim_t dim) {
-    assert(dim != 0 && dim % LV_DIMENSION_MULTIPLE); 
+    assert(dim != 0 && dim % LV_DIMENSION_MULTIPLE == 0); 
     return dim / LV_TERNARY_CHUNK_CAPACITY;
 }
 
