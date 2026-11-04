@@ -6,6 +6,7 @@
 
 #include "file/file.h"
 #include "livero_types.h"
+#include "vector/ternary.h"
 
 /*
     row follows little endian bytes order on both memory and disk.
@@ -35,9 +36,9 @@ static inline LVSize16_t row_get_value_len(const uint8_t *row) {
     assert(row);
     return lv_get_fixed_16(row + LV_ROW_VALLEN_OFFSET);
 }
-static inline int row_is_alive(const uint8_t *row) {
+static inline int row_get_tombstone_flag(const uint8_t *row) {
     assert(row);
-    return *(row + LV_ROW_TOMBSTONEFLAG_OFFSET) == 0;
+    return *(row + LV_ROW_TOMBSTONEFLAG_OFFSET);
 }
 
 static inline uint32_t row_get_checksum(const uint8_t *row) {
@@ -58,10 +59,10 @@ void row_write_on_memory(uint8_t* buf, const LVRow* data);
 
 typedef struct LVRowCalcChecksumCtx {
     LVSeq_t seq;
-    uint64_t date;
+    uint64_t epoch_date;
     LVOffset_t value_offset;
     LVSize16_t value_len;
-    void* vector;
+    LVTernaryChunk* ternary;
     void* value;
     LVDim_t vector_dim;
 } LVRowCalcChecksumCtx;

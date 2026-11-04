@@ -22,7 +22,7 @@ void row_write_on_memory(uint8_t* buf, const LVRow* data) {
 
 uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
     assert(ctx);
-    assert(ctx->vector && ctx->value);
+    assert(ctx->ternary && ctx->value);
 
     uint8_t BUF64[8];
     uint8_t BUF32[4];
@@ -33,7 +33,7 @@ uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
     lv_put_fixed_64(BUF64, ctx->seq);
     checksum = lv_crc32c_update(checksum, BUF64, 8);
 
-    lv_put_fixed_64(BUF64, ctx->date);
+    lv_put_fixed_64(BUF64, ctx->epoch_date);
     checksum = lv_crc32c_update(checksum, BUF64, 8);
 
     lv_put_fixed_32(BUF32, ctx->value_offset);
@@ -42,7 +42,7 @@ uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
     lv_put_fixed_16(BUF16, ctx->value_len);
     checksum = lv_crc32c_update(checksum, BUF16, 2);
 
-    checksum = lv_crc32c_update(checksum, ctx->vector, ternary_chunks_bytes(ctx->vector_dim));
+    checksum = lv_crc32c_update(checksum, ctx->ternary, ternary_chunks_bytes(ctx->vector_dim));
     checksum = lv_crc32c_update(checksum, ctx->value, ctx->value_len);
 
     return lv_crc32c_end(checksum);
