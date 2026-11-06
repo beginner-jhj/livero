@@ -6,9 +6,9 @@
 
 #include "file/file.h"
 #include "helper/crc32c.h"
+#include "livero_internal.h"
 #include "livero_types.h"
 #include "vector/ternary.h"
-#include "livero_internal.h"
 
 void row_write_on_memory(uint8_t* buf, const LVRow* data) {
     assert(buf && data);
@@ -63,35 +63,16 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
 
     const LVOffset_t value_offset = row_get_value_offset(row);
     const LVSize16_t value_len = row_get_value_len(row);
-    const LVSize32_t vector_bytes = ctx->vector_bytes;
-    const LVSize32_t vec_vla_len = vector_bytes < LV_MAX_VLA_LEN ? vector_bytes : LV_MAX_VLA_LEN;
-    uint8_t vector[vec_vla_len];
-    LVSize32_t vec_total_read = 0;
-    while (vec_total_read < vector_bytes) {
-        LVSize32_t remaining = vector_bytes - vec_total_read;
-        LVSize32_t read_bytes = remaining > vec_vla_len ? vec_vla_len : remaining;
 
-        if ((s = lv_read_file(ctx->vec_fd, vector, read_bytes, ctx->vec_offset + vec_total_read)) != LV_OK) {
-            return s;
-        }
+    uint8_t chunk[LV_MAX_VLA_LEN] = {0};
 
-        vec_total_read += read_bytes;
-        checksum = lv_crc32c_update(checksum, vector, read_bytes);
+    if ((s = lv_crc32c_update_from_file(ctx->vec_fd, ctx->vec_offset, ctx->vector_bytes, chunk, sizeof(chunk),
+                                     &checksum)) != LV_OK) {
+        return s;
     }
 
-    const LVSize32_t val_vla_len = value_len < LV_MAX_VLA_LEN ? value_len : LV_MAX_VLA_LEN;
-    uint8_t value[val_vla_len];
-    LVSize32_t val_total_read = 0;
-    while (val_total_read < value_len) {
-        LVSize32_t remaining = value_len - val_total_read;
-        LVSize32_t read_bytes = remaining > val_vla_len ? val_vla_len : remaining;
-
-        if ((s = lv_read_file(ctx->val_fd, value, read_bytes, value_offset + val_total_read)) != LV_OK) {
-            return s;
-        }
-
-        val_total_read += read_bytes;
-        checksum = lv_crc32c_update(checksum, value, read_bytes);
+    if ((s = lv_crc32c_update_from_file(ctx->val_fd, value_offset, value_len, chunk, sizeof(chunk), &checksum)) != LV_OK) {
+        return s;
     }
 
     checksum = lv_crc32c_end(checksum);
