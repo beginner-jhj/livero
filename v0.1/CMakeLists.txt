@@ -13,6 +13,7 @@ add_compile_options(
     -Wextra
     -Wpedantic
     -Wno-unused-parameter
+    -Wno-unused-function 
 )
 
 # Build type defaults to Debug
@@ -63,18 +64,13 @@ endif()
 
 enable_testing()
 
-add_library(test_h STATIC tests/tests_helper.c)
-target_compile_definitions(test_h PUBLIC _XOPEN_SOURCE=700)
-target_link_libraries(test_h PUBLIC livero)
-target_include_directories(test_h PRIVATE src)
-
 function(lv_add_test name file)
     add_executable(${name} ${file})
-    target_link_libraries(${name} PRIVATE test_h)
-    target_include_directories(${name} PRIVATE src include)
+    target_link_libraries(${name} PRIVATE livero)
+    target_include_directories(${name} PRIVATE src include tests)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
 lv_add_test(test_create tests/test_create.c)
-lv_add_test(test_put tests/test_put.c)
+lv_add_test(test_pending tests/test_pending.c)
 
