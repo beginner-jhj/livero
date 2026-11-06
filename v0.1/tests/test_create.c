@@ -12,13 +12,14 @@ int test_create_1(void) {
         Create a clean db and check if db is properly initialized.
     */
 
-    if (create_test_dir(TEST_DIR) < 0) {
-        fprintf(stderr, "Failed to create a test directory. \n");
-        return -1;
-    }
-
     Livero* db = NULL;
     int result = 0;
+
+    if (create_test_dir(TEST_DIR) < 0) {
+        fprintf(stderr, "Failed to create a test directory. \n");
+        result = -1;
+        goto cleanup;
+    }
 
     const LVStatus s = lv_create(TEST_DIR, &TEST_CONFIG, &TEST_OPTION, &db);
 
@@ -67,28 +68,20 @@ int test_create_2(void) {
         goto cleanup;
     }
 
-    LVStatus s = lv_close(db);
-    if (s != LV_OK) {
-        fprintf(stderr, "Failed to close db.");
-        result = -1;
-        goto cleanup;
-    } else {
-        db = NULL;
-    }
+    lv_close(db);
+    db = NULL;
 
     LVStatus err = lv_create(TEST_DIR, &TEST_CONFIG, &TEST_OPTION, &db2);
 
     if (err == LV_ERR_EXSIST) {
         // ok
     } else {
-        fprintf(stderr, "expect LV_ERR_EXSIST, but got ");
-        print_status(err);
+        print_err_unexpected_status("lv_create", 0, LV_ERR_EXSIST, err);
         result = -1;
         goto cleanup;
     }
 
 cleanup:
-    lv_close(db);
     lv_close(db2);
     test_end(result, TEST_DIR, "test_create_2");
     return result;
