@@ -10,6 +10,8 @@
 #include "livero_types.h"
 #include "struct/commit.h"
 #include "struct/row.h"
+#include "struct/config.h"
+#include "struct/commit.h"
 #include "vector/ternary.h"
 
 struct Livero {
@@ -71,6 +73,8 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 #define LV_MAX_VLA_LEN 512
 #define LV_MAX_K 32
 #define LV_TOMBSTONE_FLAG 0xff
+
+#define LV_BASELINE_DISK_USAGE LV_CONFIG_DISK_BYTES + LV_COMMIT_SECTOR_BYTES*LV_COMMIT_SLOT_M
 
 static_assert(LV_MAX_K * LV_TERNARY_CHUNK_BYTES <= LV_MAX_VLA_LEN, "top_k vla results can exceed LV_MAX_VLA_LEN.");
 
