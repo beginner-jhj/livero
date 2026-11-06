@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+
 #include "livero_types.h"
 
 typedef struct LVCommit {
@@ -39,6 +40,13 @@ static_assert(sizeof(LVCommitDisk) == LV_COMMIT_DISK_BYTES, "LVCommitDisk size m
 
 #define LV_COMMIT_SEQ_START 1
 
+// Commit sequence numbers start at 1, so subtract 1 to map them to slot 0.
+// Zero is reserved for empty slots and must never reach this function.
+static inline uint32_t commit_slot_index(const LVSeq_t commit_seq) {
+    assert(commit_seq != LV_COMMIT_SEQ_ZERO);
+    return (uint32_t)((commit_seq - 1) % LV_COMMIT_SLOT_M);
+}
+
 /*
     Write M zero-initialized slots on commit.lv
 */
@@ -49,15 +57,15 @@ LVStatus commit_init(int fd);
     -Every byte is set to little-endian
     -Checksum is calculated based on littel-endian bytes.
 */
-LVCommitDisk commot_m2d(const LVCommit* commit);
+LVCommitDisk commit_m2d(const LVCommit* commit);
 
-typedef enum{
-    LV_COMMIT_OK = -1, // commit is valid
-    LV_COMMIT_EMPTY = 0, //commit seq is 0
-    LV_COMMIT_CORRUPT = 1, // commit is corrupted (checksum mismatch)
+typedef enum {
+    LV_COMMIT_OK = -1,      // commit is valid
+    LV_COMMIT_EMPTY = 0,    // commit seq is 0
+    LV_COMMIT_CORRUPT = 1,  // commit is corrupted (checksum mismatch)
 } LVCMTStatus;
 
-typedef struct{
+typedef struct {
     LVStatus db;
     LVCMTStatus commit;
 } LVCommitStatus;
@@ -67,7 +75,8 @@ typedef struct{
 */
 LVCommitStatus commit_d2m(const int fd, const LVOffset_t offset, LVCommit* commit_out);
 
-int commit_sanity(const LVCommit* cmt,const int expected_slot_idx, const LVSize32_t vector_bytes, const LVSize32_t max_disk_bytes);
+int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t vector_bytes,
+                  const LVSize32_t max_disk_bytes);
 
 LVStatus commit_write(const int fd, const LVCommit* commit);
 

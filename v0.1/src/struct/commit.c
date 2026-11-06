@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "file/file.h"
@@ -15,18 +16,18 @@ static char LV_WRITABLE_SECTOR[LV_COMMIT_SECTOR_BYTES] = {0};
 LVStatus commit_init(int fd) {
     LVStatus s = LV_OK;
 
-    LVOffset_t off = LV_COMMIT_SECTOR_BYTES;
+    // LVOffset_t off = LV_COMMIT_SECTOR_BYTES; invalid offset
     for (int i = 0; i < LV_COMMIT_SLOT_M; i++) {
-        if ((s = lv_write_file(fd, LV_ZERO_SECTOR, LV_COMMIT_SECTOR_BYTES, off)) != LV_OK) {
+        if ((s = lv_write_file(fd, LV_ZERO_SECTOR, LV_COMMIT_SECTOR_BYTES, i * LV_COMMIT_SECTOR_BYTES)) != LV_OK) {
             return s;
         }
-        off += LV_COMMIT_SECTOR_BYTES;
+        // off += LV_COMMIT_SECTOR_BYTES;
     }
 
     return lv_sync_file(fd);
 }
 
-LVCommitDisk commot_m2d(const LVCommit* commit) {
+LVCommitDisk commit_m2d(const LVCommit* commit) {
     assert(commit);
     LVCommitDisk cmt_disk;
     uint32_t commit_checksum = lv_crc32c_begin();
@@ -37,7 +38,8 @@ LVCommitDisk commot_m2d(const LVCommit* commit) {
     lv_put_fixed_64(cmt_disk.first_seq, commit->first_seq);
     commit_checksum = lv_crc32c_update(commit_checksum, cmt_disk.first_seq, sizeof(cmt_disk.first_seq));
 
-    lv_put_fixed_64(cmt_disk.first_seq, commit->reserved_seq);
+    lv_put_fixed_64(cmt_disk.reserved_seq,
+                    commit->reserved_seq);  // fix. it saved data in a wrong buffer first_seq->reserved_seq
     commit_checksum = lv_crc32c_update(commit_checksum, cmt_disk.reserved_seq, sizeof(cmt_disk.reserved_seq));
 
     lv_put_fixed_32(cmt_disk.total_count, commit->total_count);
@@ -89,11 +91,11 @@ LVCommitStatus commit_d2m(const int fd, const LVOffset_t offset, LVCommit* commi
     return (LVCommitStatus){.db = LV_OK, .commit = LV_COMMIT_OK};
 }
 
-int commit_sanity(const LVCommit* cmt, const int expected_slot_idx, const LVSize32_t vector_bytes,
-                     const LVSize32_t max_disk_bytes) {
+int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t vector_bytes,
+                  const LVSize32_t max_disk_bytes) {
     assert(cmt);
 
-    if (cmt->commit_seq % LV_COMMIT_SLOT_M != expected_slot_idx) {
+    if (commit_slot_index(cmt->commit_seq) != expected_slot_idx) {
         return 0;
     }
 
@@ -101,8 +103,8 @@ int commit_sanity(const LVCommit* cmt, const int expected_slot_idx, const LVSize
         return 0;
     }
 
-    uint64_t saved = (uint64_t)cmt->total_count * LV_ROW_BYTES + (uint64_t)cmt->total_count * vector_bytes +
-                     cmt->total_value_bytes;
+    uint64_t saved =
+        (uint64_t)cmt->total_count * LV_ROW_BYTES + (uint64_t)cmt->total_count * vector_bytes + cmt->total_value_bytes;
 
     if (saved > (uint64_t)max_disk_bytes) {
         return 0;
@@ -113,9 +115,10 @@ int commit_sanity(const LVCommit* cmt, const int expected_slot_idx, const LVSize
 
 LVStatus commit_write(const int fd, const LVCommit* commit) {
     assert(commit);
+    assert(commit->commit_seq != LV_COMMIT_SEQ_ZERO);
     memset(LV_WRITABLE_SECTOR, 0, LV_COMMIT_SECTOR_BYTES);
-    LVCommitDisk cmt_disk = commot_m2d(commit);
+    LVCommitDisk cmt_disk = commit_m2d(commit);
     memcpy(LV_WRITABLE_SECTOR, &cmt_disk, sizeof(cmt_disk));
-    const LVOffset_t offset = (commit->commit_seq % LV_COMMIT_SLOT_M) * LV_COMMIT_SECTOR_BYTES;
+    const LVOffset_t offset = (commit_slot_index(commit->commit_seq))*LV_COMMIT_SECTOR_BYTES;
     return lv_write_file(fd, LV_WRITABLE_SECTOR, LV_COMMIT_SECTOR_BYTES, offset);
 }
