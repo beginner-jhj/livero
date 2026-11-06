@@ -74,8 +74,10 @@ LVStatus lv_close_file(int fd) {
 }
 
 LVStatus lv_write_file(int fd, const void* data, const LVSize32_t size, const LVOffset_t offset) {
-    LVSize32_t _written = pwrite(fd, data, size, offset);
+    assert(fd > STDERR_FILENO);
+    ssize_t _written = pwrite(fd, data, size, offset);
     if (_written < 0) {
+        perror("write failed:");
         return LV_ERR_IO;
     }
 
@@ -83,8 +85,10 @@ LVStatus lv_write_file(int fd, const void* data, const LVSize32_t size, const LV
 }
 
 LVStatus lv_read_file(const int fd, void* buf, const LVSize32_t size, const LVOffset_t offset) {
-    LVSize32_t _read = pread(fd, buf, size, offset);
+    assert(fd > STDERR_FILENO);
+    ssize_t _read = pread(fd, buf, size, offset);
     if (_read < 0) {
+        perror("read failed:");
         return LV_ERR_IO;
     }
 
