@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,11 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
 
     if (!config) {
         LIVERO_ERROR("You missed the config.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (config->max_disk_bytes <= LV_BASELINE_DISK_USAGE) {
+        LIVERO_ERROR("max_disk_bytes is too few. Baseline usage is %" PRIu64 "bytes.\n", LV_BASELINE_DISK_USAGE);
         return LV_ERR_INVALID_PARAM;
     }
 
@@ -536,17 +542,16 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     return LV_OK;
 }
 
-LVStatus lv_close(Livero *db) {
+void lv_close(Livero *db) {
     if (!db) {
         LIVERO_ERROR("You missed a db.");
-        return LV_ERR_INVALID_PARAM;
+        return;
     }
 
     if (db->pending_count > 0) {
         LVStatus s = lv_flush(db);
         if (s != LV_OK) {
             LIVERO_ERROR("Failed to flush data.");
-            return s;
         }
     }
 
@@ -555,7 +560,6 @@ LVStatus lv_close(Livero *db) {
     lv_close_file(db->val_fd);
     lv_close_file(db->commit_fd);
     free(db);
-    return LV_OK;
 }
 
 void lv_stat(const Livero *db, LVDBStat *stat) {
@@ -864,24 +868,30 @@ LVStatus lv_pending_search(const Livero *db, const LVSeq_t target_seq, LVGetResu
     if (db->pending_count == 0) {
         return LV_ERR_NOT_FOUND;
     }
-    const LVSeq_t first_pending_seq = row_get_seq(db->row_pending);
+    const LVSeq_t first_pending_seq = row_get_seq(lv_first_pending_row(db));
 
     if (target_seq < first_pending_seq || target_seq >= first_pending_seq + db->pending_count) {
         return LV_ERR_NOT_FOUND;
     }
 
-    const LVOffset_t row_offset = (target_seq - first_pending_seq) * LV_ROW_BYTES;
-    const LVOffset_t value_offset = (target_seq - first_pending_seq) * db->max_value_len;
+    // const LVOffset_t row_offset = (target_seq - first_pending_seq) * LV_ROW_BYTES;
+    // const LVOffset_t value_offset = (target_seq - first_pending_seq) * db->max_value_len;
+    const LVCount_t idx = (target_seq - first_pending_seq);
 
-    const uint8_t *row = db->row_pending + row_offset;
-    const uint8_t *value = db->value_pending + value_offset;
+    const uint8_t *row = lv_n_pending_row(db, idx);
+    const uint8_t *value = lv_n_pending_value(db, idx);
+    const int is_dead = row_get_tombstone_flag(row) == LV_TOMBSTONE_FLAG;
+
+    if (is_dead) {
+        return LV_ERR_NOT_FOUND;
+    }
 
     if (result) {
         lv_fill_get_result(row, value, -1, result);
     }
 
     if (row_offset_out) {
-        *row_offset_out = row_offset;
+        *row_offset_out = idx * LV_ROW_BYTES;
     }
 
     return LV_OK;
@@ -1072,7 +1082,7 @@ LVStatus lv_window_search(const Livero *db, const LVSeq_t target_seq, const LVCo
 
     const uint8_t *expected_row = db->row_window + target_offset;
     const LVSeq_t expected_seq = row_get_seq(expected_row);
-    if (expected_seq == target_seq) {
+    if (expected_seq == target_seq && row_get_tombstone_flag(expected_row) != LV_TOMBSTONE_FLAG) {
         if (result) {
             LVStatus s = lv_fill_get_result(expected_row, NULL, db->val_fd, result);
             if (s != LV_OK) {
@@ -1087,7 +1097,7 @@ LVStatus lv_window_search(const Livero *db, const LVSeq_t target_seq, const LVCo
     } else {
         for (LVCount_t i = 0; i < count; ++i) {
             const uint8_t *row = db->row_window + i * LV_ROW_BYTES;
-            if (row_get_seq(row) == target_seq) {
+            if (row_get_seq(row) == target_seq && row_get_tombstone_flag(row) != LV_TOMBSTONE_FLAG) {
                 if (result) {
                     LVStatus s = lv_fill_get_result(row, NULL, db->val_fd, result);
                     if (s != LV_OK) {
@@ -1107,7 +1117,6 @@ LVStatus lv_window_search(const Livero *db, const LVSeq_t target_seq, const LVCo
 
 LVStatus lv_fill_get_result(const uint8_t *row, const void *value, const int val_fd, LVGetResult *result) {
     assert(row && result);
-    assert(!value && val_fd != -1);
     const LVOffset_t value_offset = row_get_value_offset(row);
     const LVSize16_t value_len = row_get_value_len(row);
     if (result->value) {
