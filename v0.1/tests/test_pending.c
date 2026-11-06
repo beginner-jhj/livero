@@ -169,8 +169,7 @@ int test_pending_search(void) {
 
         const uint64_t stored_date = lv_convert_date_to_epoch(&got.date);
         if (ans->row.date != stored_date) {
-            fprintf(stderr, "Date is incorrect. (Expect: %" PRIu64 " Got: %" PRIu64 "\n", ans->row.date,
-                    stored_date);
+            fprintf(stderr, "Date is incorrect. (Expect: %" PRIu64 " Got: %" PRIu64 "\n", ans->row.date, stored_date);
             result = -1;
             goto cleanup;
         }
@@ -195,7 +194,8 @@ int test_pending_search(void) {
         if (s == LV_ERR_NOT_FOUND) {
             // OK
         } else {
-            print_err_unexpected_status("lv_pending_search", i, LV_ERR_NOT_FOUND, s);
+            fprintf(stderr, "lv_pending_search failed at seq %" PRIu64 ".\n", (LVSeq_t)i);
+            PRINT_ERR_UNEXPECTED_STATUS("lv_pending_search", LV_ERR_NOT_FOUND, s);
             result = -1;
             goto cleanup;
         }
@@ -207,7 +207,10 @@ int test_pending_search(void) {
     if (s == LV_ERR_NOT_FOUND) {
         // OK
     } else {
-        print_err_unexpected_status("lv_pending_search", range_overflow_seq, LV_ERR_NOT_FOUND, s);
+        fprintf(stderr,
+                "Target seq is out of pending range, but lv_pending_search returned a result. (Seq: %" PRIu64 ")\n",
+                range_overflow_seq);
+        PRINT_ERR_UNEXPECTED_STATUS("lv_pending_search", LV_ERR_NOT_FOUND, s);
         result = -1;
         goto cleanup;
     }

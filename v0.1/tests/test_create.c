@@ -76,7 +76,7 @@ int test_create_2(void) {
     if (err == LV_ERR_EXSIST) {
         // ok
     } else {
-        print_err_unexpected_status("lv_create", 0, LV_ERR_EXSIST, err);
+        PRINT_ERR_UNEXPECTED_STATUS("lv_create", LV_ERR_EXSIST, err);
         result = -1;
         goto cleanup;
     }
