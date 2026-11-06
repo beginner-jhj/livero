@@ -133,6 +133,7 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
                      .row_fd = row_fd,
                      .vec_fd = vec_fd,
                      .val_fd = val_fd,
+                     .commit_fd = commit_fd,
                      .row_bytes = 0,
                      .vec_bytes = 0,
                      .val_bytes = 0,
@@ -677,6 +678,7 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out) {
                 /*
                     This is a corrupted commit.
                 */
+
                 corrupted_count++;
                 corrupted_idx = i;
             } else if (cmt_status.commit == LV_COMMIT_OK) {
