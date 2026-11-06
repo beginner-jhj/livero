@@ -1,5 +1,7 @@
 #include "crc32c.h"
 
+#include "file/file.h"
+
 // Precomputed table for CRC-32C, reflected polynomial 0x82F63B78.
 //
 // Why a table? The bitwise version does 8 shift/XOR steps per byte.
@@ -74,4 +76,24 @@ uint32_t lv_crc32c_end(uint32_t crc) {
 
 uint32_t lv_crc32c(const void* data, size_t len) {
     return lv_crc32c_end(lv_crc32c_update(lv_crc32c_begin(), data, len));
+}
+
+LVStatus lv_crc32c_update_from_file(const int fd, const LVOffset_t offset, const LVSize32_t size, uint8_t* buf,
+                                     const LVSize32_t buf_len, uint32_t* checksum) {
+    LVSize32_t total_read = 0;
+
+    while (total_read < size) {
+        const LVSize32_t remaining = size - total_read;
+        const LVSize32_t read_bytes = remaining > buf_len ? buf_len : remaining;
+
+        const LVStatus s = lv_read_file(fd, buf, read_bytes, offset + total_read);
+        if (s != LV_OK) {
+            return s;
+        }
+
+        *checksum = lv_crc32c_update(*checksum, buf, read_bytes);
+        total_read += read_bytes;
+    }
+
+    return LV_OK;
 }
