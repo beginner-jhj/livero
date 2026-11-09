@@ -15,7 +15,8 @@ typedef enum LVStatus {
     LV_ERR_NOT_FOUND = 5,
     LV_ERR_ALLOCATE_MEMORY = 6,
     LV_ERR_DATA_CORRUPT = 7,
-    LV_ERR_MEDIA_CRASHED = 8
+    LV_ERR_MEDIA_CRASHED = 8,
+    LV_ERR_DELETED = 9,
 } LVStatus;
 
 typedef uint64_t LVSeq_t;
