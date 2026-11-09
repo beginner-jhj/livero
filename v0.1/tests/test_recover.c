@@ -36,7 +36,8 @@ int test_recover_1(void) {
 
     LVCommit cmt;
 
-    LVStatus s = lv_recover(&ctx, &cmt);
+    int first_commit_torn_out = 0;
+    LVStatus s = lv_recover(&ctx, &cmt, &first_commit_torn_out);
 
     if (s != LV_OK) {
         PRINT_ERR_UNEXPECTED_STATUS("test_recover_1", LV_OK, s);
@@ -119,7 +120,9 @@ int test_recover_2(void) {
                                 .vector_dim = db->vector_dimension};
     LVCommit recovered = {0};
 
-    LVStatus s = lv_recover(&recover_ctx, &recovered);
+    int first_commit_torn_out = 0;
+
+    LVStatus s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
 
     if (s != LV_OK) {
         PRINT_ERR_UNEXPECTED_STATUS("lv_recover", LV_OK, s);
@@ -223,7 +226,9 @@ int test_recover_3(void) {
                                 .vector_dim = db->vector_dimension};
     LVCommit recovered = {0};
 
-    LVStatus s = lv_recover(&recover_ctx, &recovered);
+    int first_commit_torn_out = 0;
+
+    LVStatus s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
 
     if (s != LV_OK) {
         PRINT_ERR_UNEXPECTED_STATUS("lv_recover", LV_OK, s);
@@ -325,7 +330,9 @@ int test_recover_4(void) {
         .max_disk_bytes = db->max_disk_bytes,
         .vector_dim = db->vector_dimension,
     };
-    s = lv_recover(&recover_ctx, &recovered);
+    int first_commit_torn_out = 0;
+
+    s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
 
     if (check_commit(&recovered, &expected) < 0) {
         result = -1;
@@ -414,7 +421,9 @@ int test_recover_5(void) {
         .max_disk_bytes = db->max_disk_bytes,
         .vector_dim = db->vector_dimension,
     };
-    s = lv_recover(&recover_ctx, &recovered);
+    int first_commit_torn_out = 0;
+
+    s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
 
     if (s == LV_ERR_MEDIA_CRASHED) {
         // ok
@@ -501,7 +510,9 @@ int test_recover_6(void) {
         .max_disk_bytes = db->max_disk_bytes,
         .vector_dim = db->vector_dimension,
     };
-    LVStatus s = lv_recover(&recover_ctx, &recovered);
+    int first_commit_torn_out = 0;
+
+    LVStatus s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
 
     if (s == LV_ERR_MEDIA_CRASHED) {
         // ok
@@ -572,7 +583,7 @@ int test_recover_7(void) {
         Corrupt last row which is covered by the last commit
     */
     const uint64_t trash = 0xbeefbeef;
-    LVStatus s = lv_write_file(db->row_fd, &trash, sizeof(trash), (LV_COMMIT_SLOT_M-1)*LV_ROW_BYTES);
+    LVStatus s = lv_write_file(db->row_fd, &trash, sizeof(trash), (LV_COMMIT_SLOT_M - 1) * LV_ROW_BYTES);
     if (s != LV_OK) {
         PRINT_ERR_UNEXPECTED_STATUS("lv_write_file", LV_OK, s);
         result = -1;
@@ -588,7 +599,8 @@ int test_recover_7(void) {
         .max_disk_bytes = db->max_disk_bytes,
         .vector_dim = db->vector_dimension,
     };
-    s = lv_recover(&recover_ctx, &recovered);
+    int first_commit_torn_out = 0;
+    s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
 
     if (s == LV_ERR_DATA_CORRUPT) {
         // ok
@@ -601,6 +613,90 @@ int test_recover_7(void) {
 cleanup:
     lv_close(db);
     test_end(result, TEST_DIR, "test_recover_7");
+    return result;
+}
+
+int test_recover_8(void) {
+    /*
+        1. Create a db
+        2. Write a first commit
+        3. Corrupt the first commit
+        4. Check if lv_recover retruns an empty commit and set first_commit_torn_out to 1
+    */
+
+    int result = 0;
+    Livero* db = NULL;
+
+    if (create_test_db(TEST_DIR, NULL, NULL, &db) < 0) {
+        result = -1;
+        goto cleanup;
+    }
+
+    LVTestAnswer answer = {0};
+    LVMakeTestAnswerCtx mtac = {
+        .seq = 0,
+        .max_year = 2026,
+        .min_year = 2000,
+        .alive = 1,
+        .prev_value_offset = 0,
+        .value_len = -1,
+
+    };
+    make_test_answer(&mtac, &answer);
+    LVWriteTestDataCtx wtdc = {
+        .row_fd = db->row_fd,
+        .vec_fd = db->vec_fd,
+        .val_fd = db->val_fd,
+        .commit_fd = db->commit_fd,
+        .commit_seq = 1,
+        .data = &answer,
+        .data_count = 1,
+        .prev_count = 0,
+        .prev_val_bytes = 0,
+        .row_start_offset = 0,
+        .vec_start_offset = 0,
+    };
+
+    if (write_test_data(&wtdc, NULL) < 0) {
+        result = -1;
+        goto cleanup;
+    }
+
+    const uint64_t trash = 0xbeefbeef;
+    LVStatus s = lv_write_file(db->commit_fd, &trash, sizeof(trash), 0);
+    if (s != LV_OK) {
+        PRINT_ERR_UNEXPECTED_STATUS("lv_write_file", LV_OK, s);
+        result = -1;
+        goto cleanup;
+    }
+
+    LVCommit recovered = {0};
+    LVRecoverCtx recover_ctx = {
+        .commit_fd = db->commit_fd,
+        .val_fd = db->val_fd,
+        .vec_fd = db->vec_fd,
+        .row_fd = db->row_fd,
+        .max_disk_bytes = db->max_disk_bytes,
+        .vector_dim = db->vector_dimension,
+    };
+    int first_commit_torn_out = 0;
+    s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
+
+    const LVCommit empty_commit = {0};
+    if (memcmp(&empty_commit, &recovered, sizeof(recovered)) != 0) {
+        fprintf(stderr, "lv_recover returned a non-empty commit for the first torn write.\n");
+        result = -1;
+        goto cleanup;
+    }
+
+    if (!first_commit_torn_out) {
+        fprintf(stderr, "first_commit_torn_out isn't turned on. \n");
+        result = -1;
+        goto cleanup;
+    }
+cleanup:
+    lv_close(db);
+    test_end(result, TEST_DIR, "test_recover_8s");
     return result;
 }
 
@@ -630,6 +726,10 @@ int main(void) {
     }
 
     if (test_recover_7() < 0) {
+        return -1;
+    }
+
+    if (test_recover_8() < 0) {
         return -1;
     }
 
