@@ -232,7 +232,8 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
         .max_disk_bytes = config.max_disk_bytes,
         .vector_dim = config.vector_dimension,
     };
-    if ((s = lv_recover(&recover_ctx, &commit)) != LV_OK) {
+    int first_commit_torn_out = 0;
+    if ((s = lv_recover(&recover_ctx, &commit, &first_commit_torn_out)) != LV_OK) {
         LIVERO_ERROR("Failed to recover the db.");
         goto cleanup;
     }
@@ -249,8 +250,14 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
     LVSeq_t next_seq;
 
     if (is_empty_db) {
-        next_commit_seq = LV_COMMIT_SEQ_START;
-        next_seq = LV_SEQ_START;
+        if (first_commit_torn_out) {
+            next_commit_seq = LV_COMMIT_SEQ_START;
+            next_seq = LV_SEQ_START + LV_MAX_BATCH_M;
+        } else {
+            next_commit_seq = LV_COMMIT_SEQ_START;
+            next_seq = LV_SEQ_START;
+        }
+
     } else {
         next_commit_seq = commit.commit_seq + 1;
         next_seq = commit.reserved_seq + 1;
@@ -377,10 +384,11 @@ LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
         return LV_OK;
     }
 
-    s = lv_interpolation_search_from_disk(db, target_seq, result, NULL);
+    LVDiskSearchCtx c = lv_disk_search_ctx(db);
+    s = lv_interpolation_search_from_disk(&c, target_seq, result, NULL);
 
     if (s == LV_ERR_NOT_FOUND) {
-        return lv_binary_search_from_disk(db, target_seq, result, NULL);
+        return lv_binary_search_from_disk(&c, target_seq, result, NULL);
     } else {
         return s;
     }
@@ -407,7 +415,8 @@ LVStatus lv_delete(Livero *db, const LVSeq_t target_seq) {
     }
 
     else if (s == LV_ERR_NOT_FOUND) {
-        s = lv_binary_search_from_disk(db, target_seq, NULL, &row_offset);
+        LVDiskSearchCtx c = lv_disk_search_ctx(db);
+        s = lv_binary_search_from_disk(&c, target_seq, NULL, &row_offset);
         if (s == LV_OK) {
             return lv_write_file(db->row_fd, &tombstone, 1, row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET);
         }
@@ -653,7 +662,7 @@ void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
     db->sync_mode = ctx->sync_mode;
 }
 
-LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out) {
+LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_commit_torn_out) {
     assert(ctx && commit_out);
 
     const LVSize32_t vector_bytes = ternary_chunks_bytes(ctx->vector_dim);
@@ -712,10 +721,19 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out) {
         return LV_OK;
     }
 
-    /* Non-empty slots exist but none is trustworthy. Without this check,
-     * best_idx == -1 would leak into the arithmetic below and make the
-     * "expected slot" silently become slot 0. */
+    /* No slot passed validation. The only crash-consistent way to reach this
+     * state is a torn first commit: commit_seq 1 always lands in slot 0, so a
+     * power loss during the very first flush leaves slot 0 corrupt and every
+     * other slot empty. Treat that as a fresh database. Any other layout means
+     * committed history was damaged, so refuse to open. */
     if (best_idx < 0) {
+        if (corrupted_count == 1 && corrupted_idx == 0) {
+            // The first batch was never acknowledged, so start from an empty commit.
+            // Its seqs may already have been returned by put, so the caller must skip them.
+            memset(commit_out, 0, sizeof(*commit_out));
+            *first_commit_torn_out = 1;
+            return LV_OK;
+        }
         return LV_ERR_MEDIA_CRASHED;
     }
 
@@ -899,14 +917,14 @@ LVStatus lv_pending_search(const Livero *db, const LVSeq_t target_seq, LVGetResu
     return LV_OK;
 }
 
-LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetResult *result,
+LVStatus lv_interpolation_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t target_seq, LVGetResult *result,
                                            LVOffset_t *row_offset_out) {
-    assert(db);
+    assert(ctx);
 
     uint8_t low[LV_ROW_BYTES] = {0};
     uint8_t high[LV_ROW_BYTES] = {0};
 
-    const LVCount_t disk_record_count = lv_disk_record_count(db);
+    const LVCount_t disk_record_count = ctx->disk_record_count;
     if (disk_record_count == 0) {
         return LV_ERR_NOT_FOUND;
     }
@@ -914,12 +932,12 @@ LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq,
     const int low_idx = 0;
     const int high_idx = (int)(disk_record_count - 1);
 
-    LVStatus s = lv_read_file(db->row_fd, low, LV_ROW_BYTES, (LVOffset_t)low_idx * LV_ROW_BYTES);
+    LVStatus s = lv_read_file(ctx->row_fd, low, LV_ROW_BYTES, (LVOffset_t)low_idx * LV_ROW_BYTES);
     if (s != LV_OK) {
         return s;
     }
 
-    s = lv_read_file(db->row_fd, high, LV_ROW_BYTES, (LVOffset_t)high_idx * LV_ROW_BYTES);
+    s = lv_read_file(ctx->row_fd, high, LV_ROW_BYTES, (LVOffset_t)high_idx * LV_ROW_BYTES);
     if (s != LV_OK) {
         return s;
     }
@@ -929,7 +947,10 @@ LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq,
 
     if (low_seq == high_seq) {
         if (result && target_seq == low_seq) {
-            if ((s = lv_fill_get_result(low, NULL, db->val_fd, result)) != LV_OK) {
+            if (!row_is_alive(low)) {
+                return LV_ERR_DELETED;
+            }
+            if ((s = lv_fill_get_result(low, NULL, ctx->val_fd, result)) != LV_OK) {
                 return s;
             }
         }
@@ -942,7 +963,7 @@ LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq,
 
     const int p_idx = low_idx + (int)(((target_seq - low_seq) * (high_idx - low_idx)) / (high_seq - low_seq));
 
-    LVWindowRange r = lv_window_range(p_idx, low_idx, high_idx, (int)db->window_batch_m);
+    LVWindowRange r = lv_window_range(p_idx, low_idx, high_idx, (int)ctx->window_batch_m);
 
     int start_idx = r.start_idx;
     int end_idx = r.end_idx;
@@ -950,13 +971,13 @@ LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq,
     LVOffset_t read_offset = (LVOffset_t)start_idx * LV_ROW_BYTES;
     LVCount_t read_count = (LVCount_t)(end_idx - start_idx + 1);
 
-    if ((s = lv_read_file(db->row_fd, db->row_window, read_count * LV_ROW_BYTES, read_offset)) != LV_OK) {
+    if ((s = lv_read_file(ctx->row_fd, ctx->row_window, read_count * LV_ROW_BYTES, read_offset)) != LV_OK) {
         return s;
     }
 
-    const LVOffset_t expected_offset = lv_window_target_offset(db, r.align, read_count, LV_ROW_BYTES);
+    const LVOffset_t expected_offset = lv_window_target_offset(p_idx, r.start_idx, LV_ROW_BYTES);
     LVOffset_t row_offset = expected_offset;
-    s = lv_window_search(db, target_seq, read_count, expected_offset, result, &row_offset);
+    s = lv_window_search(ctx->row_window, ctx->val_fd, target_seq, read_count, expected_offset, result, &row_offset);
 
     if (s == LV_OK) {
         if (row_offset_out) {
@@ -967,11 +988,11 @@ LVStatus lv_interpolation_search_from_disk(Livero *db, const LVSeq_t target_seq,
     return s;
 }
 
-LVStatus lv_binary_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetResult *result,
+LVStatus lv_binary_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t target_seq, LVGetResult *result,
                                     LVOffset_t *row_offset_out) {
-    assert(db);
+    assert(ctx);
 
-    const LVCount_t disk_record_count = lv_disk_record_count(db);
+    const LVCount_t disk_record_count = ctx->disk_record_count;
 
     if (disk_record_count == 0) {
         return LV_ERR_NOT_FOUND;
@@ -981,24 +1002,26 @@ LVStatus lv_binary_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetR
     int high = (int)(disk_record_count - 1);
     int mid = low + (high - low) / 2;
 
+
     while (low <= high) {
-        LVWindowRange r = lv_window_range(mid, low, high, (int)db->window_batch_m);
+        LVWindowRange r = lv_window_range(mid, low, high, (int)ctx->window_batch_m);
 
         LVOffset_t read_offset = (LVOffset_t)r.start_idx * LV_ROW_BYTES;
         LVCount_t read_count = (LVCount_t)(r.end_idx - r.start_idx + 1);
 
-        LVStatus s = lv_read_file(db->row_fd, db->row_window, read_count * LV_ROW_BYTES, read_offset);
+        LVStatus s = lv_read_file(ctx->row_fd, ctx->row_window, read_count * LV_ROW_BYTES, read_offset);
 
         if (s != LV_OK) {
             return s;
         }
 
-        const LVOffset_t expected_offset = lv_window_target_offset(db, r.align, read_count, LV_ROW_BYTES);
-        const uint8_t *expected_row = db->row_window + expected_offset;
+        const LVOffset_t expected_offset = lv_window_target_offset(mid, r.start_idx, LV_ROW_BYTES);
+        const uint8_t *expected_row = ctx->row_window + expected_offset;
         const LVSeq_t expected_seq = row_get_seq(expected_row);
         LVOffset_t row_offset = expected_offset;
 
-        s = lv_window_search(db, target_seq, read_count, expected_offset, result, &row_offset);
+        s = lv_window_search(ctx->row_window, ctx->val_fd, target_seq, read_count, expected_offset, result,
+                             &row_offset);
 
         if (s == LV_OK) {
             if (row_offset_out) {
@@ -1009,7 +1032,7 @@ LVStatus lv_binary_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetR
         }
 
         else if (s == LV_ERR_NOT_FOUND) {
-            if (expected_seq < target_seq) {
+            if (expected_seq > target_seq) {
                 high = mid - 1;
             } else {
                 low = mid + 1;
@@ -1026,67 +1049,42 @@ LVStatus lv_binary_search_from_disk(Livero *db, const LVSeq_t target_seq, LVGetR
 LVWindowRange lv_window_range(const int p, const int low, const int high, const int m) {
     assert(low <= high);
     assert(p >= low && p <= high);
-    const int read_m = m;
-    const int half_m = read_m / 2;
 
-    int start_idx = 0;
-    int end_idx = 0;
-    LVWindowAlign align = LV_BATCH_CENTER;
+    // Center the window on p first.
+    int start_idx = p - m / 2;
+    int end_idx = start_idx + m - 1;
 
-    //[pos - m/2, pos + m/2]
-    if (p - half_m >= low && p + (read_m - half_m - 1) <= high) {
-        start_idx = p - half_m;
-        end_idx = start_idx + read_m - 1;
-    } else if (p - half_m < low) {  // [pos, min(pos + m - 1, high)]
-        start_idx = p;
-        end_idx = p + read_m - 1;
+    // If the window runs past the right edge, slide it left so it ends at high.
+    if (end_idx > high) {
+        end_idx = high;
+        start_idx = high - m + 1;
+    }
+
+    // If it runs past the left edge, slide it right so it starts at low.
+    if (start_idx < low) {
+        start_idx = low;
+        end_idx = start_idx + m - 1;
+        // The range may be shorter than m, so the end must stay inside it.
         if (end_idx > high) {
             end_idx = high;
         }
-        align = LV_BATCH_LEFT;
-    } else {  // [max(p - ( m- 1), low), pos]
-        end_idx = p;
-        start_idx = p - read_m + 1;
-        if (start_idx < low) {
-            start_idx = low;
-        }
-        align = LV_BATCH_RIGHT;
     }
 
-    return (LVWindowRange){.start_idx = start_idx, .end_idx = end_idx, .align = align};
+    return (LVWindowRange){.start_idx = start_idx, .end_idx = end_idx};
 }
 
-LVOffset_t lv_window_target_offset(const Livero *db, const LVWindowAlign align, const LVCount_t count,
-                                   const LVSize32_t item_size) {
-    assert(db);
-    LVOffset_t idx = 0;
-    switch (align) {
-        case LV_BATCH_CENTER: {
-            idx = count / 2;
-            break;
-        }
-
-        case LV_BATCH_LEFT: {
-            idx = 0;
-            break;
-        }
-        case LV_BATCH_RIGHT: {
-            idx = count - 1;
-            break;
-        }
-    }
-    return idx * item_size;
-}
-
-LVStatus lv_window_search(const Livero *db, const LVSeq_t target_seq, const LVCount_t count,
+LVStatus lv_window_search(const uint8_t *row_window, const int val_fd, const LVSeq_t target_seq, const LVCount_t count,
                           const LVOffset_t target_offset, LVGetResult *result, LVOffset_t *row_offset_out) {
-    assert(db);
+    assert(row_window);
 
-    const uint8_t *expected_row = db->row_window + target_offset;
+    const uint8_t *expected_row = row_window + target_offset;
     const LVSeq_t expected_seq = row_get_seq(expected_row);
-    if (expected_seq == target_seq && row_get_tombstone_flag(expected_row) != LV_TOMBSTONE_FLAG) {
+    if (expected_seq == target_seq) {
+        if (!row_is_alive(expected_row)) {
+            return LV_ERR_DELETED;
+        }
         if (result) {
-            LVStatus s = lv_fill_get_result(expected_row, NULL, db->val_fd, result);
+            LVStatus s = lv_fill_get_result(expected_row, NULL, val_fd, result);
             if (s != LV_OK) {
                 return s;
             }
@@ -1098,10 +1096,13 @@ LVStatus lv_window_search(const Livero *db, const LVSeq_t target_seq, const LVCo
         return LV_OK;
     } else {
         for (LVCount_t i = 0; i < count; ++i) {
-            const uint8_t *row = db->row_window + i * LV_ROW_BYTES;
-            if (row_get_seq(row) == target_seq && row_get_tombstone_flag(row) != LV_TOMBSTONE_FLAG) {
+            const uint8_t *row = row_window + i * LV_ROW_BYTES;
+            if (row_get_seq(row) == target_seq) {
+                if (!row_is_alive(row)) {
+                    return LV_ERR_DELETED;
+                }
                 if (result) {
-                    LVStatus s = lv_fill_get_result(row, NULL, db->val_fd, result);
+                    LVStatus s = lv_fill_get_result(row, NULL, val_fd, result);
                     if (s != LV_OK) {
                         return s;
                     }
@@ -1117,13 +1118,13 @@ LVStatus lv_window_search(const Livero *db, const LVSeq_t target_seq, const LVCo
     }
 }
 
-LVStatus lv_fill_get_result(const uint8_t *row, const void *value, const int val_fd, LVGetResult *result) {
+LVStatus lv_fill_get_result(const uint8_t *row, const void *value_src, const int val_fd, LVGetResult *result) {
     assert(row && result);
     const LVOffset_t value_offset = row_get_value_offset(row);
     const LVSize16_t value_len = row_get_value_len(row);
     if (result->value) {
-        if (value) {
-            memcpy(result->value, value, value_len);
+        if (value_src) {
+            memcpy(result->value, value_src, value_len);
         } else {
             LVStatus s = lv_read_file(val_fd, result->value, value_len, value_offset);
             if (s != LV_OK) {
