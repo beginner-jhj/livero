@@ -325,6 +325,10 @@ static void print_status(const LVStatus status) {
             fprintf(stderr, "LV_ERR_MEDIA_CRASHED \n");
             break;
 
+        case LV_ERR_DELETED:
+            fprintf(stderr, "LV_ERR_DELETED \n");
+            break;
+
         default:
             fprintf(stderr, "Invalid status. \n");
             break;
@@ -364,8 +368,7 @@ static int create_test_db(const char* dir, const LVConfig* config, const LVOptio
     }
 }
 
-static void PRINT_ERR_UNEXPECTED_STATUS(const char* function_name, const LVStatus expected,
-                                        const LVStatus got) {
+static void PRINT_ERR_UNEXPECTED_STATUS(const char* function_name, const LVStatus expected, const LVStatus got) {
     if (!function_name) {
         return;
     }
@@ -581,10 +584,27 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
         fprintf(stderr, "Failed to write test commit. \n");
         return -1;
     }
-    if(written_commit_out){
+    if (written_commit_out) {
         *written_commit_out = cmt;
     }
     return 0;
+}
+
+// Returns 1 if a single interpolation probe must find true_idx, 0 if it must miss.
+static int interp_should_hit(const LVCount_t n, const LVSeq_t first_seq, const LVSeq_t last_seq,
+                             const LVSeq_t target, const LVCount_t true_idx, const int m) {
+    // A target outside the seq range is never found.
+    if (target < first_seq || target > last_seq) return 0;
+
+    // All rows share one seq only when n == 1, so the estimate is index 0.
+    LVCount_t est_idx = 0;
+    if (last_seq != first_seq) {
+        // Must match the production formula exactly, including rounding.
+        est_idx = (LVCount_t)((target - first_seq) * (uint64_t)(n - 1) / (last_seq - first_seq));
+    }
+
+    const LVWindowRange r = lv_window_range((int)est_idx, 0, (int)(n - 1), m);
+    return r.start_idx <= (int)true_idx && (int)true_idx <= r.end_idx;
 }
 
 #endif
