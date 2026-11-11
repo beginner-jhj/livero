@@ -326,7 +326,7 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
 
     const LVSeq_t current_seq = db->next_seq;
     const uint64_t epoch_time = lv_convert_date_to_epoch(date);
-    const LVOffset_t value_disk_offset = db->val_bytes;
+    const LVOffset_t value_disk_offset = db->val_file_bytes;
     const LVOffset_t value_pending_offset = db->value_pending_bytes;
     const LVOffset_t value_offset =
         value_disk_offset + value_pending_offset;  // fix offset bug: value_offset should be disk + pending bytes
@@ -586,9 +586,9 @@ void lv_stat(const Livero *db, LVDBStat *stat) {
         stat->option.write_batch_m = db->pending_batch_m;
         stat->option.read_batch_m = db->window_batch_m;
         stat->option.sync_mode = db->sync_mode;
-        stat->row_file_bytes = db->row_bytes;
-        stat->ternary_file_bytes = db->ternary_bytes;
-        stat->val_file_bytes = db->val_bytes;
+        stat->row_file_bytes = db->row_file_bytes;
+        stat->ternary_file_bytes = db->ternary_file_bytes;
+        stat->val_file_bytes = db->val_file_bytes;
         stat->row_pending_bytes = lv_pending_row_bytse(db);
         stat->ternary_pending_bytes = lv_pending_ternary_bytes(db);
         stat->val_pending_bytes = lv_pending_val_bytes(db);
@@ -653,9 +653,9 @@ void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
     db->ternary_fd = ctx->ternary_fd;
     db->val_fd = ctx->val_fd;
     db->commit_fd = ctx->commit_fd;
-    db->row_bytes = ctx->row_bytes;
-    db->ternary_bytes = ctx->ternary_bytes;
-    db->val_bytes = ctx->val_bytes;
+    db->row_file_bytes = ctx->row_bytes;
+    db->ternary_file_bytes = ctx->ternary_bytes;
+    db->val_file_bytes = ctx->val_bytes;
     db->max_disk_bytes = ctx->max_disk_bytes;
     db->pending_count = 0;
     db->window_batch_m = ctx->read_batch_m;
@@ -784,9 +784,9 @@ LVStatus lv_flush(Livero *db) {
     assert(db);
 
     const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
-    const LVOffset_t row_offset_to_write = db->row_bytes;
-    const LVOffset_t ternary_offset_to_write = db->ternary_bytes;
-    const LVOffset_t val_offset_to_write = db->val_bytes;
+    const LVOffset_t row_offset_to_write = db->row_file_bytes;
+    const LVOffset_t ternary_offset_to_write = db->ternary_file_bytes;
+    const LVOffset_t val_offset_to_write = db->val_file_bytes;
     const int sync = db->sync_mode != LV_SYNC_NONE;
 
     LVSize32_t packed = 0;
@@ -841,7 +841,7 @@ LVStatus lv_flush(Livero *db) {
         .reserved_seq = row_get_seq(lv_last_pending_row(db)),
         .total_count = lv_total_record_count(db),
         .batch_count = db->pending_count,
-        .total_value_bytes = db->val_bytes + db->value_pending_bytes,  // fix db->row_bytes to db->val_bytes
+        .total_value_bytes = db->val_file_bytes + db->value_pending_bytes,  // fix db->row_bytes to db->val_bytes
         .batch_value_bytes = db->value_pending_bytes};
 
     if ((s = commit_write(db->commit_fd, &cmt)) != LV_OK) {
@@ -855,9 +855,9 @@ LVStatus lv_flush(Livero *db) {
         }
     }
 
-    db->row_bytes += row_bytes_to_flush;
-    db->ternary_bytes += ternary_bytes_to_flush;
-    db->val_bytes += db->value_pending_bytes;
+    db->row_file_bytes += row_bytes_to_flush;
+    db->ternary_file_bytes += ternary_bytes_to_flush;
+    db->val_file_bytes += db->value_pending_bytes;
 
     db->pending_count = 0;
     db->value_pending_bytes = 0;

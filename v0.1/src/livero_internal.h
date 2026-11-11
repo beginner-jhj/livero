@@ -26,9 +26,9 @@ struct Livero {
     int ternary_fd;
     int val_fd;
     int commit_fd;
-    LVSize32_t row_bytes;
-    LVSize32_t ternary_bytes;
-    LVSize32_t val_bytes;
+    LVSize32_t row_file_bytes;
+    LVSize32_t ternary_file_bytes;
+    LVSize32_t val_file_bytes;
     LVSize32_t max_disk_bytes;
     LVCount_t pending_count;
     LVCount_t window_batch_m;
@@ -82,7 +82,7 @@ static_assert(LV_MAX_K * LV_TERNARY_CHUNK_BYTES <= LV_MAX_VLA_LEN, "top_k vla re
 */
 static inline LVCount_t lv_disk_record_count(const Livero* db) {
     assert(db);
-    return db->row_bytes / LV_ROW_BYTES;
+    return db->row_file_bytes / LV_ROW_BYTES;
 }
 
 /*
@@ -90,7 +90,7 @@ static inline LVCount_t lv_disk_record_count(const Livero* db) {
 */
 static inline LVCount_t lv_total_record_count(const Livero* db) {
     assert(db);
-    return db->row_bytes / LV_ROW_BYTES + db->pending_count;
+    return db->row_file_bytes / LV_ROW_BYTES + db->pending_count;
 }
 
 static inline const uint8_t* lv_first_pending_row(const Livero* db) {
