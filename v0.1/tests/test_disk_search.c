@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "helper/helper.h"
 #include "livero_internal.h"
 #include "livero_types.h"
 #include "struct/commit.h"
@@ -38,7 +37,9 @@ static void init_test_data(void) {
     LVMakeTestAnswerCtx make_tac = {
         .min_year = 2000,
         .max_year = 2016,
+        .fixed_date = NULL,
         .value_len = -1,
+        .use_test_vector = 0,
     };
     for (int i = 0; i < TEST_SEQ_LEAP_POINT_COUNT; ++i) {
         const LVCount_t leap = TEST_SEQ_LEAPS[i];
@@ -136,19 +137,7 @@ static int full_compare(int row_fd, int val_fd, uint8_t* row_window, LVCount_t w
         }
 
         if (expected_status == LV_OK) {
-            const uint64_t recieved_epoch_date = lv_convert_date_to_epoch(&got.date);
-            if (ans->row.date != recieved_epoch_date) {
-                PRINT_ERR_INVALID("epoch date", "%" PRIu64, ans->row.date, recieved_epoch_date);
-                return -1;
-            }
-
-            if (got.value_len != ans->row.value_len) {
-                PRINT_ERR_INVALID("value_len", "%" PRIu16, ans->row.value_len, got.value_len);
-                return -1;
-            }
-
-            if (memcmp(ans->value, got.value, got.value_len) != 0) {
-                fprintf(stderr, "Value is incorrect at seq %" PRIu64 ". \n", ans->row.seq);
+            if (check_get_result(ans, &got) < 0) {
                 return -1;
             }
 
