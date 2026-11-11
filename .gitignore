@@ -10,3 +10,7 @@ tests/python/__pycache__
 tests/python/demo_data
 tests/python/emb_cache
 build-release
+v0.1/tests/python/tmp
+v0.1/tests/python/__pycache__
+v0.1/tests/python/demo_data
+v0.1/tests/python/emb_cache
