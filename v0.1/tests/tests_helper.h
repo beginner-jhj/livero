@@ -53,7 +53,8 @@ static LVOption TEST_OPTION = {
     .sync_mode = TEST_SYNC_MODE,
 };
 
-static int8_t INT8_VEC_BUFFER[TEST_VECTOR_DIMENSION] = {0};
+static int8_t TEST_INT8_VEC_BUFFER[TEST_VECTOR_DIMENSION] = {0};
+static char TEST_VALUE_BUFFER[TEST_MAX_VALUE_LEN] = {0};
 
 typedef struct {
     LVRow row;
@@ -67,8 +68,10 @@ typedef struct {
                     // len.
     uint16_t min_year;
     uint16_t max_year;
+    LVDate* fixed_date;
     LVOffset_t prev_value_offset;
     int alive;
+    int use_test_vector;
 } LVMakeTestAnswerCtx;
 
 static int create_test_dir(const char* dir) {
@@ -129,6 +132,14 @@ static void fill_random_chr_data(const LVSize32_t len, char* data_out) {
     }
 }
 
+static void fill_test_int8_vector(void) {
+    for (LVDim_t i = 0; i < TEST_VECTOR_DIMENSION; ++i) {
+        TEST_INT8_VEC_BUFFER[i] = rand_int8(INT8_MIN, INT8_MAX);
+    }
+}
+
+static void fill_test_value(void) { fill_random_chr_data(TEST_MAX_VALUE_LEN, TEST_VALUE_BUFFER); }
+
 static LVDate make_random_date(const uint16_t min_year, const uint16_t max_year) {
     uint8_t days_in_month[13] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     const uint16_t MIN = min_year < max_year ? min_year : max_year;
@@ -165,12 +176,17 @@ static void make_test_answer(const LVMakeTestAnswerCtx* ctx, LVTestAnswer* answe
     fill_random_chr_data(v_len, value);
     LVTernaryChunk ternary[TEST_TERNARY_CHUNK_COUNT] = {0};
 
-    for (LVCount_t i = 0; i < TEST_TERNARY_CHUNK_COUNT; ++i) {
-        ternary[i].mask = rand_uint64();
-        ternary[i].sign = rand_uint64();
+    if (ctx->use_test_vector) {
+        ternary_convert(TEST_INT8_VEC_BUFFER, TEST_VECTOR_TYPE, TEST_VECTOR_DIMENSION, ternary);
+    } else {
+        for (LVCount_t i = 0; i < TEST_TERNARY_CHUNK_COUNT; ++i) {
+            ternary[i].mask = rand_uint64();
+            ternary[i].sign = rand_uint64();
+        }
     }
 
-    const uint64_t epoch_date = make_random_epoch_date(ctx->min_year, ctx->max_year);
+    const uint64_t epoch_date = ctx->fixed_date ? lv_convert_date_to_epoch(ctx->fixed_date)
+                                                : make_random_epoch_date(ctx->min_year, ctx->max_year);
     const LVOffset_t v_offset = ctx->prev_value_offset;
     LVRowCalcChecksumCtx checksum_ctx = {.epoch_date = epoch_date,
                                          .seq = ctx->seq,
@@ -591,10 +607,12 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
 }
 
 // Returns 1 if a single interpolation probe must find true_idx, 0 if it must miss.
-static int interp_should_hit(const LVCount_t n, const LVSeq_t first_seq, const LVSeq_t last_seq,
-                             const LVSeq_t target, const LVCount_t true_idx, const int m) {
+static int interp_should_hit(const LVCount_t n, const LVSeq_t first_seq, const LVSeq_t last_seq, const LVSeq_t target,
+                             const LVCount_t true_idx, const int m) {
     // A target outside the seq range is never found.
-    if (target < first_seq || target > last_seq) return 0;
+    if (target < first_seq || target > last_seq) {
+        return 0;
+    }
 
     // All rows share one seq only when n == 1, so the estimate is index 0.
     LVCount_t est_idx = 0;
@@ -605,6 +623,28 @@ static int interp_should_hit(const LVCount_t n, const LVSeq_t first_seq, const L
 
     const LVWindowRange r = lv_window_range((int)est_idx, 0, (int)(n - 1), m);
     return r.start_idx <= (int)true_idx && (int)true_idx <= r.end_idx;
+}
+
+static int check_get_result(const LVTestAnswer* ans, const LVGetResult* got) {
+    const uint64_t received_epoch_date = lv_convert_date_to_epoch(&got->date);
+    if (ans->row.date != received_epoch_date) {
+        fprintf(stderr, "seq %" PRIu64 ": ", ans->row.seq);
+        PRINT_ERR_INVALID("epoch date", "%" PRIu64, ans->row.date, received_epoch_date);
+        return -1;
+    }
+
+    if (got->value_len != ans->row.value_len) {
+        fprintf(stderr, "seq %" PRIu64 ": ", ans->row.seq);
+        PRINT_ERR_INVALID("value_len", "%" PRIu16, ans->row.value_len, got->value_len);
+        return -1;
+    }
+
+    if (memcmp(ans->value, got->value, got->value_len) != 0) {
+        fprintf(stderr, "Value is incorrect at seq %" PRIu64 ".\n", ans->row.seq);
+        return -1;
+    }
+
+    return 0;
 }
 
 #endif
