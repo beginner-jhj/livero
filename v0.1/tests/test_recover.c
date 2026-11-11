@@ -79,14 +79,14 @@ int test_recover_2(void) {
 
     LVOffset_t value_offset = 0;
     for (LVCount_t i = 0; i < data_count; ++i) {
-        LVMakeTestAnswerCtx c = {
-            .alive = i % 2,
-            .max_year = 2026,
-            .min_year = 2000,
-            .prev_value_offset = value_offset,
-            .value_len = -1,  // random
-            .seq = i,
-        };
+        LVMakeTestAnswerCtx c = {.alive = i % 2,
+                                 .max_year = 2026,
+                                 .min_year = 2000,
+                                 .fixed_date = NULL,
+                                 .prev_value_offset = value_offset,
+                                 .value_len = -1,  // random
+                                 .seq = i,
+                                 .use_test_vector = 0};
 
         make_test_answer(&c, &answers[i]);
         value_offset += answers[i].row.value_len;
@@ -166,13 +166,15 @@ int test_recover_3(void) {
         .commit_fd = db->commit_fd,
     };
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {
-            .seq = i,
-            .max_year = 2026,
-            .min_year = 2000,
-            .alive = 1,
-            .prev_value_offset = val_offset,
-            .value_len = -1,
+        LVMakeTestAnswerCtx mtac = {.seq = i,
+                                    .max_year = 2026,
+                                    .min_year = 2000,
+                                    .fixed_date = NULL,
+                                    .alive = 1,
+                                    .prev_value_offset = val_offset,
+                                    .value_len = -1,
+                                    .use_test_vector = 0
+
         };
         make_test_answer(&mtac, &answer);
 
@@ -193,13 +195,15 @@ int test_recover_3(void) {
     }
 
     LVTestAnswer last_ans;
-    LVMakeTestAnswerCtx mtac = {
-        .seq = LV_COMMIT_SLOT_M,
-        .max_year = 2026,
-        .min_year = 2000,
-        .alive = 1,
-        .prev_value_offset = val_offset,
-        .value_len = -1,
+    LVMakeTestAnswerCtx mtac = {.seq = LV_COMMIT_SLOT_M,
+                                .max_year = 2026,
+                                .min_year = 2000,
+                                .fixed_date = NULL,
+                                .alive = 1,
+                                .prev_value_offset = val_offset,
+                                .value_len = -1,
+                                .use_test_vector = 0
+
     };
     make_test_answer(&mtac, &last_ans);
 
@@ -275,13 +279,15 @@ int test_recover_4(void) {
 
     LVCommit expected = {0};
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {
-            .seq = i,
-            .max_year = 2026,
-            .min_year = 2000,
-            .alive = 1,
-            .prev_value_offset = val_offset,
-            .value_len = -1,
+        LVMakeTestAnswerCtx mtac = {.seq = i,
+                                    .max_year = 2026,
+                                    .min_year = 2000,
+                                    .fixed_date = NULL,
+                                    .alive = 1,
+                                    .prev_value_offset = val_offset,
+                                    .value_len = -1,
+                                    .use_test_vector = 0
+
         };
         make_test_answer(&mtac, &answer);
 
@@ -373,13 +379,15 @@ int test_recover_5(void) {
     };
 
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {
-            .seq = i,
-            .max_year = 2026,
-            .min_year = 2000,
-            .alive = 1,
-            .prev_value_offset = val_offset,
-            .value_len = -1,
+        LVMakeTestAnswerCtx mtac = {.seq = i,
+                                    .max_year = 2026,
+                                    .min_year = 2000,
+                                    .fixed_date = NULL,
+                                    .alive = 1,
+                                    .prev_value_offset = val_offset,
+                                    .value_len = -1,
+                                    .use_test_vector = 0
+
         };
         make_test_answer(&mtac, &answer);
 
@@ -465,13 +473,15 @@ int test_recover_6(void) {
     };
 
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {
-            .seq = i,
-            .max_year = 2026,
-            .min_year = 2000,
-            .alive = 1,
-            .prev_value_offset = val_offset,
-            .value_len = -1,
+        LVMakeTestAnswerCtx mtac = {.seq = i,
+                                    .max_year = 2026,
+                                    .min_year = 2000,
+                                    .fixed_date = NULL,
+                                    .alive = 1,
+                                    .prev_value_offset = val_offset,
+                                    .value_len = -1,
+                                    .use_test_vector = 0
+
         };
         make_test_answer(&mtac, &answer);
 
@@ -553,13 +563,15 @@ int test_recover_7(void) {
     };
 
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {
-            .seq = i,
-            .max_year = 2026,
-            .min_year = 2000,
-            .alive = 1,
-            .prev_value_offset = val_offset,
-            .value_len = -1,
+        LVMakeTestAnswerCtx mtac = {.seq = i,
+                                    .max_year = 2026,
+                                    .min_year = 2000,
+                                    .fixed_date = NULL,
+                                    .alive = 1,
+                                    .prev_value_offset = val_offset,
+                                    .value_len = -1,
+                                    .use_test_vector = 0
+
         };
         make_test_answer(&mtac, &answer);
 
@@ -633,13 +645,14 @@ int test_recover_8(void) {
     }
 
     LVTestAnswer answer = {0};
-    LVMakeTestAnswerCtx mtac = {
-        .seq = 0,
-        .max_year = 2026,
-        .min_year = 2000,
-        .alive = 1,
-        .prev_value_offset = 0,
-        .value_len = -1,
+    LVMakeTestAnswerCtx mtac = {.seq = 0,
+                                .max_year = 2026,
+                                .min_year = 2000,
+                                .fixed_date = NULL,
+                                .alive = 1,
+                                .prev_value_offset = 0,
+                                .value_len = -1,
+                                .use_test_vector = 0
 
     };
     make_test_answer(&mtac, &answer);

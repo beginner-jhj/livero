@@ -40,14 +40,14 @@ int test_pending_append(void) {
         } else if (i == write_batch_m / 2) {
             v_len = TEST_MAX_VALUE_LEN;
         }
-        LVMakeTestAnswerCtx c = {
-            .seq = i,
-            .value_len = v_len,
-            .prev_value_offset = value_offset,
-            .min_year = 2000,
-            .max_year = 2026,
-            .alive = 1,
-        };
+        LVMakeTestAnswerCtx c = {.seq = i,
+                                 .value_len = v_len,
+                                 .prev_value_offset = value_offset,
+                                 .min_year = 2000,
+                                 .max_year = 2026,
+                                 .fixed_date = NULL,
+                                 .alive = 1,
+                                 .use_test_vector = 0};
         make_test_answer(&c, &answers[i]);
 
         int r = lv_pending_append(db, &answers[i].row, answers[i].ternary, answers[i].value, answers[i].row.value_len);
@@ -75,7 +75,9 @@ int test_pending_append(void) {
         .prev_value_offset = value_offset,
         .min_year = 2000,
         .max_year = 2026,
+        .fixed_date = NULL,
         .alive = 1,
+        .use_test_vector = 0,
     };
     make_test_answer(&c, &extra);
 
@@ -137,7 +139,9 @@ int test_pending_search(void) {
             .prev_value_offset = value_offset,
             .min_year = 2000,
             .max_year = 2026,
+            .fixed_date = NULL,
             .alive = 1,
+            .use_test_vector = 0,
         };
         make_test_answer(&c, &answers[i]);
 
