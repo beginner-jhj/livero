@@ -173,9 +173,10 @@ int test_pending_search(void) {
             goto cleanup;
         }
 
-        const uint64_t stored_date = lv_convert_date_to_epoch(&got.date);
-        if (ans->row.date != stored_date) {
-            fprintf(stderr, "Date is incorrect. (Expect: %" PRIu64 " Got: %" PRIu64 "\n", ans->row.date, stored_date);
+        const uint64_t stored_epoch_date = lv_convert_date_to_epoch(&got.date);
+        if (ans->row.epoch_date != stored_epoch_date) {
+            fprintf(stderr, "Epoch date is incorrect. (Expect: %" PRIu64 " Got: %" PRIu64 "\n", ans->row.epoch_date,
+                    stored_epoch_date);
             result = -1;
             goto cleanup;
         }

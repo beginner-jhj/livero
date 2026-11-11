@@ -13,7 +13,7 @@
 void row_write_on_memory(uint8_t* buf, const LVRow* data) {
     assert(buf && data);
     lv_put_fixed_64(buf, data->seq);
-    lv_put_fixed_64(buf + LV_ROW_DATE_OFFSET, data->date);
+    lv_put_fixed_64(buf + LV_ROW_EPOCH_DATE_OFFSET, data->epoch_date);
     lv_put_fixed_32(buf + LV_ROW_VALOFFSET_OFFSET, data->value_offset);
     lv_put_fixed_16(buf + LV_ROW_VALLEN_OFFSET, data->value_len);
     memcpy(buf + LV_ROW_TOMBSTONEFLAG_OFFSET, &data->tombstone_flag, sizeof(data->tombstone_flag));

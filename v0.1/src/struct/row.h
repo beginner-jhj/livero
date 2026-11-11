@@ -10,7 +10,7 @@
 
 typedef struct LVRow {
     LVSeq_t seq;
-    uint64_t date;
+    uint64_t epoch_date;
     LVOffset_t value_offset;
     LVSize16_t value_len;
     uint8_t tombstone_flag;
@@ -23,7 +23,7 @@ typedef struct LVRow {
 */
 
 #define LV_ROW_BYTES 27
-#define LV_ROW_DATE_OFFSET 8
+#define LV_ROW_EPOCH_DATE_OFFSET 8
 #define LV_ROW_VALOFFSET_OFFSET 16
 #define LV_ROW_VALLEN_OFFSET 20
 #define LV_ROW_TOMBSTONEFLAG_OFFSET 22
@@ -33,9 +33,9 @@ static inline LVSeq_t row_get_seq(const uint8_t* row) {
     assert(row);
     return lv_get_fixed_64(row);
 }
-static inline uint64_t row_get_date(const uint8_t* row) {
+static inline uint64_t row_get_epoch_date(const uint8_t* row) {
     assert(row);
-    return lv_get_fixed_64(row + LV_ROW_DATE_OFFSET);
+    return lv_get_fixed_64(row + LV_ROW_EPOCH_DATE_OFFSET);
 }
 static inline LVOffset_t row_get_value_offset(const uint8_t* row) {
     assert(row);

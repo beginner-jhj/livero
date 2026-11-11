@@ -50,9 +50,9 @@ uint64_t lv_convert_date_to_epoch(const LVDate* date) {
     return days * 86400ULL + (uint64_t)date->hour * 3600 + (uint64_t)date->min * 60 + date->sec;
 }
 
-void lv_convert_epoch_to_date(const uint64_t epoch_time, LVDate* date) {
-    date->sec = epoch_time % 60;
-    uint64_t remaining_minutes = epoch_time / 60;
+void lv_convert_epoch_to_date(const uint64_t epoch_date, LVDate* date) {
+    date->sec = epoch_date % 60;
+    uint64_t remaining_minutes = epoch_date / 60;
 
     date->min = remaining_minutes % 60;
     uint64_t remaining_hours = remaining_minutes / 60;

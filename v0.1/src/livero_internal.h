@@ -244,8 +244,8 @@ typedef struct {
 
 typedef struct {
     uint8_t* row;
-    uint64_t date_flt1;
-    uint64_t date_flt2;
+    uint64_t min_epoch_date;
+    uint64_t max_epoch_date;
     int64_t dot_result;
     LVTopK_t top_k;
 } LVQueryHeapCtx;

@@ -197,7 +197,7 @@ static void make_test_answer(const LVMakeTestAnswerCtx* ctx, LVTestAnswer* answe
                                          .vector_dimension = TEST_VECTOR_DIMENSION};
 
     answer_out->row.seq = ctx->seq;
-    answer_out->row.date = epoch_date;
+    answer_out->row.epoch_date = epoch_date;
     answer_out->row.value_len = v_len;
     answer_out->row.value_offset = v_offset;
     answer_out->row.tombstone_flag = ctx->alive ? 0 : LV_TOMBSTONE_FLAG;
@@ -223,8 +223,9 @@ static int compare_answer(const LVTestAnswer* answer, const uint8_t* row, const 
         return -1;
     }
 
-    if (answer->row.date != row_get_date(row)) {
-        PRINT_ERR_INVALID("date is incorrect", "%" PRIu64, answer->row.date, row_get_date(row));
+    if (answer->row.epoch_date != row_get_epoch_date(row)) {
+        PRINT_ERR_INVALID("epoch_date is incorrect", "%" PRIu64, answer->row.epoch_date,
+                          row_get_epoch_date(row));
         return -1;
     }
 
@@ -627,9 +628,9 @@ static int interp_should_hit(const LVCount_t n, const LVSeq_t first_seq, const L
 
 static int check_get_result(const LVTestAnswer* ans, const LVGetResult* got) {
     const uint64_t received_epoch_date = lv_convert_date_to_epoch(&got->date);
-    if (ans->row.date != received_epoch_date) {
+    if (ans->row.epoch_date != received_epoch_date) {
         fprintf(stderr, "seq %" PRIu64 ": ", ans->row.seq);
-        PRINT_ERR_INVALID("epoch date", "%" PRIu64, ans->row.date, received_epoch_date);
+        PRINT_ERR_INVALID("epoch_date", "%" PRIu64, ans->row.epoch_date, received_epoch_date);
         return -1;
     }
 

@@ -325,7 +325,7 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
     }
 
     const LVSeq_t current_seq = db->next_seq;
-    const uint64_t epoch_time = lv_convert_date_to_epoch(date);
+    const uint64_t epoch_date = lv_convert_date_to_epoch(date);
     const LVOffset_t value_disk_offset = db->val_file_bytes;
     const LVOffset_t value_pending_offset = db->value_pending_bytes;
     const LVOffset_t value_offset =
@@ -333,7 +333,7 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
 
     ternary_convert(vector, db->vector_type, db->vector_dimension, db->ternary_scratch);
     LVRowCalcChecksumCtx row_checksum_ctx = {.seq = current_seq,
-                                             .epoch_date = epoch_time,
+                                             .epoch_date = epoch_date,
                                              .value_offset = value_offset,
                                              .value_len = value_len,
                                              .vector_dimension = db->vector_dimension,
@@ -341,7 +341,7 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
                                              .ternary_chunks = db->ternary_scratch};
     const uint32_t row_checksum = row_calc_checksum(&row_checksum_ctx);
     LVRow row = {.seq = current_seq,
-                 .date = epoch_time,
+                 .epoch_date = epoch_date,
                  .value_offset = value_offset,
                  .value_len = value_len,
                  .tombstone_flag = 0,
@@ -463,19 +463,19 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     const LVTopK_t TOP_K = k <= total_record_count ? k : (LVTopK_t)total_record_count;
 
     /*
-        Filter rule: min_date <= target <= max_date. Both bounds are optional;
+        Filter rule: min_epoch_date <= target <= max_epoch_date. Both bounds are optional;
         a missing bound defaults to the full range so the scan has no branch for it.
     */
-    uint64_t date1_epoch = 0;
-    uint64_t date2_epoch = UINT64_MAX;
+    uint64_t epoch_date1 = 0;
+    uint64_t epoch_date2 = UINT64_MAX;
     if (date1) {
-        date1_epoch = lv_convert_date_to_epoch(date1);
+        epoch_date1 = lv_convert_date_to_epoch(date1);
     }
     if (date2) {
-        date2_epoch = lv_convert_date_to_epoch(date2);
+        epoch_date2 = lv_convert_date_to_epoch(date2);
     }
-    const uint64_t min_date = date1_epoch < date2_epoch ? date1_epoch : date2_epoch;
-    const uint64_t max_date = date2_epoch > date1_epoch ? date2_epoch : date1_epoch;
+    const uint64_t min_epoch_date = epoch_date1 < epoch_date2 ? epoch_date1 : epoch_date2;
+    const uint64_t max_epoch_date = epoch_date2 > epoch_date1 ? epoch_date2 : epoch_date1;
 
     const LVCount_t ternary_chunk_count = ternary_chunks_count(db->vector_dimension);
     const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
@@ -487,7 +487,8 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
 
     LVQueryIndex heap[TOP_K];  // min-heap: [0] is the current k-th best (the "threshold")
     LVSize32_t heap_size = 0;
-    LVQueryHeapCtx h_ctx = {.date_flt1 = min_date, .date_flt2 = max_date, .top_k = TOP_K};
+    LVQueryHeapCtx h_ctx = {
+        .min_epoch_date = min_epoch_date, .max_epoch_date = max_epoch_date, .top_k = TOP_K};
 
     for (LVCount_t i = 0; i < db->pending_count; i++) {
         const LVTernaryChunk *ternary_candidate = lv_n_pending_ternary(db, i);
@@ -1138,7 +1139,7 @@ LVStatus lv_fill_get_result(const uint8_t *row, const void *value_src, const int
             }
         }
     }
-    lv_convert_epoch_to_date(row_get_date(row), &result->date);
+    lv_convert_epoch_to_date(row_get_epoch_date(row), &result->date);
     result->value_len = value_len;
     return LV_OK;
 }
@@ -1202,15 +1203,15 @@ void lv_query_heap_update(LVQueryIndex *heap, LVSize32_t *size, const LVQueryHea
     }
     const int full = *size >= ctx->top_k;
     int passes_filter = 0;
-    const uint64_t row_date = row_get_date(ctx->row);
-    if (ctx->date_flt1 <= row_date && row_date <= ctx->date_flt2) {
+    const uint64_t epoch_date = row_get_epoch_date(ctx->row);
+    if (ctx->min_epoch_date <= epoch_date && epoch_date <= ctx->max_epoch_date) {
         passes_filter = 1;
     }
     if (passes_filter) {
-        LVDate d;
-        lv_convert_epoch_to_date(row_date, &d);
+        LVDate date;
+        lv_convert_epoch_to_date(epoch_date, &date);
         const LVQueryResult q_result = {
-            .date = d, .seq = row_get_seq(ctx->row), .value_len = row_get_value_len(ctx->row)};
+            .date = date, .seq = row_get_seq(ctx->row), .value_len = row_get_value_len(ctx->row)};
         const LVQueryIndex index = {.dot_result = ctx->dot_result, .q_result = q_result};
         if (full) {
             lv_query_heap_pop(heap, size, NULL);

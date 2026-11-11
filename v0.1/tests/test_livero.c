@@ -98,7 +98,7 @@ static int put_one(Livero* db, int8_t* vector, const uint16_t min_year, const ui
     make_test_answer(&c, ans);
 
     LVDate date = {0};
-    lv_convert_epoch_to_date(ans->row.date, &date);
+    lv_convert_epoch_to_date(ans->row.epoch_date, &date);
 
     if (!vector) {
         fill_test_int8_vector();
@@ -323,8 +323,8 @@ static int check_query(Livero* db, const LVTopK_t k, const LVDate* date1, const 
         return -1;
     }
 
-    const uint64_t lo = date1 ? lv_convert_date_to_epoch(date1) : 0;
-    const uint64_t hi = date2 ? lv_convert_date_to_epoch(date2) : UINT64_MAX;
+    const uint64_t min_epoch_date = date1 ? lv_convert_date_to_epoch(date1) : 0;
+    const uint64_t max_epoch_date = date2 ? lv_convert_date_to_epoch(date2) : UINT64_MAX;
 
     for (LVSize32_t i = 0; i < size; ++i) {
         const LVQueryResult* r = &results[i];
@@ -339,13 +339,13 @@ static int check_query(Livero* db, const LVTopK_t k, const LVDate* date1, const 
             return -1;
         }
 
-        const uint64_t epoch = lv_convert_date_to_epoch(&r->date);
-        if (epoch != ans->row.date) {
+        const uint64_t epoch_date = lv_convert_date_to_epoch(&r->date);
+        if (epoch_date != ans->row.epoch_date) {
             fprintf(stderr, "[%s] seq %" PRIu64 ": ", phase, r->seq);
-            PRINT_ERR_INVALID("query date", "%" PRIu64, ans->row.date, epoch);
+            PRINT_ERR_INVALID("query epoch_date", "%" PRIu64, ans->row.epoch_date, epoch_date);
             return -1;
         }
-        if (epoch < lo || epoch > hi) {
+        if (epoch_date < min_epoch_date || epoch_date > max_epoch_date) {
             fprintf(stderr, "[%s] seq %" PRIu64 " is outside the date filter.\n", phase, r->seq);
             return -1;
         }
