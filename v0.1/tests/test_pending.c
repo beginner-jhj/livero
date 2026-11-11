@@ -50,7 +50,8 @@ int test_pending_append(void) {
                                  .use_test_vector = 0};
         make_test_answer(&c, &answers[i]);
 
-        int r = lv_pending_append(db, &answers[i].row, answers[i].ternary, answers[i].value, answers[i].row.value_len);
+        int r = lv_pending_append(db, &answers[i].row, answers[i].ternary_chunks, answers[i].value,
+                                  answers[i].row.value_len);
 
         if (r < 0) {
             fprintf(stderr, "Pending append failed. (Expect success) \n");
@@ -81,7 +82,7 @@ int test_pending_append(void) {
     };
     make_test_answer(&c, &extra);
 
-    if (lv_pending_append(db, &extra.row, extra.ternary, extra.value, extra.row.value_len) != -1) {
+    if (lv_pending_append(db, &extra.row, extra.ternary_chunks, extra.value, extra.row.value_len) != -1) {
         fprintf(stderr, "Pending append succeeded, (Expect fail)\n");
         result = -1;
         goto cleanup;
@@ -145,7 +146,8 @@ int test_pending_search(void) {
         };
         make_test_answer(&c, &answers[i]);
 
-        int r = lv_pending_append(db, &answers[i].row, answers[i].ternary, answers[i].value, answers[i].row.value_len);
+        int r = lv_pending_append(db, &answers[i].row, answers[i].ternary_chunks, answers[i].value,
+                                  answers[i].row.value_len);
 
         if (r < 0) {
             fprintf(stderr, "Pending append failed. (Expect success) \n");

@@ -22,7 +22,7 @@ void row_write_on_memory(uint8_t* buf, const LVRow* data) {
 
 uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
     assert(ctx);
-    assert(ctx->ternary && ctx->value);
+    assert(ctx->ternary_chunks && ctx->value);
 
     uint8_t BUF64[8];
     uint8_t BUF32[4];
@@ -42,7 +42,7 @@ uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
     lv_put_fixed_16(BUF16, ctx->value_len);
     checksum = lv_crc32c_update(checksum, BUF16, 2);
 
-    checksum = lv_crc32c_update(checksum, ctx->ternary, ternary_chunks_bytes(ctx->vector_dim));
+    checksum = lv_crc32c_update(checksum, ctx->ternary_chunks, ternary_chunks_bytes(ctx->vector_dimension));
     checksum = lv_crc32c_update(checksum, ctx->value, ctx->value_len);
 
     return lv_crc32c_end(checksum);
@@ -64,14 +64,15 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
     const LVOffset_t value_offset = row_get_value_offset(row);
     const LVSize16_t value_len = row_get_value_len(row);
 
-    uint8_t chunk[LV_MAX_VLA_LEN] = {0};
+    uint8_t checksum_buffer[LV_MAX_VLA_LEN] = {0};
 
-    if ((s = lv_crc32c_update_from_file(ctx->vec_fd, ctx->vec_offset, ctx->vector_bytes, chunk, sizeof(chunk),
-                                     &checksum)) != LV_OK) {
+    if ((s = lv_crc32c_update_from_file(ctx->ternary_fd, ctx->ternary_offset, ctx->ternary_bytes, checksum_buffer,
+                                        sizeof(checksum_buffer), &checksum)) != LV_OK) {
         return s;
     }
 
-    if ((s = lv_crc32c_update_from_file(ctx->val_fd, value_offset, value_len, chunk, sizeof(chunk), &checksum)) != LV_OK) {
+    if ((s = lv_crc32c_update_from_file(ctx->val_fd, value_offset, value_len, checksum_buffer,
+                                        sizeof(checksum_buffer), &checksum)) != LV_OK) {
         return s;
     }
 

@@ -37,8 +37,8 @@ int test_create_1(void) {
                               .option = TEST_OPTION,
                               .row_file_bytes = 0,
                               .row_pending_bytes = 0,
-                              .vec_file_bytes = 0,
-                              .vec_pending_bytes = 0,
+                              .ternary_file_bytes = 0,
+                              .ternary_pending_bytes = 0,
                               .val_file_bytes = 0,
                               .val_pending_bytes = 0};
 

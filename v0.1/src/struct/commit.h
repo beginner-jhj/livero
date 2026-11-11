@@ -75,7 +75,7 @@ typedef struct {
 */
 LVCommitStatus commit_d2m(const int fd, const LVOffset_t offset, LVCommit* commit_out);
 
-int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t vector_bytes,
+int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t ternary_bytes,
                   const LVSize32_t max_disk_bytes);
 
 LVStatus commit_write(const int fd, const LVCommit* commit);

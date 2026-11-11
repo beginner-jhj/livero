@@ -59,7 +59,7 @@ static char TEST_VALUE_BUFFER[TEST_MAX_VALUE_LEN] = {0};
 typedef struct {
     LVRow row;
     uint8_t value[TEST_MAX_VALUE_LEN];
-    LVTernaryChunk ternary[TEST_TERNARY_CHUNK_COUNT];
+    LVTernaryChunk ternary_chunks[TEST_TERNARY_CHUNK_COUNT];
 } LVTestAnswer;
 
 typedef struct {
@@ -174,14 +174,14 @@ static void make_test_answer(const LVMakeTestAnswerCtx* ctx, LVTestAnswer* answe
     const LVSize16_t v_len =
         ctx->value_len <= 0 || ctx->value_len > TEST_MAX_VALUE_LEN ? rand_int(1, TEST_MAX_VALUE_LEN) : ctx->value_len;
     fill_random_chr_data(v_len, value);
-    LVTernaryChunk ternary[TEST_TERNARY_CHUNK_COUNT] = {0};
+    LVTernaryChunk ternary_chunks[TEST_TERNARY_CHUNK_COUNT] = {0};
 
     if (ctx->use_test_vector) {
-        ternary_convert(TEST_INT8_VEC_BUFFER, TEST_VECTOR_TYPE, TEST_VECTOR_DIMENSION, ternary);
+        ternary_convert(TEST_INT8_VEC_BUFFER, TEST_VECTOR_TYPE, TEST_VECTOR_DIMENSION, ternary_chunks);
     } else {
         for (LVCount_t i = 0; i < TEST_TERNARY_CHUNK_COUNT; ++i) {
-            ternary[i].mask = rand_uint64();
-            ternary[i].sign = rand_uint64();
+            ternary_chunks[i].mask = rand_uint64();
+            ternary_chunks[i].sign = rand_uint64();
         }
     }
 
@@ -193,8 +193,8 @@ static void make_test_answer(const LVMakeTestAnswerCtx* ctx, LVTestAnswer* answe
                                          .value_len = v_len,
                                          .value_offset = v_offset,
                                          .value = value,
-                                         .ternary = ternary,
-                                         .vector_dim = TEST_VECTOR_DIMENSION};
+                                         .ternary_chunks = ternary_chunks,
+                                         .vector_dimension = TEST_VECTOR_DIMENSION};
 
     answer_out->row.seq = ctx->seq;
     answer_out->row.date = epoch_date;
@@ -203,7 +203,7 @@ static void make_test_answer(const LVMakeTestAnswerCtx* ctx, LVTestAnswer* answe
     answer_out->row.tombstone_flag = ctx->alive ? 0 : LV_TOMBSTONE_FLAG;
     answer_out->row.checksum = row_calc_checksum(&checksum_ctx);
     memcpy(answer_out->value, value, v_len);
-    memcpy(answer_out->ternary, ternary, ternary_chunks_bytes(TEST_VECTOR_DIMENSION));
+    memcpy(answer_out->ternary_chunks, ternary_chunks, ternary_chunks_bytes(TEST_VECTOR_DIMENSION));
 }
 
 static int compare_date(const LVDate* date_a, const LVDate* date_b) {
@@ -212,8 +212,8 @@ static int compare_date(const LVDate* date_a, const LVDate* date_b) {
 
 // Returns 0 if the row and value match the expected answer, -1 otherwise.
 static int compare_answer(const LVTestAnswer* answer, const uint8_t* row, const uint8_t* value,
-                          const LVTernaryChunk* ternary) {
-    if (!answer || !row || !value || !ternary) {
+                          const LVTernaryChunk* ternary_chunks) {
+    if (!answer || !row || !value || !ternary_chunks) {
         fprintf(stderr, "compare_answer received NULL.\n");
         return -1;
     }
@@ -260,7 +260,7 @@ static int compare_answer(const LVTestAnswer* answer, const uint8_t* row, const 
         return -1;
     }
 
-    if (memcmp(answer->ternary, ternary, ternary_chunks_bytes(TEST_VECTOR_DIMENSION)) != 0) {
+    if (memcmp(answer->ternary_chunks, ternary_chunks, ternary_chunks_bytes(TEST_VECTOR_DIMENSION)) != 0) {
         fprintf(stderr, "ternary is incorrect. seq: %" PRIu64 "\n", answer->row.seq);
         return -1;
     }
@@ -470,10 +470,10 @@ static int check_stat_match(const LVDBStat* stored, const LVDBStat* expected) {
     }
 
     if (check_size_match("row_file_bytes", stored->row_file_bytes, expected->row_file_bytes) != 0 ||
-        check_size_match("vec_file_bytes", stored->vec_file_bytes, expected->vec_file_bytes) != 0 ||
+        check_size_match("ternary_file_bytes", stored->ternary_file_bytes, expected->ternary_file_bytes) != 0 ||
         check_size_match("val_file_bytes", stored->val_file_bytes, expected->val_file_bytes) != 0 ||
         check_size_match("row_pending_bytes", stored->row_pending_bytes, expected->row_pending_bytes) != 0 ||
-        check_size_match("vec_pending_bytes", stored->vec_pending_bytes, expected->vec_pending_bytes) != 0 ||
+        check_size_match("ternary_pending_bytes", stored->ternary_pending_bytes, expected->ternary_pending_bytes) != 0 ||
         check_size_match("val_pending_bytes", stored->val_pending_bytes, expected->val_pending_bytes) != 0) {
         return -1;
     }
@@ -531,14 +531,14 @@ static int check_commit(const LVCommit* recovered, const LVCommit* expected) {
 
 typedef struct {
     int row_fd;
-    int vec_fd;
+    int ternary_fd;
     int val_fd;
     int commit_fd;
     LVSeq_t commit_seq;
     LVTestAnswer* data;
     LVCount_t data_count;
     LVOffset_t row_start_offset;
-    LVOffset_t vec_start_offset;
+    LVOffset_t ternary_start_offset;
     LVCount_t prev_count;
     LVSize32_t prev_val_bytes;
 } LVWriteTestDataCtx;
@@ -571,8 +571,8 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
         }
         batched_val_bytes += ans->row.value_len;
 
-        const LVOffset_t vec_offset = ctx->vec_start_offset + i * TEST_TERNARY_BYTES;
-        if ((s = lv_write_file(ctx->vec_fd, ans->ternary, TEST_TERNARY_BYTES, vec_offset)) != LV_OK) {
+        const LVOffset_t ternary_offset = ctx->ternary_start_offset + i * TEST_TERNARY_BYTES;
+        if ((s = lv_write_file(ctx->ternary_fd, ans->ternary_chunks, TEST_TERNARY_BYTES, ternary_offset)) != LV_OK) {
             fprintf(stderr, "Failed to write test teranry data. (seq: %" PRIu64 ")\n", ans->row.seq);
             return -1;
         }

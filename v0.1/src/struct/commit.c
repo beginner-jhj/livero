@@ -91,7 +91,7 @@ LVCommitStatus commit_d2m(const int fd, const LVOffset_t offset, LVCommit* commi
     return (LVCommitStatus){.db = LV_OK, .commit = LV_COMMIT_OK};
 }
 
-int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t vector_bytes,
+int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t ternary_bytes,
                   const LVSize32_t max_disk_bytes) {
     assert(cmt);
 
@@ -104,7 +104,8 @@ int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const L
     }
 
     uint64_t saved =
-        (uint64_t)cmt->total_count * LV_ROW_BYTES + (uint64_t)cmt->total_count * vector_bytes + cmt->total_value_bytes;
+        (uint64_t)cmt->total_count * LV_ROW_BYTES + (uint64_t)cmt->total_count * ternary_bytes +
+        cmt->total_value_bytes;
 
     if (saved > (uint64_t)max_disk_bytes) {
         return 0;

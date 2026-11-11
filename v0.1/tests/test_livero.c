@@ -280,10 +280,10 @@ static int check_stat_all_flushed(const Livero* db, const LVConfig* config, cons
         .config = *config,
         .option = *option,
         .row_file_bytes = ANSWER_COUNT * LV_ROW_BYTES,
-        .vec_file_bytes = ANSWER_COUNT * ternary_chunks_bytes(config->vector_dimension),
+        .ternary_file_bytes = ANSWER_COUNT * ternary_chunks_bytes(config->vector_dimension),
         .val_file_bytes = ANSWER_VALUE_BYTES,
         .row_pending_bytes = 0,
-        .vec_pending_bytes = 0,
+        .ternary_pending_bytes = 0,
         .val_pending_bytes = 0,
     };
 

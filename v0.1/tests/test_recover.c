@@ -28,10 +28,10 @@ int test_recover_1(void) {
     LVRecoverCtx ctx = {
         .row_fd = db->row_fd,
         .val_fd = db->val_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .commit_fd = db->commit_fd,
         .max_disk_bytes = db->max_disk_bytes,
-        .vector_dim = db->vector_dimension,
+        .vector_dimension = db->vector_dimension,
     };
 
     LVCommit cmt;
@@ -99,10 +99,10 @@ int test_recover_2(void) {
                                .prev_val_bytes = 0,
                                .commit_seq = commit_seq,
                                .row_start_offset = 0,
-                               .vec_start_offset = 0,
+                               .ternary_start_offset = 0,
                                .row_fd = db->row_fd,
                                .val_fd = db->val_fd,
-                               .vec_fd = db->vec_fd,
+                               .ternary_fd = db->ternary_fd,
                                .commit_fd = db->commit_fd};
 
     LVCommit expected = {0};
@@ -115,9 +115,9 @@ int test_recover_2(void) {
     LVRecoverCtx recover_ctx = {.commit_fd = db->commit_fd,
                                 .row_fd = db->row_fd,
                                 .val_fd = db->val_fd,
-                                .vec_fd = db->vec_fd,
+                                .ternary_fd = db->ternary_fd,
                                 .max_disk_bytes = db->max_disk_bytes,
-                                .vector_dim = db->vector_dimension};
+                                .vector_dimension = db->vector_dimension};
     LVCommit recovered = {0};
 
     int first_commit_torn_out = 0;
@@ -161,7 +161,7 @@ int test_recover_3(void) {
     LVOffset_t val_offset = 0;
     LVWriteTestDataCtx wtdc = {
         .row_fd = db->row_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .val_fd = db->val_fd,
         .commit_fd = db->commit_fd,
     };
@@ -184,7 +184,7 @@ int test_recover_3(void) {
         wtdc.prev_count = (LVCount_t)i;
         wtdc.prev_val_bytes = (LVSize32_t)val_offset;
         wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.vec_start_offset = i * TEST_TERNARY_BYTES;
+        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
 
         if (write_test_data(&wtdc, NULL) < 0) {
             result = -1;
@@ -213,7 +213,7 @@ int test_recover_3(void) {
     wtdc.prev_count = LV_COMMIT_SLOT_M;
     wtdc.prev_val_bytes = (LVSize32_t)val_offset;
     wtdc.row_start_offset = (LV_COMMIT_SLOT_M)*LV_ROW_BYTES;
-    wtdc.vec_start_offset = (LV_COMMIT_SLOT_M)*TEST_TERNARY_BYTES;
+    wtdc.ternary_start_offset = (LV_COMMIT_SLOT_M)*TEST_TERNARY_BYTES;
 
     LVCommit expected = {0};
 
@@ -225,9 +225,9 @@ int test_recover_3(void) {
     LVRecoverCtx recover_ctx = {.commit_fd = db->commit_fd,
                                 .row_fd = db->row_fd,
                                 .val_fd = db->val_fd,
-                                .vec_fd = db->vec_fd,
+                                .ternary_fd = db->ternary_fd,
                                 .max_disk_bytes = db->max_disk_bytes,
-                                .vector_dim = db->vector_dimension};
+                                .vector_dimension = db->vector_dimension};
     LVCommit recovered = {0};
 
     int first_commit_torn_out = 0;
@@ -272,7 +272,7 @@ int test_recover_4(void) {
     LVOffset_t val_offset = 0;
     LVWriteTestDataCtx wtdc = {
         .row_fd = db->row_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .val_fd = db->val_fd,
         .commit_fd = db->commit_fd,
     };
@@ -297,7 +297,7 @@ int test_recover_4(void) {
         wtdc.prev_count = (LVCount_t)i;
         wtdc.prev_val_bytes = (LVSize32_t)val_offset;
         wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.vec_start_offset = i * TEST_TERNARY_BYTES;
+        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
 
         if (i == LV_COMMIT_SLOT_M - 2) {  // save M-1th commit which is the answer
             if (write_test_data(&wtdc, &expected) < 0) {
@@ -331,10 +331,10 @@ int test_recover_4(void) {
     LVRecoverCtx recover_ctx = {
         .commit_fd = db->commit_fd,
         .val_fd = db->val_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .row_fd = db->row_fd,
         .max_disk_bytes = db->max_disk_bytes,
-        .vector_dim = db->vector_dimension,
+        .vector_dimension = db->vector_dimension,
     };
     int first_commit_torn_out = 0;
 
@@ -373,7 +373,7 @@ int test_recover_5(void) {
     LVOffset_t val_offset = 0;
     LVWriteTestDataCtx wtdc = {
         .row_fd = db->row_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .val_fd = db->val_fd,
         .commit_fd = db->commit_fd,
     };
@@ -397,7 +397,7 @@ int test_recover_5(void) {
         wtdc.prev_count = (LVCount_t)i;
         wtdc.prev_val_bytes = (LVSize32_t)val_offset;
         wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.vec_start_offset = i * TEST_TERNARY_BYTES;
+        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
 
         if (write_test_data(&wtdc, NULL) < 0) {
             result = -1;
@@ -424,10 +424,10 @@ int test_recover_5(void) {
     LVRecoverCtx recover_ctx = {
         .commit_fd = db->commit_fd,
         .val_fd = db->val_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .row_fd = db->row_fd,
         .max_disk_bytes = db->max_disk_bytes,
-        .vector_dim = db->vector_dimension,
+        .vector_dimension = db->vector_dimension,
     };
     int first_commit_torn_out = 0;
 
@@ -467,7 +467,7 @@ int test_recover_6(void) {
     LVOffset_t val_offset = 0;
     LVWriteTestDataCtx wtdc = {
         .row_fd = db->row_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .val_fd = db->val_fd,
         .commit_fd = db->commit_fd,
     };
@@ -491,7 +491,7 @@ int test_recover_6(void) {
         wtdc.prev_count = (LVCount_t)i;
         wtdc.prev_val_bytes = (LVSize32_t)val_offset;
         wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.vec_start_offset = i * TEST_TERNARY_BYTES;
+        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
 
         if (write_test_data(&wtdc, NULL) < 0) {
             result = -1;
@@ -515,10 +515,10 @@ int test_recover_6(void) {
     LVRecoverCtx recover_ctx = {
         .commit_fd = db->commit_fd,
         .val_fd = db->val_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .row_fd = db->row_fd,
         .max_disk_bytes = db->max_disk_bytes,
-        .vector_dim = db->vector_dimension,
+        .vector_dimension = db->vector_dimension,
     };
     int first_commit_torn_out = 0;
 
@@ -557,7 +557,7 @@ int test_recover_7(void) {
     LVOffset_t val_offset = 0;
     LVWriteTestDataCtx wtdc = {
         .row_fd = db->row_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .val_fd = db->val_fd,
         .commit_fd = db->commit_fd,
     };
@@ -581,7 +581,7 @@ int test_recover_7(void) {
         wtdc.prev_count = (LVCount_t)i;
         wtdc.prev_val_bytes = (LVSize32_t)val_offset;
         wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.vec_start_offset = i * TEST_TERNARY_BYTES;
+        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
 
         if (write_test_data(&wtdc, NULL) < 0) {
             result = -1;
@@ -606,10 +606,10 @@ int test_recover_7(void) {
     LVRecoverCtx recover_ctx = {
         .commit_fd = db->commit_fd,
         .val_fd = db->val_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .row_fd = db->row_fd,
         .max_disk_bytes = db->max_disk_bytes,
-        .vector_dim = db->vector_dimension,
+        .vector_dimension = db->vector_dimension,
     };
     int first_commit_torn_out = 0;
     s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
@@ -658,7 +658,7 @@ int test_recover_8(void) {
     make_test_answer(&mtac, &answer);
     LVWriteTestDataCtx wtdc = {
         .row_fd = db->row_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .val_fd = db->val_fd,
         .commit_fd = db->commit_fd,
         .commit_seq = 1,
@@ -667,7 +667,7 @@ int test_recover_8(void) {
         .prev_count = 0,
         .prev_val_bytes = 0,
         .row_start_offset = 0,
-        .vec_start_offset = 0,
+        .ternary_start_offset = 0,
     };
 
     if (write_test_data(&wtdc, NULL) < 0) {
@@ -687,10 +687,10 @@ int test_recover_8(void) {
     LVRecoverCtx recover_ctx = {
         .commit_fd = db->commit_fd,
         .val_fd = db->val_fd,
-        .vec_fd = db->vec_fd,
+        .ternary_fd = db->ternary_fd,
         .row_fd = db->row_fd,
         .max_disk_bytes = db->max_disk_bytes,
-        .vector_dim = db->vector_dimension,
+        .vector_dimension = db->vector_dimension,
     };
     int first_commit_torn_out = 0;
     s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);

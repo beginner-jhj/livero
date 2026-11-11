@@ -18,12 +18,12 @@
 #include "vector/ternary.h"
 
 static inline LVSize32_t lv_total_memory_bytes(const LVCount_t read_batch_m, const LVCount_t write_batch_m,
-                                               const LVSize32_t max_value_len, const LVDim_t dim) {
+                                               const LVSize32_t max_value_len, const LVDim_t vector_dimension) {
     LVSize32_t total = sizeof(Livero);
-    const LVSize32_t vector_bytes = ternary_chunks_bytes(dim);
-    total += vector_bytes;
-    total += vector_bytes * read_batch_m;
-    total += vector_bytes * write_batch_m;
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(vector_dimension);
+    total += ternary_bytes;
+    total += ternary_bytes * read_batch_m;
+    total += ternary_bytes * write_batch_m;
     total += LV_ROW_BYTES * read_batch_m;
     total += LV_ROW_BYTES * write_batch_m;
     total += max_value_len * write_batch_m;
@@ -76,7 +76,7 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
     }
 
     int row_fd = -1;
-    int vec_fd = -1;
+    int ternary_fd = -1;
     int val_fd = -1;
     int config_fd = -1;
     int commit_fd = -1;
@@ -91,7 +91,7 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
         goto cleanup;
     }
 
-    if ((s = lv_open_file(db_path, LV_VEC_FILE_NAME, create_flag, &vec_fd)) != LV_OK) {
+    if ((s = lv_open_file(db_path, LV_TERNARY_FILE_NAME, create_flag, &ternary_fd)) != LV_OK) {
         LIVERO_ERROR("Failed to open vec.lv.");
         goto cleanup;
     }
@@ -131,11 +131,11 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
     LVInitCtx ctx = {.next_seq = LV_SEQ_START,
                      .next_commit_seq = LV_COMMIT_SEQ_START,
                      .row_fd = row_fd,
-                     .vec_fd = vec_fd,
+                     .ternary_fd = ternary_fd,
                      .val_fd = val_fd,
                      .commit_fd = commit_fd,
                      .row_bytes = 0,
-                     .vec_bytes = 0,
+                     .ternary_bytes = 0,
                      .val_bytes = 0,
                      .max_disk_bytes = config->max_disk_bytes,
                      .max_value_len = config->max_value_len,
@@ -152,7 +152,7 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
 
 cleanup:
     lv_close_file(row_fd);
-    lv_close_file(vec_fd);
+    lv_close_file(ternary_fd);
     lv_close_file(val_fd);
     lv_close_file(config_fd);
     lv_close_file(commit_fd);
@@ -181,7 +181,7 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
     }
 
     int row_fd = -1;
-    int vec_fd = -1;
+    int ternary_fd = -1;
     int val_fd = -1;
     int config_fd = -1;
     int commit_fd = -1;
@@ -196,7 +196,7 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
         goto cleanup;
     }
 
-    if ((s = lv_open_file(db_path, LV_VEC_FILE_NAME, open_flag, &vec_fd)) != LV_OK) {
+    if ((s = lv_open_file(db_path, LV_TERNARY_FILE_NAME, open_flag, &ternary_fd)) != LV_OK) {
         LIVERO_ERROR("Failed to open vec.lv.");
         goto cleanup;
     }
@@ -226,11 +226,11 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
     LVCommit commit;
     LVRecoverCtx recover_ctx = {
         .row_fd = row_fd,
-        .vec_fd = vec_fd,
+        .ternary_fd = ternary_fd,
         .val_fd = val_fd,
         .commit_fd = commit_fd,
         .max_disk_bytes = config.max_disk_bytes,
-        .vector_dim = config.vector_dimension,
+        .vector_dimension = config.vector_dimension,
     };
     int first_commit_torn_out = 0;
     if ((s = lv_recover(&recover_ctx, &commit, &first_commit_torn_out)) != LV_OK) {
@@ -265,7 +265,7 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
 
     LVInitCtx init_ctx = {
         .row_fd = row_fd,
-        .vec_fd = vec_fd,
+        .ternary_fd = ternary_fd,
         .val_fd = val_fd,
         .commit_fd = commit_fd,
         .max_disk_bytes = config.max_disk_bytes,
@@ -278,7 +278,7 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
         .next_commit_seq = next_commit_seq,
         .next_seq = next_seq,
         .row_bytes = LV_ROW_BYTES * commit.total_count,
-        .vec_bytes = ternary_chunks_bytes(config.vector_dimension) * commit.total_count,
+        .ternary_bytes = ternary_chunks_bytes(config.vector_dimension) * commit.total_count,
         .val_bytes = commit.total_value_bytes,
     };
 
@@ -289,7 +289,7 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
 
 cleanup:
     lv_close_file(row_fd);
-    lv_close_file(vec_fd);
+    lv_close_file(ternary_fd);
     lv_close_file(val_fd);
     lv_close_file(config_fd);
     lv_close_file(commit_fd);
@@ -336,9 +336,9 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
                                              .epoch_date = epoch_time,
                                              .value_offset = value_offset,
                                              .value_len = value_len,
-                                             .vector_dim = db->vector_dimension,
+                                             .vector_dimension = db->vector_dimension,
                                              .value = value,
-                                             .ternary = db->ternary_scratch};
+                                             .ternary_chunks = db->ternary_scratch};
     const uint32_t row_checksum = row_calc_checksum(&row_checksum_ctx);
     LVRow row = {.seq = current_seq,
                  .date = epoch_time,
@@ -477,21 +477,21 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     const uint64_t min_date = date1_epoch < date2_epoch ? date1_epoch : date2_epoch;
     const uint64_t max_date = date2_epoch > date1_epoch ? date2_epoch : date1_epoch;
 
-    const LVCount_t words = ternary_chunks_count(db->vector_dimension);
-    const LVSize32_t vector_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
 
-    memset(db->ternary_scratch, 0, vector_bytes);
+    memset(db->ternary_scratch, 0, ternary_bytes);
     ternary_convert(query_vector, db->vector_type, db->vector_dimension, db->ternary_scratch);
 
-    const LVTernaryChunk *q_vector = db->ternary_scratch;
+    const LVTernaryChunk *query_ternary = db->ternary_scratch;
 
     LVQueryIndex heap[TOP_K];  // min-heap: [0] is the current k-th best (the "threshold")
     LVSize32_t heap_size = 0;
     LVQueryHeapCtx h_ctx = {.date_flt1 = min_date, .date_flt2 = max_date, .top_k = TOP_K};
 
     for (LVCount_t i = 0; i < db->pending_count; i++) {
-        const LVTernaryChunk *candidate = lv_n_pending_ternary(db, i);
-        const int64_t dot_result = ternary_dot(q_vector, candidate, words);
+        const LVTernaryChunk *ternary_candidate = lv_n_pending_ternary(db, i);
+        const int64_t dot_result = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
         if (lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
             const uint8_t *row = lv_n_pending_row(db, i);
             h_ctx.row = (uint8_t *)row;
@@ -506,7 +506,8 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
         const LVCount_t remaining = disk_record_count - base;
         const LVCount_t n = remaining < batch_m ? remaining : batch_m;
 
-        LVStatus s = lv_read_file(db->vec_fd, db->vector_window, n * vector_bytes, (LVOffset_t)base * vector_bytes);
+        LVStatus s = lv_read_file(db->ternary_fd, db->ternary_window, n * ternary_bytes,
+                                  (LVOffset_t)base * ternary_bytes);
 
         if (s != LV_OK) {
             return s;
@@ -516,8 +517,8 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
         LVCount_t row_fetch_idx = 0;
 
         for (LVCount_t j = 0; j < n; ++j) {
-            const LVTernaryChunk *candidate = lv_n_window_ternary(db, j);
-            const int64_t dot_result = ternary_dot(q_vector, candidate, words);
+            const LVTernaryChunk *ternary_candidate = lv_n_window_ternary(db, j);
+            const int64_t dot_result = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
             if (lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
                 if (!row_fetched) {
                     row_fetch_idx = j;
@@ -570,7 +571,7 @@ void lv_close(Livero *db) {
     }
 
     lv_close_file(db->row_fd);
-    lv_close_file(db->vec_fd);
+    lv_close_file(db->ternary_fd);
     lv_close_file(db->val_fd);
     lv_close_file(db->commit_fd);
     free(db);
@@ -586,10 +587,10 @@ void lv_stat(const Livero *db, LVDBStat *stat) {
         stat->option.read_batch_m = db->window_batch_m;
         stat->option.sync_mode = db->sync_mode;
         stat->row_file_bytes = db->row_bytes;
-        stat->vec_file_bytes = db->vec_bytes;
+        stat->ternary_file_bytes = db->ternary_bytes;
         stat->val_file_bytes = db->val_bytes;
         stat->row_pending_bytes = lv_pending_row_bytse(db);
-        stat->vec_pending_bytes = lv_pending_vec_bytes(db);
+        stat->ternary_pending_bytes = lv_pending_ternary_bytes(db);
         stat->val_pending_bytes = lv_pending_val_bytes(db);
     }
 }
@@ -618,19 +619,19 @@ void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
     assert((uintptr_t)m_arena % LV_MEMORY_ALIGNMENT == 0);
 
     LVOffset_t offset = 0;
-    const LVSize32_t vector_bytes = ternary_chunks_bytes(ctx->vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(ctx->vector_dimension);
 
     Livero *db = (Livero *)m_arena;
     offset += sizeof(Livero);
 
     LVTernaryChunk *ternary_scratch = (LVTernaryChunk *)(m_arena + offset);
-    offset += vector_bytes;
+    offset += ternary_bytes;
 
-    LVTernaryChunk *vector_window = (LVTernaryChunk *)(m_arena + offset);
-    offset += vector_bytes * ctx->read_batch_m;
+    LVTernaryChunk *ternary_window = (LVTernaryChunk *)(m_arena + offset);
+    offset += ternary_bytes * ctx->read_batch_m;
 
-    LVTernaryChunk *vector_pending = (LVTernaryChunk *)(m_arena + offset);
-    offset += vector_bytes * ctx->write_batch_m;
+    LVTernaryChunk *ternary_pending = (LVTernaryChunk *)(m_arena + offset);
+    offset += ternary_bytes * ctx->write_batch_m;
 
     uint8_t *row_window = m_arena + offset;
     offset += LV_ROW_BYTES * ctx->read_batch_m;
@@ -643,17 +644,17 @@ void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
     db->next_seq = ctx->next_seq;
     db->next_commit_seq = ctx->next_commit_seq;
     db->ternary_scratch = ternary_scratch;
-    db->vector_window = vector_window;
-    db->vector_pending = vector_pending;
+    db->ternary_window = ternary_window;
+    db->ternary_pending = ternary_pending;
     db->row_window = row_window;
     db->row_pending = row_pending;
     db->value_pending = value_pending;
     db->row_fd = ctx->row_fd;
-    db->vec_fd = ctx->vec_fd;
+    db->ternary_fd = ctx->ternary_fd;
     db->val_fd = ctx->val_fd;
     db->commit_fd = ctx->commit_fd;
     db->row_bytes = ctx->row_bytes;
-    db->vec_bytes = ctx->vec_bytes;
+    db->ternary_bytes = ctx->ternary_bytes;
     db->val_bytes = ctx->val_bytes;
     db->max_disk_bytes = ctx->max_disk_bytes;
     db->pending_count = 0;
@@ -669,7 +670,7 @@ void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
 LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_commit_torn_out) {
     assert(ctx && commit_out);
 
-    const LVSize32_t vector_bytes = ternary_chunks_bytes(ctx->vector_dim);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(ctx->vector_dimension);
 
     LVCommit cmt = {0};
     LVCount_t nonempty_count = 0;
@@ -695,7 +696,7 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
                 corrupted_count++;
                 corrupted_idx = i;
             } else if (cmt_status.commit == LV_COMMIT_OK) {
-                if (!commit_sanity(&cmt, i, vector_bytes, ctx->max_disk_bytes)) {
+                if (!commit_sanity(&cmt, i, ternary_bytes, ctx->max_disk_bytes)) {
                     /*
                         This commit's checksum is correct. But it saved invalid values.
                     */
@@ -759,15 +760,15 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
         possible errors are LV_ERR_DATA_CORRUPT or LV_ERR_IO.
     */
     LVRowCCFDCtx rccfd = {.row_fd = ctx->row_fd,
-                          .vec_fd = ctx->vec_fd,
+                          .ternary_fd = ctx->ternary_fd,
                           .val_fd = ctx->val_fd,
                           .row_offset = 0,
-                          .vec_offset = 0,
-                          .vector_bytes = vector_bytes};
+                          .ternary_offset = 0,
+                          .ternary_bytes = ternary_bytes};
 
     for (uint64_t k = (uint64_t)best.total_count - best.batch_count; k < (uint64_t)best.total_count; ++k) {
         rccfd.row_offset = k * LV_ROW_BYTES;
-        rccfd.vec_offset = k * vector_bytes;
+        rccfd.ternary_offset = k * ternary_bytes;
 
         LVStatus s = row_checksum_check_from_disk(&rccfd);
         if (s != LV_OK) {
@@ -782,9 +783,9 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
 LVStatus lv_flush(Livero *db) {
     assert(db);
 
-    const LVSize32_t teranry_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
     const LVOffset_t row_offset_to_write = db->row_bytes;
-    const LVOffset_t vec_offset_to_write = db->vec_bytes;
+    const LVOffset_t ternary_offset_to_write = db->ternary_bytes;
     const LVOffset_t val_offset_to_write = db->val_bytes;
     const int sync = db->sync_mode != LV_SYNC_NONE;
 
@@ -808,13 +809,14 @@ LVStatus lv_flush(Livero *db) {
         }
     }
 
-    const LVSize32_t teranry_bytes_to_flush = db->pending_count * teranry_bytes;
-    if ((s = lv_write_file(db->vec_fd, db->vector_pending, teranry_bytes_to_flush, vec_offset_to_write)) != LV_OK) {
+    const LVSize32_t ternary_bytes_to_flush = db->pending_count * ternary_bytes;
+    if ((s = lv_write_file(db->ternary_fd, db->ternary_pending, ternary_bytes_to_flush,
+                           ternary_offset_to_write)) != LV_OK) {
         return s;
     }
 
     if (sync) {
-        if ((s = lv_sync_file(db->vec_fd)) != LV_OK) {
+        if ((s = lv_sync_file(db->ternary_fd)) != LV_OK) {
             LIVERO_ERROR("Failed to sync vec.lv.");
             return s;
         }
@@ -854,7 +856,7 @@ LVStatus lv_flush(Livero *db) {
     }
 
     db->row_bytes += row_bytes_to_flush;
-    db->vec_bytes += teranry_bytes_to_flush;
+    db->ternary_bytes += ternary_bytes_to_flush;
     db->val_bytes += db->value_pending_bytes;
 
     db->pending_count = 0;
@@ -863,21 +865,21 @@ LVStatus lv_flush(Livero *db) {
     return LV_OK;
 }
 
-int lv_pending_append(Livero *db, const LVRow *row, const void *ternary_vector, const void *value,
+int lv_pending_append(Livero *db, const LVRow *row, const LVTernaryChunk *ternary, const void *value,
                       const LVSize16_t value_len) {
-    assert(db && row && ternary_vector && value);
+    assert(db && row && ternary && value);
 
     if (db->pending_count >= db->pending_batch_m) {
         return -1;
     }
 
-    const LVSize32_t vector_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
     const LVOffset_t row_batch_offset = db->pending_count * LV_ROW_BYTES;
-    const LVOffset_t vector_batch_offset = db->pending_count * vector_bytes;
+    const LVOffset_t ternary_batch_offset = db->pending_count * ternary_bytes;
     const LVOffset_t value_batch_offset = db->pending_count * db->max_value_len;
 
     row_write_on_memory(db->row_pending + row_batch_offset, row);
-    memcpy((uint8_t *)db->vector_pending + vector_batch_offset, ternary_vector, vector_bytes);
+    memcpy((uint8_t *)db->ternary_pending + ternary_batch_offset, ternary, ternary_bytes);
     memcpy(db->value_pending + value_batch_offset, value, value_len);
 
     db->pending_count += 1;

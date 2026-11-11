@@ -19,18 +19,20 @@ static_assert(sizeof(LVTernaryChunk) == LV_TERNARY_CHUNK_BYTES, "LVTernaryChunk 
 
 
 
-static inline LVCount_t ternary_chunks_count(const LVDim_t dim) {
-    assert(dim != 0 && dim % LV_DIMENSION_MULTIPLE == 0); 
-    return dim / LV_TERNARY_CHUNK_CAPACITY;
+static inline LVCount_t ternary_chunks_count(const LVDim_t vector_dimension) {
+    assert(vector_dimension != 0 && vector_dimension % LV_DIMENSION_MULTIPLE == 0);
+    return vector_dimension / LV_TERNARY_CHUNK_CAPACITY;
 }
 
-static inline LVSize32_t ternary_chunks_bytes(const LVDim_t dim){
-    return ternary_chunks_count(dim)*LV_TERNARY_CHUNK_BYTES;
+static inline LVSize32_t ternary_chunks_bytes(const LVDim_t vector_dimension) {
+    return ternary_chunks_count(vector_dimension) * LV_TERNARY_CHUNK_BYTES;
 }
 
-void ternary_convert(const void* vector, const LVVectorType type, const LVDim_t dim, LVTernaryChunk* chunks);
+void ternary_convert(const void* vector, const LVVectorType vector_type, const LVDim_t vector_dimension,
+                     LVTernaryChunk* ternary_chunks);
 
-int64_t ternary_dot(const LVTernaryChunk* a, const LVTernaryChunk* b, const LVCount_t words);
+int64_t ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
+                    const LVCount_t ternary_chunk_count);
 
 
 #endif

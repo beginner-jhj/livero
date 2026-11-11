@@ -17,17 +17,17 @@ struct Livero {
     LVSeq_t next_seq;
     LVSeq_t next_commit_seq;
     LVTernaryChunk* ternary_scratch;
-    LVTernaryChunk* vector_window;
-    LVTernaryChunk* vector_pending;
+    LVTernaryChunk* ternary_window;
+    LVTernaryChunk* ternary_pending;
     uint8_t* row_window;
     uint8_t* row_pending;
     uint8_t* value_pending;
     int row_fd;
-    int vec_fd;
+    int ternary_fd;
     int val_fd;
     int commit_fd;
     LVSize32_t row_bytes;
-    LVSize32_t vec_bytes;
+    LVSize32_t ternary_bytes;
     LVSize32_t val_bytes;
     LVSize32_t max_disk_bytes;
     LVCount_t pending_count;
@@ -61,7 +61,7 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 #define LV_MAX_BATCH_M 512
 
 #define LV_ROW_FILE_NAME "row.lv"
-#define LV_VEC_FILE_NAME "vec.lv"
+#define LV_TERNARY_FILE_NAME "ter.lv"
 #define LV_VAL_FILE_NAME "val.lv"
 #define LV_COMMIT_FILE_NAME "commit.lv"
 #define LV_CONFIG_FILE_NAME "config.lv"
@@ -115,14 +115,14 @@ static inline const uint8_t* lv_n_window_row(const Livero* db, const LVOffset_t 
 
 static inline const LVTernaryChunk* lv_n_pending_ternary(const Livero* db, const LVOffset_t idx) {
     assert(db);
-    const LVCount_t words = ternary_chunks_count(db->vector_dimension);
-    return db->pending_count == 0 ? NULL : &db->vector_pending[idx * words];
+    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->vector_dimension);
+    return db->pending_count == 0 ? NULL : &db->ternary_pending[idx * ternary_chunk_count];
 }
 
 static inline const LVTernaryChunk* lv_n_window_ternary(const Livero* db, const LVOffset_t idx) {
     assert(db);
-    const LVCount_t words = ternary_chunks_count(db->vector_dimension);
-    return db->window_batch_m == 0 ? NULL : &db->vector_window[idx * words];
+    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->vector_dimension);
+    return db->window_batch_m == 0 ? NULL : &db->ternary_window[idx * ternary_chunk_count];
 }
 
 static inline const uint8_t* lv_n_pending_value(const Livero* db, const LVOffset_t idx) {
@@ -135,7 +135,7 @@ static inline LVSize32_t lv_pending_row_bytse(const Livero* db) {
     return db->value_pending_bytes * LV_ROW_BYTES;
 }
 
-static inline LVSize32_t lv_pending_vec_bytes(const Livero* db) {
+static inline LVSize32_t lv_pending_ternary_bytes(const Livero* db) {
     assert(db);
     return db->value_pending_bytes * ternary_chunks_bytes(db->vector_dimension);
 }
@@ -151,11 +151,11 @@ typedef struct LVInitCtx {
     LVSeq_t next_seq;
     LVSeq_t next_commit_seq;
     int row_fd;
-    int vec_fd;
+    int ternary_fd;
     int val_fd;
     int commit_fd;
     LVSize32_t row_bytes;
-    LVSize32_t vec_bytes;
+    LVSize32_t ternary_bytes;
     LVSize32_t val_bytes;
 
     LVSize32_t max_disk_bytes;
@@ -171,11 +171,11 @@ void lv_init_memory(uint8_t* m_arena, const LVInitCtx* ctx);
 
 typedef struct LVRecoverCtx {
     int row_fd;
-    int vec_fd;
+    int ternary_fd;
     int val_fd;
     int commit_fd;
     LVSize32_t max_disk_bytes;
-    LVDim_t vector_dim;
+    LVDim_t vector_dimension;
 } LVRecoverCtx;
 /*
     Full scan commit.lv and find the last valid commit
@@ -209,9 +209,9 @@ LVStatus lv_interpolation_search_from_disk(LVDiskSearchCtx* ctx, const LVSeq_t t
 LVStatus lv_binary_search_from_disk(LVDiskSearchCtx* ctx, const LVSeq_t target, LVGetResult* result,
                                     LVOffset_t* row_offset_out);
 
-/* Append one record (row, vector, value) to the pending (uncommitted)
+/* Append one record (row, ternary, value) to the pending (uncommitted)
   write buffers. */
-int lv_pending_append(Livero* db, const LVRow* row, const void* ternary_vector, const void* value,
+int lv_pending_append(Livero* db, const LVRow* row, const LVTernaryChunk* ternary, const void* value,
                       const LVSize16_t value_len);
 
 /* Find target among pending records, still in RAM, not yet on disk.

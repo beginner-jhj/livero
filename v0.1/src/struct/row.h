@@ -67,20 +67,20 @@ typedef struct LVRowCalcChecksumCtx {
     uint64_t epoch_date;
     LVOffset_t value_offset;
     LVSize16_t value_len;
-    LVTernaryChunk* ternary;
+    LVTernaryChunk* ternary_chunks;
     void* value;
-    LVDim_t vector_dim;
+    LVDim_t vector_dimension;
 } LVRowCalcChecksumCtx;
 
 uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx);
 
 typedef struct LVRowCCFDCtx {
     int row_fd;
-    int vec_fd;
+    int ternary_fd;
     int val_fd;
     LVOffset_t row_offset;
-    LVOffset_t vec_offset;
-    LVSize32_t vector_bytes;
+    LVOffset_t ternary_offset;
+    LVSize32_t ternary_bytes;
 } LVRowCCFDCtx;
 
 LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx);

@@ -13,10 +13,10 @@
 // Usage, one shot:
 //     uint32_t c = lv_crc32c(buf, len);
 //
-// Usage, streaming (e.g. rows + vectors + values of one batch):
+// Usage, streaming (e.g. rows + ternary data + values of one batch):
 //     uint32_t c = lv_crc32c_begin();
 //     c = lv_crc32c_update(c, rows, rows_len);
-//     c = lv_crc32c_update(c, vecs, vecs_len);
+//     c = lv_crc32c_update(c, ternary_data, ternary_data_len);
 //     c = lv_crc32c_end(c);
 // Streaming gives exactly the same result as hashing the concatenated bytes.
 
