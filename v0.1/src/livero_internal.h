@@ -243,9 +243,7 @@ typedef struct {
 } LVQueryIndex;
 
 typedef struct {
-    LVSeq_t row_seq;
-    uint64_t row_date;
-    LVSize16_t valuen_len;
+    uint8_t* row;
     uint64_t date_flt1;
     uint64_t date_flt2;
     int64_t dot_result;
