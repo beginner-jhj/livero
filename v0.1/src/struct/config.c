@@ -18,6 +18,7 @@ LVConfigDisk lv_config_m2d(const LVConfig* config) {
     checksum = lv_crc32c_update(checksum, cfg_disk.vector_dimension, sizeof(cfg_disk.vector_dimension));
 
     cfg_disk.vector_type = config->vector_type;
+    checksum = lv_crc32c_update(checksum, &cfg_disk.vector_type, sizeof(cfg_disk.vector_type)); //fix bug, didn't update checksum with vector_type
 
     checksum = lv_crc32c_end(checksum);
     lv_put_fixed_32(cfg_disk.checksum, checksum);
