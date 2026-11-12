@@ -513,28 +513,31 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
             return s;
         }
 
-        int row_fetched = 0;
-        LVCount_t row_fetch_idx = 0;
+        LVCount_t cache_lo = 0;
+        LVCount_t cache_hi = 0;
 
         for (LVCount_t j = 0; j < n; ++j) {
             const LVTernaryChunk *ternary_candidate = lv_n_window_ternary(db, j);
             const int64_t dot_result = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
-            if (lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
-                if (!row_fetched) {
-                    row_fetch_idx = j;
-                    const LVCount_t fetch_count = n - row_fetch_idx;
-                    const LVOffset_t fetch_offset = (LVOffset_t)((base + row_fetch_idx) * LV_ROW_BYTES);
-                    s = lv_read_file(db->row_fd, db->row_window, fetch_count * LV_ROW_BYTES, fetch_offset);
-                    if (s != LV_OK) {
-                        return s;
-                    }
-                    row_fetched = 1;
-                }
-                const uint8_t *row = lv_n_window_row(db, j - row_fetch_idx);
-                h_ctx.row = (uint8_t *)row;
-                h_ctx.dot_result = dot_result;
-                lv_query_heap_update(heap, &heap_size, &h_ctx);
+            if (!lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
+                continue;
             }
+
+            if (j >= cache_hi) {
+                const LVCount_t fetch_count = (heap_size * 10 <= TOP_K * 3) ? n - j : 1;
+                s = lv_read_file(db->row_fd, db->row_window, fetch_count * LV_ROW_BYTES,
+                                 (LVOffset_t)(base + j) * LV_ROW_BYTES);
+                if (s != LV_OK) {
+                    return s;
+                }
+                cache_lo = j;
+                cache_hi = j + fetch_count;
+            }
+
+            // Offset inside the cached rows, not inside the whole window.
+            h_ctx.row = (uint8_t *)lv_n_window_row(db, j - cache_lo);
+            h_ctx.dot_result = dot_result;
+            lv_query_heap_update(heap, &heap_size, &h_ctx);
         }
     }
 
