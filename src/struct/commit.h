@@ -31,7 +31,7 @@ typedef struct LVCommitDisk {
 
 static_assert(sizeof(LVCommitDisk) == LV_COMMIT_DISK_BYTES, "LVCommitDisk size must be 40 bytes.");
 
-#define LV_COMMIT_SLOT_M 64
+#define LV_COMMIT_SLOT_M 4
 #define LV_COMMIT_SEQ_ZERO (LVSeq_t)0
 
 #ifndef LV_COMMIT_SECTOR_BYTES
