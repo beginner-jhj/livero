@@ -26,7 +26,7 @@ static const int BENCH_RECORD_COUNTS[] = {1000, 10000, 100000};
 
 // Results depend on these, so they are printed with every run.
 #define BENCH_WRITE_BATCH_M 100
-#define BENCH_READ_BATCH_M 100
+#define BENCH_READ_BATCH_M 170
 
 static const LVConfig BENCH_CONFIG = {
     .max_disk_bytes = 100u * _1MiB,
