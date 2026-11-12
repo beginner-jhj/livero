@@ -57,7 +57,7 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 #define LIVERO_ERROR(...) ((void)0)
 #endif
 
-#define LV_MEMORY_ALIGNMENT 64
+#define LV_MEMORY_ALIGNMENT 16
 #define LV_MAX_BATCH_M 512
 
 #define LV_ROW_FILE_NAME "row.lv"
@@ -70,12 +70,9 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 
 #define LV_MAX_PATH_LEN 512
 #define LV_MAX_VLA_LEN 512
-#define LV_MAX_K 32
 #define LV_TOMBSTONE_FLAG 0xff
 
 #define LV_BASELINE_DISK_USAGE LV_CONFIG_DISK_BYTES + LV_COMMIT_SECTOR_BYTES* LV_COMMIT_SLOT_M
-
-static_assert(LV_MAX_K * LV_TERNARY_CHUNK_BYTES <= LV_MAX_VLA_LEN, "top_k vla results can exceed LV_MAX_VLA_LEN.");
 
 /*
     Count of flushed rows (on disk)
@@ -130,19 +127,32 @@ static inline const uint8_t* lv_n_pending_value(const Livero* db, const LVOffset
     return db->value_pending_bytes == 0 ? NULL : db->value_pending + idx * db->max_value_len;
 }
 
-static inline LVSize32_t lv_pending_row_bytse(const Livero* db) {
+static inline LVSize32_t lv_pending_row_bytes(const Livero* db) {
     assert(db);
-    return db->value_pending_bytes * LV_ROW_BYTES;
+    return db->pending_count * LV_ROW_BYTES;
 }
 
 static inline LVSize32_t lv_pending_ternary_bytes(const Livero* db) {
     assert(db);
-    return db->value_pending_bytes * ternary_chunks_bytes(db->vector_dimension);
+    return db->pending_count * ternary_chunks_bytes(db->vector_dimension);
 }
 
 static inline LVSize32_t lv_pending_val_bytes(const Livero* db) {
     assert(db);
     return db->value_pending_bytes;
+}
+
+static inline int lv_is_disk_full(const Livero* db, const LVSize16_t new_record_value_len) {
+    assert(db);
+    const uint64_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const uint64_t record_fixed_bytes = LV_ROW_BYTES + ternary_bytes;
+
+    const uint64_t current_disk_bytes = (uint64_t)db->row_file_bytes + db->ternary_file_bytes + db->val_file_bytes;
+    const uint64_t current_pending_bytes = (uint64_t)lv_pending_row_bytes(db) + lv_pending_ternary_bytes(db) + lv_pending_val_bytes(db);
+    const uint64_t new_record_bytes = record_fixed_bytes + new_record_value_len;
+
+    const uint64_t needed = LV_BASELINE_DISK_USAGE + current_disk_bytes + current_pending_bytes + new_record_bytes;
+    return needed > (uint64_t)db->max_disk_bytes;
 }
 
 LVStatus lv_allocate_memory(const LVSize32_t size, void** ptr_out);
