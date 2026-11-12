@@ -31,6 +31,9 @@ static inline LVSize32_t ternary_chunks_bytes(const LVDim_t vector_dimension) {
 void ternary_convert(const void* vector, const LVVectorType vector_type, const LVDim_t vector_dimension,
                      LVTernaryChunk* ternary_chunks);
 
+int64_t ternary_dot_scalar(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
+                                  const LVCount_t ternary_chunk_count);
+
 int64_t ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
                     const LVCount_t ternary_chunk_count);
 
