@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypedDict
 
-from _path import ROOT_DIR, PYTHON_TESTS_DIR
+from _path import PYTHON_TESTS_DIR, ROOT_DIR
 
 sys.path.insert(0, os.path.join(ROOT_DIR, "build", "cffi"))
 
-from _livero import lib, ffi
+from _livero import ffi, lib
 
 
 class LVStatus(Enum):
@@ -69,7 +69,9 @@ class LVDate:
     sec: int
 
     def to_datetime(self) -> datetime.datetime:
-        return datetime.datetime(self.year, self.month, self.day, self.hour, self.min, self.sec)
+        return datetime.datetime(
+            self.year, self.month, self.day, self.hour, self.min, self.sec
+        )
 
     @staticmethod
     def from_datetime(dt: datetime.datetime) -> "LVDate":
@@ -116,18 +118,24 @@ class Livero:
     def __exit__(self, *exc) -> None:
         self.close()
 
-
-    def create(self, path: str, config: LVConfig, option: LVOption | None = None) -> LVStatus:
+    def create(
+        self, path: str, config: LVConfig, option: LVOption | None = None
+    ) -> LVStatus:
         self._require_closed()
         c_db_ptr = ffi.new("Livero **")
-        c_cfg = ffi.new("LVConfig *", {
-            "max_disk_bytes": config["max_disk_bytes"],
-            "max_value_len": config["max_value_len"],
-            "vector_dimension": config["vector_dimension"],
-            "vector_type": config["vector_type"].value,
-        })
+        c_cfg = ffi.new(
+            "LVConfig *",
+            {
+                "max_disk_bytes": config["max_disk_bytes"],
+                "max_value_len": config["max_value_len"],
+                "vector_dimension": config["vector_dimension"],
+                "vector_type": config["vector_type"].value,
+            },
+        )
 
-        status = LVStatus(lib.lv_create(path.encode(), c_cfg, self._c_option(option), c_db_ptr))
+        status = LVStatus(
+            lib.lv_create(path.encode(), c_cfg, self._c_option(option), c_db_ptr)
+        )
         if status == LVStatus.LV_OK:
             self._attach(c_db_ptr[0])
         return status
@@ -148,21 +156,25 @@ class Livero:
         self._config = None
         self._value_buf = None
 
-
-    def put(self, vector: list[float] | list[int], value: bytes,
-            date: LVDate | None = None) -> tuple[LVStatus, int | None]:
+    def put(
+        self, vector: list[float] | list[int], value: bytes, date: LVDate | None = None
+    ) -> tuple[LVStatus, int | None]:
         """Returns (status, seq). seq is None unless status is LV_OK. date defaults to now."""
         cfg = self._require_open()
         c_vector = self._c_vector(vector)
 
         if len(value) > cfg["max_value_len"]:
-            raise ValueError(f"value is {len(value)} bytes, max_value_len is {cfg['max_value_len']}")
+            raise ValueError(
+                f"value is {len(value)} bytes, max_value_len is {cfg['max_value_len']}"
+            )
 
         c_value = ffi.from_buffer(value)
         c_date = self._c_date(date if date is not None else LVDate.now())
         c_seq_out = ffi.new("LVSeq_t *")
 
-        status = LVStatus(lib.lv_put(self.db, c_vector, c_value, len(value), c_date, c_seq_out))
+        status = LVStatus(
+            lib.lv_put(self.db, c_vector, c_value, len(value), c_date, c_seq_out)
+        )
         return (status, c_seq_out[0] if status == LVStatus.LV_OK else None)
 
     def get(self, seq: int) -> tuple[LVStatus, LVDate | None, bytes | None]:
@@ -181,7 +193,9 @@ class Livero:
         value_len = c_result.value_len
         # Reading past the buffer would expose unrelated memory, so refuse instead.
         if value_len > cfg["max_value_len"]:
-            raise RuntimeError(f"lv_get returned value_len {value_len} > max_value_len {cfg['max_value_len']}")
+            raise RuntimeError(
+                f"lv_get returned value_len {value_len} > max_value_len {cfg['max_value_len']}"
+            )
 
         # bytes(...) copies out of the shared buffer, so the next get cannot change it.
         value = bytes(ffi.buffer(self._value_buf, value_len))
@@ -192,9 +206,14 @@ class Livero:
         self._check_seq(seq)
         return LVStatus(lib.lv_delete(self.db, seq))
 
-    def query(self, query_vector: list[float] | list[int], k: int,
-              date1: LVDate | None = None, date2: LVDate | None = None,
-              with_values: bool = False) -> tuple[LVStatus, list[LVQueryResult] | None]:
+    def query(
+        self,
+        query_vector: list[float] | list[int],
+        k: int,
+        date1: LVDate | None = None,
+        date2: LVDate | None = None,
+        with_values: bool = False,
+    ) -> tuple[LVStatus, list[LVQueryResult] | None]:
         """
         Top-k search, optionally limited to [date1, date2]. None leaves that side open.
         with_values=True calls get() for each hit, since lv_query returns no values.
@@ -211,7 +230,11 @@ class Livero:
         c_results = ffi.new("LVQueryResult[]", k)
         c_size_out = ffi.new("LVSize32_t *")
 
-        status = LVStatus(lib.lv_query(self.db, k, c_query_vector, c_date1, c_date2, c_results, c_size_out))
+        status = LVStatus(
+            lib.lv_query(
+                self.db, k, c_query_vector, c_date1, c_date2, c_results, c_size_out
+            )
+        )
         if status != LVStatus.LV_OK:
             return (status, None)
 
@@ -222,7 +245,9 @@ class Livero:
         out: list[LVQueryResult] = []
         for i in range(size):
             r = c_results[i]
-            item = LVQueryResult(seq=r.seq, date=self._py_date(r.date), value_len=r.value_len)
+            item = LVQueryResult(
+                seq=r.seq, date=self._py_date(r.date), value_len=r.value_len
+            )
             if with_values:
                 s, _, v = self.get(item.seq)
                 if s == LVStatus.LV_OK:
@@ -253,7 +278,6 @@ class Livero:
             ternary_pending_bytes=c_stat.ternary_pending_bytes,
             val_pending_bytes=c_stat.val_pending_bytes,
         )
-
 
     def _attach(self, db_ptr) -> None:
         # lv_open once returned LV_OK without setting the handle; never trust it blindly.
@@ -287,18 +311,23 @@ class Livero:
     @staticmethod
     def _c_option(option: LVOption | None):
         opt = option if option is not None else DEFAULT_OPTION
-        return ffi.new("LVOption *", {
-            "read_batch_m": opt["read_batch_m"],
-            "write_batch_m": opt["write_batch_m"],
-            "sync_mode": opt["sync_mode"].value,
-        })
+        return ffi.new(
+            "LVOption *",
+            {
+                "read_batch_m": opt["read_batch_m"],
+                "write_batch_m": opt["write_batch_m"],
+                "sync_mode": opt["sync_mode"].value,
+            },
+        )
 
     def _c_vector(self, vector: list[float] | list[int]):
         cfg = self._require_open()
         dim = cfg["vector_dimension"]
         # C reads exactly `dim` elements; a shorter list would make it read past the array.
         if len(vector) != dim:
-            raise ValueError(f"vector has {len(vector)} elements, vector_dimension is {dim}")
+            raise ValueError(
+                f"vector has {len(vector)} elements, vector_dimension is {dim}"
+            )
 
         if cfg["vector_type"] == LVVectorType.LV_VEC_TYPE_FP32:
             return ffi.new(f"float[{dim}]", vector)
@@ -308,23 +337,24 @@ class Livero:
     @staticmethod
     def _c_date(date: LVDate):
         date.to_datetime()  # Raises ValueError for an impossible date.
-        return ffi.new("LVDate *", {
-            "year": date.year,
-            "month": date.month,
-            "day": date.day,
-            "hour": date.hour,
-            "min": date.min,
-            "sec": date.sec,
-        })
+        return ffi.new(
+            "LVDate *",
+            {
+                "year": date.year,
+                "month": date.month,
+                "day": date.day,
+                "hour": date.hour,
+                "min": date.min,
+                "sec": date.sec,
+            },
+        )
 
     @staticmethod
     def _py_date(c_date) -> LVDate:
-        return LVDate(c_date.year, c_date.month, c_date.day, c_date.hour, c_date.min, c_date.sec)
+        return LVDate(
+            c_date.year, c_date.month, c_date.day, c_date.hour, c_date.min, c_date.sec
+        )
 
-
-# --------------------------------------------------------------------------- #
-# Smoke test (ported from v0)                                                 #
-# --------------------------------------------------------------------------- #
 
 if __name__ == "__main__":
     import random
@@ -362,8 +392,14 @@ if __name__ == "__main__":
         return "".join(random.choices(string_pool, k=10)).encode()
 
     def rand_date() -> LVDate:
-        return LVDate(year=random.randint(2000, 2026), month=random.randint(1, 12), day=random.randint(1, 28),
-                      hour=random.randint(0, 23), min=random.randint(0, 59), sec=random.randint(0, 59))
+        return LVDate(
+            year=random.randint(2000, 2026),
+            month=random.randint(1, 12),
+            day=random.randint(1, 28),
+            hour=random.randint(0, 23),
+            min=random.randint(0, 59),
+            sec=random.randint(0, 59),
+        )
 
     # seq -> (date, value) for every record put by this test.
     answers: dict[int, tuple[LVDate, bytes]] = {}
@@ -374,12 +410,16 @@ if __name__ == "__main__":
             status, date, value = livero.get(seq)
             if seq in deleted:
                 if status != LVStatus.LV_ERR_DELETED:
-                    raise RuntimeError(f"[{phase}] seq {seq} should be deleted, got {status.name}")
+                    raise RuntimeError(
+                        f"[{phase}] seq {seq} should be deleted, got {status.name}"
+                    )
                 continue
             if status != LVStatus.LV_OK:
                 raise RuntimeError(f"[{phase}] failed to get seq {seq}: {status.name}")
             if date != want_date:
-                raise RuntimeError(f"[{phase}] seq {seq}: date is incorrect ({want_date} != {date})")
+                raise RuntimeError(
+                    f"[{phase}] seq {seq}: date is incorrect ({want_date} != {date})"
+                )
             if value != want_value:
                 raise RuntimeError(f"[{phase}] seq {seq}: value is incorrect")
 
@@ -417,7 +457,11 @@ if __name__ == "__main__":
         stat = livero.stat()
         if stat.config != config:
             raise RuntimeError(f"Config changed across reopen: {stat.config}")
-        if stat.row_pending_bytes or stat.ternary_pending_bytes or stat.val_pending_bytes:
+        if (
+            stat.row_pending_bytes
+            or stat.ternary_pending_bytes
+            or stat.val_pending_bytes
+        ):
             raise RuntimeError(f"Pending bytes remain after reopen: {stat}")
         check_all_gets("after reopen")
         print("Succeeded to reopen a db and keep the deleted record deleted.")
@@ -438,13 +482,23 @@ if __name__ == "__main__":
         if status != LVStatus.LV_OK or results is None:
             raise RuntimeError(f"Failed to query. {status.name}")
         if len(results) != test_top_k:
-            raise RuntimeError(f"Query result size is incorrect. (Expect: {test_top_k}, Got: {len(results)})")
+            raise RuntimeError(
+                f"Query result size is incorrect. (Expect: {test_top_k}, Got: {len(results)})"
+            )
         for r in results:
             if r.seq not in query_truth:
-                raise RuntimeError(f"Query returned seq {r.seq}, which is not a ground truth.")
+                raise RuntimeError(
+                    f"Query returned seq {r.seq}, which is not a ground truth."
+                )
             want_date, want_value = answers[r.seq]
-            if r.date != want_date or r.value != want_value or r.value_len != len(want_value):
-                raise RuntimeError(f"Query result for seq {r.seq} does not match what was put.")
+            if (
+                r.date != want_date
+                or r.value != want_value
+                or r.value_len != len(want_value)
+            ):
+                raise RuntimeError(
+                    f"Query result for seq {r.seq} does not match what was put."
+                )
         print("Succeeded to query.")
 
         print("Succeeded to a smoke test.")
