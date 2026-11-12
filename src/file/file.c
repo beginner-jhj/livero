@@ -96,10 +96,13 @@ LVStatus lv_read_file(const int fd, void* buf, const LVSize32_t size, const LVOf
 }
 
 LVStatus lv_sync_file(int fd) {
-    if (fsync(fd) < 0) {
-        return LV_ERR_IO;
-    }
-    return LV_OK;
+    int result = 0;
+    #if defined(__APPLE__)
+        result = fcntl(fd, F_FULLFSYNC);
+    #else
+        result = fsync(fd);
+    #endif
+    return result < 0 ?  LV_ERR_IO:LV_OK;
 }
 
 void lv_put_fixed_16(uint8_t* buf, uint16_t value) {
