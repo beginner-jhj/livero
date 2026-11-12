@@ -4,8 +4,11 @@
 #include <float.h>
 #include <math.h>
 #include <memory.h>
+#include <stdint.h>
 #include <stdlib.h>
+
 #include "livero_types.h"
+#include "simd.h" // simd.h itself does not contain any simd intrinsics, it only provids simd interface
 
 static void ternary_make(LVTernaryChunk* ternary_chunks, const int ternary_value, const LVDim_t vector_index) {
     const LVDim_t chunk_index = vector_index / LV_TERNARY_CHUNK_CAPACITY;
@@ -19,8 +22,7 @@ static void ternary_make(LVTernaryChunk* ternary_chunks, const int ternary_value
     }
 }
 
-static void ternary_convert_fp32(const float* vector, const LVDim_t vector_dimension,
-                                 LVTernaryChunk* ternary_chunks) {
+static void ternary_convert_fp32(const float* vector, const LVDim_t vector_dimension, LVTernaryChunk* ternary_chunks) {
     assert(vector && vector_dimension > 0);
 
     double sum = 0.0;
@@ -43,8 +45,7 @@ static void ternary_convert_fp32(const float* vector, const LVDim_t vector_dimen
         ternary_make(ternary_chunks, ternary_value, vector_index);
     }
 }
-static void ternary_convert_int8(const int8_t* vector, const LVDim_t vector_dimension,
-                                 LVTernaryChunk* ternary_chunks) {
+static void ternary_convert_int8(const int8_t* vector, const LVDim_t vector_dimension, LVTernaryChunk* ternary_chunks) {
     assert(vector && vector_dimension > 0);
     uint64_t sum = 0;
     for (LVDim_t vector_index = 0; vector_index < vector_dimension; ++vector_index) {
@@ -79,8 +80,8 @@ void ternary_convert(const void* vector, const LVVectorType vector_type, const L
     }
 }
 
-int64_t ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
-                    const LVCount_t ternary_chunk_count) {
+int64_t ternary_dot_scalar(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
+                           const LVCount_t ternary_chunk_count) {
     /*
         Ternary Dot Product's result is (a number of +1s) - (a number of -1s).
 
@@ -109,4 +110,14 @@ int64_t ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* terna
     }
 
     return both_nonzero - 2 * sign_differs;
+}
+
+int64_t ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
+                    const LVCount_t ternary_chunk_count) {
+    
+    #if defined(LV_USE_SIMD) && defined(__aarch64__)
+        return ternary_dot_simd(ternary_a, ternary_b, ternary_chunk_count);
+    #else
+        return ternary_dot_scalar(ternary_a, ternary_b, ternary_chunk_count);
+    #endif
 }
