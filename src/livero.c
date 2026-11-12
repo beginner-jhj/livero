@@ -324,6 +324,11 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
         return LV_ERR_INVALID_PARAM;
     }
 
+    if(lv_is_disk_full(db, value_len)){
+        LIVERO_ERROR("Disk is full");
+        return LV_ERR_DISK_FULL;
+    }
+
     const LVSeq_t current_seq = db->next_seq;
     const uint64_t epoch_date = lv_convert_date_to_epoch(date);
     const LVOffset_t value_disk_offset = db->val_file_bytes;
@@ -449,11 +454,6 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
         return LV_ERR_INVALID_PARAM;
     }
 
-    if (k > LV_MAX_K) {
-        LIVERO_ERROR("The k exceeds LV_MAX_K(%d).", LV_MAX_K);
-        return LV_ERR_INVALID_PARAM;
-    }
-
     if (!result || !result_size) {
         LIVERO_ERROR("You must pass both result pointer and result_size pointer.");
         return LV_ERR_INVALID_PARAM;
@@ -524,7 +524,7 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
                 if (!row_fetched) {
                     row_fetch_idx = j;
                     const LVCount_t fetch_count = n - row_fetch_idx;
-                    const LVOffset_t fetch_offset = (LVOffset_t)((base + row_fetch_idx) * LV_ROW_BYTES);  // fix bug
+                    const LVOffset_t fetch_offset = (LVOffset_t)((base + row_fetch_idx) * LV_ROW_BYTES);
                     s = lv_read_file(db->row_fd, db->row_window, fetch_count * LV_ROW_BYTES, fetch_offset);
                     if (s != LV_OK) {
                         return s;
@@ -590,7 +590,7 @@ void lv_stat(const Livero *db, LVDBStat *stat) {
         stat->row_file_bytes = db->row_file_bytes;
         stat->ternary_file_bytes = db->ternary_file_bytes;
         stat->val_file_bytes = db->val_file_bytes;
-        stat->row_pending_bytes = lv_pending_row_bytse(db);
+        stat->row_pending_bytes = lv_pending_row_bytes(db);
         stat->ternary_pending_bytes = lv_pending_ternary_bytes(db);
         stat->val_pending_bytes = lv_pending_val_bytes(db);
     }
@@ -1145,7 +1145,6 @@ LVStatus lv_fill_get_result(const uint8_t *row, const void *value_src, const int
 }
 
 void lv_query_heap_insert(LVQueryIndex *heap, const LVQueryIndex index, LVSize32_t *heap_size) {
-    assert(*heap_size < LV_MAX_K);
     heap[*heap_size] = index;
     int i = *heap_size;
     (*heap_size)++;
