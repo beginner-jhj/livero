@@ -77,3 +77,7 @@ lv_add_test(test_recover tests/test_recover.c)
 lv_add_test(test_disk_search tests/test_disk_search.c)
 lv_add_test(test_livero tests/test_livero.c)
 
+
+add_executable(benchmark tests/benchmark.c)
+target_link_libraries(benchmark PRIVATE livero)
+target_include_directories(benchmark PRIVATE src include tests)
