@@ -16,12 +16,10 @@ static char LV_WRITABLE_SECTOR[LV_COMMIT_SECTOR_BYTES] = {0};
 LVStatus commit_init(int fd) {
     LVStatus s = LV_OK;
 
-    // LVOffset_t off = LV_COMMIT_SECTOR_BYTES; invalid offset
     for (int i = 0; i < LV_COMMIT_SLOT_M; i++) {
         if ((s = lv_write_file(fd, LV_ZERO_SECTOR, LV_COMMIT_SECTOR_BYTES, i * LV_COMMIT_SECTOR_BYTES)) != LV_OK) {
             return s;
         }
-        // off += LV_COMMIT_SECTOR_BYTES;
     }
 
     return lv_sync_file(fd);
@@ -39,7 +37,7 @@ LVCommitDisk commit_m2d(const LVCommit* commit) {
     commit_checksum = lv_crc32c_update(commit_checksum, cmt_disk.first_seq, sizeof(cmt_disk.first_seq));
 
     lv_put_fixed_64(cmt_disk.reserved_seq,
-                    commit->reserved_seq);  // fix. it saved data in a wrong buffer first_seq->reserved_seq
+                    commit->reserved_seq);
     commit_checksum = lv_crc32c_update(commit_checksum, cmt_disk.reserved_seq, sizeof(cmt_disk.reserved_seq));
 
     lv_put_fixed_32(cmt_disk.total_count, commit->total_count);
