@@ -61,7 +61,7 @@ if(LV_SIMD_ACTIVE)
     target_compile_definitions(livero PUBLIC LV_USE_SIMD)
 endif()
 
-target_compile_definitions(livero PRIVATE _POSIX_C_SOURCE=200809L)
+target_compile_definitions(livero PRIVATE _POSIX_C_SOURCE=200809L _DARWIN_C_SOURCE)
 
 find_library(LV_MATH_LIB m)
 if(LV_MATH_LIB)
