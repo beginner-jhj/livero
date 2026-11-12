@@ -324,7 +324,7 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
         return LV_ERR_INVALID_PARAM;
     }
 
-    if(lv_is_disk_full(db, value_len)){
+    if (lv_is_disk_full(db, value_len)) {
         LIVERO_ERROR("Disk is full");
         return LV_ERR_DISK_FULL;
     }
@@ -487,8 +487,7 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
 
     LVQueryIndex heap[TOP_K];  // min-heap: [0] is the current k-th best (the "threshold")
     LVSize32_t heap_size = 0;
-    LVQueryHeapCtx h_ctx = {
-        .min_epoch_date = min_epoch_date, .max_epoch_date = max_epoch_date, .top_k = TOP_K};
+    LVQueryHeapCtx h_ctx = {.min_epoch_date = min_epoch_date, .max_epoch_date = max_epoch_date, .top_k = TOP_K};
 
     for (LVCount_t i = 0; i < db->pending_count; i++) {
         const LVTernaryChunk *ternary_candidate = lv_n_pending_ternary(db, i);
@@ -507,8 +506,8 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
         const LVCount_t remaining = disk_record_count - base;
         const LVCount_t n = remaining < batch_m ? remaining : batch_m;
 
-        LVStatus s = lv_read_file(db->ternary_fd, db->ternary_window, n * ternary_bytes,
-                                  (LVOffset_t)base * ternary_bytes);
+        LVStatus s =
+            lv_read_file(db->ternary_fd, db->ternary_window, n * ternary_bytes, (LVOffset_t)base * ternary_bytes);
 
         if (s != LV_OK) {
             return s;
@@ -603,7 +602,10 @@ void lv_stat(const Livero *db, LVDBStat *stat) {
 LVStatus lv_allocate_memory(const LVSize32_t size, void **ptr_out) {
     assert(ptr_out);
 
-    const LVSize16_t rounded = (size + LV_MEMORY_ALIGNMENT - 1) & ~(LV_MEMORY_ALIGNMENT - 1);
+    const LVSize32_t rounded =
+        (size + LV_MEMORY_ALIGNMENT - 1) &
+        ~(LV_MEMORY_ALIGNMENT -
+          1);  // Critical! rounded was 16 bytes so it easily eceeds total size when the max value len is big
     void *m = aligned_alloc(LV_MEMORY_ALIGNMENT, rounded);
 
     if (!m) {
@@ -811,8 +813,8 @@ LVStatus lv_flush(Livero *db) {
     }
 
     const LVSize32_t ternary_bytes_to_flush = db->pending_count * ternary_bytes;
-    if ((s = lv_write_file(db->ternary_fd, db->ternary_pending, ternary_bytes_to_flush,
-                           ternary_offset_to_write)) != LV_OK) {
+    if ((s = lv_write_file(db->ternary_fd, db->ternary_pending, ternary_bytes_to_flush, ternary_offset_to_write)) !=
+        LV_OK) {
         return s;
     }
 
