@@ -3,6 +3,7 @@
 
 #include "livero_types.h"
 
+LVStatus lv_concat_path(const char* path, const char* file_name, char* outbuf, const LVSize32_t outbuf_size);
 LVStatus lv_open_file(const char* db_path, const char* file_name, const int flags, int* fd_out);
 LVStatus lv_close_file(int fd);
 LVStatus lv_write_file(int fd, const void* data, const LVSize32_t size, const LVOffset_t offset);

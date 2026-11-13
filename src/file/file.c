@@ -10,7 +10,7 @@
 #include "livero_internal.h"
 #include "livero_types.h"
 
-static LVStatus lv_concat_path(const char* path, const char* file_name, char* outbuf, const LVSize32_t outbuf_size) {
+LVStatus lv_concat_path(const char* path, const char* file_name, char* outbuf, const LVSize32_t outbuf_size) {
     assert(outbuf_size <= LV_MAX_PATH_LEN);
     assert(file_name[0] != '/');
 
