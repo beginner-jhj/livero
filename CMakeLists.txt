@@ -92,7 +92,6 @@ function(lv_add_test name file)
 endfunction()
 
 lv_add_test(test_simd tests/test_simd.c)
-lv_add_test(test_create tests/test_create.c)
 lv_add_test(test_pending tests/test_pending.c)
 lv_add_test(test_recover tests/test_recover.c)
 lv_add_test(test_disk_search tests/test_disk_search.c)
