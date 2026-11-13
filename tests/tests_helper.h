@@ -4,7 +4,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <float.h>
-#include <ftw.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdint.h>
@@ -84,14 +83,6 @@ static int create_test_dir(const char* dir) {
     } else {
         return 0;
     }
-}
-
-static int remove_callback(const char* fpath, const struct stat* sb, int typeflag, struct FTW* ftwbuf) {
-    int rv = remove(fpath);  // remove(): rmdir() for a directory, unlink() for a file
-    if (rv) {
-        perror(fpath);
-    }
-    return rv;
 }
 
 static int clean_test_dir(const char* dir) {
