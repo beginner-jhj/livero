@@ -2,6 +2,7 @@
 #define LV_TEST_HELPER
 
 #include <assert.h>
+#include <errno.h>
 #include <float.h>
 #include <ftw.h>
 #include <inttypes.h>
@@ -13,6 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "file/file.h"
 #include "helper/helper.h"
 #include "livero.h"
 #include "livero_internal.h"
@@ -92,7 +94,33 @@ static int remove_callback(const char* fpath, const struct stat* sb, int typefla
     return rv;
 }
 
-static int clean_test_dir(const char* dir) { return nftw(dir, remove_callback, 64, FTW_DEPTH | FTW_PHYS); }
+static int clean_test_dir(const char* dir) {
+    if (!dir) {
+        fprintf(stderr, "directory is not given.\n");
+        return -1;
+    }
+
+    const char* files[] = {LV_ROW_FILE_NAME, LV_TERNARY_FILE_NAME, LV_VAL_FILE_NAME, LV_COMMIT_FILE_NAME,
+                           LV_CONFIG_FILE_NAME};
+    char file_path[LV_MAX_PATH_LEN];
+
+    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
+        if (lv_concat_path(dir, files[i], file_path, LV_MAX_PATH_LEN) != LV_OK) {
+            fprintf(stderr, "Path too long: %s%s\n", dir, files[i]);
+            return -1;
+        }
+        if (unlink(file_path) < 0 && errno != ENOENT) {
+            perror(file_path);
+            return -1;
+        }
+    }
+
+    if (rmdir(dir) < 0 && errno != ENOENT) {
+        perror(dir);
+        return -1;
+    }
+    return 0;
+}
 
 static int8_t rand_int8(int8_t min, int8_t max) {
     if (min == max) {
@@ -224,8 +252,7 @@ static int compare_answer(const LVTestAnswer* answer, const uint8_t* row, const 
     }
 
     if (answer->row.epoch_date != row_get_epoch_date(row)) {
-        PRINT_ERR_INVALID("epoch_date is incorrect", "%" PRIu64, answer->row.epoch_date,
-                          row_get_epoch_date(row));
+        PRINT_ERR_INVALID("epoch_date is incorrect", "%" PRIu64, answer->row.epoch_date, row_get_epoch_date(row));
         return -1;
     }
 
@@ -474,7 +501,8 @@ static int check_stat_match(const LVDBStat* stored, const LVDBStat* expected) {
         check_size_match("ternary_file_bytes", stored->ternary_file_bytes, expected->ternary_file_bytes) != 0 ||
         check_size_match("val_file_bytes", stored->val_file_bytes, expected->val_file_bytes) != 0 ||
         check_size_match("row_pending_bytes", stored->row_pending_bytes, expected->row_pending_bytes) != 0 ||
-        check_size_match("ternary_pending_bytes", stored->ternary_pending_bytes, expected->ternary_pending_bytes) != 0 ||
+        check_size_match("ternary_pending_bytes", stored->ternary_pending_bytes, expected->ternary_pending_bytes) !=
+            0 ||
         check_size_match("val_pending_bytes", stored->val_pending_bytes, expected->val_pending_bytes) != 0) {
         return -1;
     }
