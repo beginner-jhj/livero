@@ -21,7 +21,8 @@ static const int BENCH_RECORD_COUNTS[] = {1000, 10000, 100000};
 
 #define BENCH_DIM 384
 #define BENCH_VALUE_LEN 487
-#define BENCH_GET_QUERY_COUNT 100
+#define BENCH_GET_QUERY_COUNT 1000
+#define BENCH_WARMUP_COUNT 10
 #define BENCH_TOP_K 10
 
 // Results depend on these, so they are printed with every run.
@@ -50,13 +51,15 @@ static inline uint64_t now_ns(void) {
 static int compare_time(const void* a, const void* b) {
     const uint64_t t1 = *(const uint64_t*)a;
     const uint64_t t2 = *(const uint64_t*)b;
-    return (t1 > t2) - (t1 < t2); 
+    return (t1 > t2) - (t1 < t2);
 }
 
 // Nearest-rank percentile on a sorted array: the smallest sample with at least p% of samples at or below it.
 static double percentile_us(const uint64_t* sorted, const int count, const int p) {
     int idx = (count * p + 99) / 100 - 1;
-    if (idx < 0) idx = 0;
+    if (idx < 0) {
+        idx = 0;
+    }
     return sorted[idx] / 1e3;
 }
 
@@ -66,11 +69,18 @@ static void report(const char* label, uint64_t* times, const int count) {
     for (int i = 0; i < count; ++i) {
         total += times[i];
     }
+
+    int slowest = 0;
+    for (int k = 1; k < count; ++k) {
+        if (times[k] > times[slowest]) {
+            slowest = k;
+        }
+    }
     qsort(times, (size_t)count, sizeof(uint64_t), compare_time);
 
-    fprintf(stdout, "--- %-6s avg %10.2f us, p50 %10.2f us, p99 %10.2f us, max %10.2f us\n", label,
+    fprintf(stdout, "--- %-6s avg %10.2f us, p50 %10.2f us, p99 %10.2f us, max %10.2f us (idx: %d)\n", label,
             (double)total / count / 1e3, percentile_us(times, count, 50), percentile_us(times, count, 99),
-            times[count - 1] / 1e3);
+            times[count - 1] / 1e3, slowest);
 }
 
 static void fill_random_int8(int8_t* vector) {
@@ -104,7 +114,7 @@ static int bench_one(const int count, uint64_t* times) {
 
     fill_random_chr_data(BENCH_VALUE_LEN, (char*)value);
 
-    //put
+    // put
     LVSeq_t first_seq = 0;
     const uint64_t put_t0 = now_ns();
     for (int j = 0; j < count; ++j) {
@@ -130,11 +140,23 @@ static int bench_one(const int count, uint64_t* times) {
     report("put", times, count);
     fprintf(stdout, "--- put throughput: %.1f puts/sec (includes input generation)\n", count / put_seconds);
 
-    //get
+    // get
     LVGetResult get_result = {.value = value_out};
+    LVSeq_t seq = first_seq + (LVSeq_t)rand_int(0, count - 1);
+    /*Check the very first get time (cold start)*/
+    const uint64_t cold_get_t0 = now_ns();
+    s = lv_get(db, seq, &get_result);
+    const uint64_t cold_get_ns = now_ns() - cold_get_t0;
+
+    /*Warm up before measuring main get*/
+    for (int w = 1; w < BENCH_WARMUP_COUNT; ++w) {
+        seq = first_seq + (LVSeq_t)rand_int(0, count - 1);
+        lv_get(db, seq, &get_result);
+    }
+
     for (int k = 0; k < BENCH_GET_QUERY_COUNT; ++k) {
         // Seqs in a fresh db are contiguous, so any seq in [first, first + count) exists.
-        const LVSeq_t seq = first_seq + (LVSeq_t)rand_int(0, count - 1);
+        seq = first_seq + (LVSeq_t)rand_int(0, count - 1);
 
         const uint64_t t0 = now_ns();
         s = lv_get(db, seq, &get_result);
@@ -147,11 +169,24 @@ static int bench_one(const int count, uint64_t* times) {
         }
     }
     report("get", times, BENCH_GET_QUERY_COUNT);
+    fprintf(stdout, "--- get cold (first get): %.2f us\n", cold_get_ns / 1e3);
 
-    //query
+    // query
+    /*Check the very first query time (cold start)*/
+    LVSize32_t size = 0;
+    fill_random_int8(vector);
+    const uint64_t cold_query_t0 = now_ns();
+    s = lv_query(db, BENCH_TOP_K, vector, NULL, NULL, query_results, &size);
+    const uint64_t cold_query_ns = now_ns() - cold_query_t0;
+
+    /*Warm up before measuring main query*/
+    for (int w = 1; w < BENCH_WARMUP_COUNT; ++w) {
+        fill_random_int8(vector);
+        lv_query(db, BENCH_TOP_K, vector, NULL, NULL, query_results, &size);
+    }
+
     for (int k = 0; k < BENCH_GET_QUERY_COUNT; ++k) {
         fill_random_int8(vector);
-        LVSize32_t size = 0;
 
         const uint64_t t0 = now_ns();
         s = lv_query(db, BENCH_TOP_K, vector, NULL, NULL, query_results, &size);
@@ -171,6 +206,7 @@ static int bench_one(const int count, uint64_t* times) {
     char label[16];
     snprintf(label, sizeof(label), "top%d", BENCH_TOP_K);
     report(label, times, BENCH_GET_QUERY_COUNT);
+    fprintf(stdout, "--- top%d cold (first query): %.2f us\n", BENCH_TOP_K, cold_query_ns / 1e3);
 
     result = 0;
 
@@ -189,8 +225,9 @@ int main(void) {
         return -1;
     }
 
-    fprintf(stdout, "dim=%d value_len=%d write_batch_m=%d read_batch_m=%d\n", BENCH_DIM, BENCH_VALUE_LEN,
-            BENCH_WRITE_BATCH_M, BENCH_READ_BATCH_M);
+    fprintf(
+        stdout, "dim=%d bench_get_query_count=%d bench_warmup_count=%d value_len=%d write_batch_m=%d read_batch_m=%d\n",
+        BENCH_DIM, BENCH_GET_QUERY_COUNT, BENCH_WARMUP_COUNT, BENCH_VALUE_LEN, BENCH_WRITE_BATCH_M, BENCH_READ_BATCH_M);
 
     int rc = 0;
     for (int i = 0; i < BENCH_RECORD_COUNTS_N; ++i) {
