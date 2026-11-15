@@ -37,6 +37,16 @@ enum {
     LV_SYNC_NONE = 2,
 };
 
+typedef struct LVFILEDef LVFILEDef;
+
+typedef struct {
+    LVStatus (*lv_file_open)(const char* path, LVFILEDef* file);
+    LVStatus (*lv_file_close)(LVFILEDef* file);
+    LVStatus (*lv_file_write)(LVFILEDef* file, const void* data, const LVSize32_t len, const LVOffset_t offset);
+    LVStatus (*lv_file_read)(LVFILEDef* file, const void* buffer, const LVSize32_t len, const LVOffset_t offset);
+    LVStatus (*lv_file_sync)(LVFILEDef* file);
+} LVIOOps;
+
 typedef struct LVConfig {
     LVSize32_t max_disk_bytes;
     LVSize16_t max_value_len;
@@ -48,6 +58,9 @@ typedef struct LVOption {
     LVCount_t read_batch_m;
     LVCount_t write_batch_m;
     LVSyncMode sync_mode;
+    LVFILEDef* file_def;
+    LVSize16_t file_def_size;
+    LVIOOps* io_ops;
 } LVOption;
 
 typedef struct {
