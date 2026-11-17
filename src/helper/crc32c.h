@@ -24,7 +24,7 @@ uint32_t lv_crc32c_begin(void);
 uint32_t lv_crc32c_update(uint32_t crc, const void* data, size_t len);
 uint32_t lv_crc32c_end(uint32_t crc);
 uint32_t lv_crc32c(const void* data, size_t len);
-LVStatus lv_crc32c_update_from_file(const int fd, const LVOffset_t offset, const LVSize32_t size, uint8_t* buf,
+LVStatus lv_crc32c_update_from_file(LVFILEDef* file, lv_file_read read, const LVOffset_t offset, const LVSize32_t size, uint8_t* buf,
                                  const LVSize32_t buf_len, uint32_t* checksum);
 
 #endif  // LV_CRC32C_H
