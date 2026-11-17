@@ -40,6 +40,8 @@ static const LVOption BENCH_OPTION = {
     .write_batch_m = BENCH_WRITE_BATCH_M,
     .read_batch_m = BENCH_READ_BATCH_M,
     .sync_mode = LV_SYNC_BATCH,
+    .file_def_size = sizeof(LVFILEDef),
+    .io_ops = &TEST_IO_OPS
 };
 
 static inline uint64_t now_ns(void) {
