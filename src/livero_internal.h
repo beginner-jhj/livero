@@ -14,6 +14,8 @@
 #include "vector/ternary.h"
 
 struct Livero {
+    LVConfig config;
+    LVOption option;
     LVSeq_t next_seq;
     LVSeq_t next_commit_seq;
     LVTernaryChunk* ternary_scratch;
@@ -22,25 +24,18 @@ struct Livero {
     uint8_t* row_window;
     uint8_t* row_pending;
     uint8_t* value_pending;
-    int row_fd;
-    int ternary_fd;
-    int val_fd;
-    int commit_fd;
+    LVFILEDef* row_file;
+    LVFILEDef* ter_file;
+    LVFILEDef* val_file;
+    LVFILEDef* commit_file;
     LVSize32_t row_file_bytes;
     LVSize32_t ternary_file_bytes;
-    LVSize32_t val_file_bytes;
-    LVSize32_t max_disk_bytes;
+    LVSize32_t value_file_bytes;
     LVCount_t pending_count;
-    LVCount_t window_batch_m;
-    LVCount_t pending_batch_m;
     LVSize16_t value_pending_bytes;
-    LVSize16_t max_value_len;
-    LVDim_t vector_dimension;
-    LVVectorType vector_type;
-    LVSyncMode sync_mode;
 };
 
-static_assert(sizeof(Livero) <= 128, "Livero struct size must be under 128 bytes.");
+// static_assert(sizeof(Livero) <= 128, "Livero struct size must be under 128 bytes.");
 
 static void lv_log_error(const char* file, int line, const char* func, const char* fmt, ...) {
     va_list args;
@@ -65,6 +60,7 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 #define LV_VAL_FILE_NAME "val.lv"
 #define LV_COMMIT_FILE_NAME "commit.lv"
 #define LV_CONFIG_FILE_NAME "config.lv"
+#define LV_RUNNING_FILE_COUNT 4 //config.lv is closed as soon as it is opened.
 
 #define LV_SEQ_START 0
 
@@ -107,24 +103,24 @@ static inline const uint8_t* lv_n_pending_row(const Livero* db, const LVOffset_t
 
 static inline const uint8_t* lv_n_window_row(const Livero* db, const LVOffset_t idx) {
     assert(db);
-    return db->window_batch_m == 0 ? NULL : db->row_window + idx * LV_ROW_BYTES;
+    return db->option.read_batch_m == 0 ? NULL : db->row_window + idx * LV_ROW_BYTES;
 }
 
 static inline const LVTernaryChunk* lv_n_pending_ternary(const Livero* db, const LVOffset_t idx) {
     assert(db);
-    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->vector_dimension);
+    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
     return db->pending_count == 0 ? NULL : &db->ternary_pending[idx * ternary_chunk_count];
 }
 
 static inline const LVTernaryChunk* lv_n_window_ternary(const Livero* db, const LVOffset_t idx) {
     assert(db);
-    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->vector_dimension);
-    return db->window_batch_m == 0 ? NULL : &db->ternary_window[idx * ternary_chunk_count];
+    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
+    return db->option.read_batch_m == 0 ? NULL : &db->ternary_window[idx * ternary_chunk_count];
 }
 
 static inline const uint8_t* lv_n_pending_value(const Livero* db, const LVOffset_t idx) {
     assert(db);
-    return db->value_pending_bytes == 0 ? NULL : db->value_pending + idx * db->max_value_len;
+    return db->value_pending_bytes == 0 ? NULL : db->value_pending + idx * db->config.max_value_len;
 }
 
 static inline LVSize32_t lv_pending_row_bytes(const Livero* db) {
@@ -134,7 +130,7 @@ static inline LVSize32_t lv_pending_row_bytes(const Livero* db) {
 
 static inline LVSize32_t lv_pending_ternary_bytes(const Livero* db) {
     assert(db);
-    return db->pending_count * ternary_chunks_bytes(db->vector_dimension);
+    return db->pending_count * ternary_chunks_bytes(db->config.vector_dimension);
 }
 
 static inline LVSize32_t lv_pending_val_bytes(const Livero* db) {
@@ -144,48 +140,39 @@ static inline LVSize32_t lv_pending_val_bytes(const Livero* db) {
 
 static inline int lv_is_disk_full(const Livero* db, const LVSize16_t new_record_value_len) {
     assert(db);
-    const uint64_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const uint64_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
     const uint64_t record_fixed_bytes = LV_ROW_BYTES + ternary_bytes;
 
-    const uint64_t current_disk_bytes = (uint64_t)db->row_file_bytes + db->ternary_file_bytes + db->val_file_bytes;
-    const uint64_t current_pending_bytes = (uint64_t)lv_pending_row_bytes(db) + lv_pending_ternary_bytes(db) + lv_pending_val_bytes(db);
+    const uint64_t current_disk_bytes = (uint64_t)db->row_file_bytes + db->ternary_file_bytes + db->value_file_bytes;
+    const uint64_t current_pending_bytes =
+        (uint64_t)lv_pending_row_bytes(db) + lv_pending_ternary_bytes(db) + lv_pending_val_bytes(db);
     const uint64_t new_record_bytes = record_fixed_bytes + new_record_value_len;
 
     const uint64_t needed = LV_BASELINE_DISK_USAGE + current_disk_bytes + current_pending_bytes + new_record_bytes;
-    return needed > (uint64_t)db->max_disk_bytes;
+    return needed > (uint64_t)db->config.max_disk_bytes;
 }
 
 LVStatus lv_allocate_memory(const LVSize32_t size, void** ptr_out);
 
 typedef struct LVInitCtx {
-    LVSeq_t next_seq;
-    LVSeq_t next_commit_seq;
-    int row_fd;
-    int ternary_fd;
-    int val_fd;
-    int commit_fd;
-    LVSize32_t row_bytes;
-    LVSize32_t ternary_bytes;
-    LVSize32_t val_bytes;
-
-    LVSize32_t max_disk_bytes;
-    LVSize16_t max_value_len;
-    LVDim_t vector_dimension;
-    LVVectorType vector_type;
-
     LVSize32_t read_batch_m;
     LVSize32_t write_batch_m;
-    LVSyncMode sync_mode;
+    LVSize16_t file_def_size;
+    LVIOOps* io_ops;
 } LVInitCtx;
-void lv_init_memory(uint8_t* m_arena, const LVInitCtx* ctx);
+void lv_init_memory(uint8_t* m_arena, Livero** db_out, const LVConfig* config, const LVOption* option);
+
+void lv_init_db_seq_and_file_stat(Livero* db, const LVCommit* commit, const int is_first_torn);
 
 typedef struct LVRecoverCtx {
-    int row_fd;
-    int ternary_fd;
-    int val_fd;
-    int commit_fd;
+    LVFILEDef* row_file;
+    LVFILEDef* ter_file;
+    LVFILEDef* val_file;
+    LVFILEDef* commit_file;
+    lv_file_read read;
     LVSize32_t max_disk_bytes;
     LVDim_t vector_dimension;
+    LVSize16_t file_def_size;
 } LVRecoverCtx;
 /*
     Full scan commit.lv and find the last valid commit
@@ -196,20 +183,26 @@ LVStatus lv_flush(Livero* db);
 
 typedef struct {
     uint8_t* row_window;
-    int row_fd;
-    int val_fd;
+    // int row_fd;
+    // int val_fd;
+    LVFILEDef* row_file;
+    LVFILEDef* val_file;
+    lv_file_read read;
     LVCount_t disk_record_count;
-    LVCount_t window_batch_m;
+    LVCount_t read_batch_m;
 } LVDiskSearchCtx;
 
 static inline LVDiskSearchCtx lv_disk_search_ctx(const Livero* db) {
     assert(db);
     return (LVDiskSearchCtx){
         .disk_record_count = lv_disk_record_count(db),
-        .row_fd = db->row_fd,
-        .val_fd = db->val_fd,
+        // .row_fd = db->row_fd,
+        // .val_fd = db->val_fd,
+        .row_file = db->row_file,
+        .val_file = db->val_file,
+        .read = db->option.io_ops->read,
         .row_window = db->row_window,
-        .window_batch_m = db->window_batch_m,
+        .read_batch_m = db->option.read_batch_m,
     };
 }
 
@@ -242,10 +235,24 @@ static inline LVOffset_t lv_window_target_offset(const int p, const int start_id
 /* Find target in the window; the value is read from disk through the
  * row's value_offset, since values have no window of their own.
  */
-LVStatus lv_window_search(const uint8_t* row_window, const int val_fd, const LVSeq_t target_seq, const LVCount_t count,
-                          const LVOffset_t target_offset, LVGetResult* result, LVOffset_t* row_offset_out);
 
-LVStatus lv_fill_get_result(const uint8_t* row, const void* value_src, const int val_fd, LVGetResult* result);
+typedef struct {
+    const uint8_t* row_window;
+    LVFILEDef* value_file;
+    lv_file_read read;
+    LVSeq_t target_seq;
+    LVOffset_t target_offset;
+    LVCount_t count_on_window;
+} LVWindowSearchCtx;
+LVStatus lv_window_search(LVWindowSearchCtx* ctx, LVGetResult* result, LVOffset_t* row_offset_out);
+
+typedef struct {
+    const uint8_t* row;
+    const void* value_memory_src;
+    LVFILEDef* value_file; //fallback if value_memory_src is NULL.
+    lv_file_read read;
+} LVFillGetResultCtx;
+LVStatus lv_fill_get_result(LVFillGetResultCtx* ctx, LVGetResult* result);
 
 typedef struct {
     int64_t dot_result;
