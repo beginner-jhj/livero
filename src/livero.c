@@ -18,9 +18,11 @@
 #include "vector/ternary.h"
 
 static inline LVSize32_t lv_total_memory_bytes(const LVCount_t read_batch_m, const LVCount_t write_batch_m,
-                                               const LVSize32_t max_value_len, const LVDim_t vector_dimension) {
-    LVSize32_t total = sizeof(Livero);
+                                               const LVSize32_t max_value_len, const LVDim_t vector_dimension,
+                                               const LVSize16_t file_def_size) {
     const LVSize32_t ternary_bytes = ternary_chunks_bytes(vector_dimension);
+    LVSize32_t total = sizeof(Livero);
+    total += LV_RUNNING_FILE_COUNT * file_def_size;
     total += ternary_bytes;
     total += ternary_bytes * read_batch_m;
     total += ternary_bytes * write_batch_m;
@@ -75,88 +77,61 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
         return LV_ERR_INVALID_PARAM;
     }
 
-    int row_fd = -1;
-    int ternary_fd = -1;
-    int val_fd = -1;
-    int config_fd = -1;
-    int commit_fd = -1;
     void *m_arena = NULL;
-
-    const int create_flag = O_CREAT | O_EXCL | O_RDWR;
-
-    LVStatus s = lv_open_file(db_path, LV_ROW_FILE_NAME, create_flag, &row_fd);
-
+    uint8_t config_file_def[option->file_def_size];
+    LVStatus s =
+        lv_file_open_single(db_path, 1, LV_CONFIG_FILE_NAME, (LVFILEDef *)config_file_def, option->io_ops->open);
     if (s != LV_OK) {
-        LIVERO_ERROR("Failed to open row.lv.");
         goto cleanup;
     }
 
-    if ((s = lv_open_file(db_path, LV_TERNARY_FILE_NAME, create_flag, &ternary_fd)) != LV_OK) {
-        LIVERO_ERROR("Failed to open vec.lv.");
+    if ((s = lv_save_config((LVFILEDef *)config_file_def, config, option->io_ops->write, option->io_ops->sync)) !=
+        LV_OK) {
+        LIVERO_ERROR("Failed to save the config.");
         goto cleanup;
     }
 
-    if ((s = lv_open_file(db_path, LV_VAL_FILE_NAME, create_flag, &val_fd)) != LV_OK) {
-        LIVERO_ERROR("Failed to open val.lv.");
+    if ((s = option->io_ops->close((LVFILEDef *)config_file_def)) != LV_OK) {
+        LIVERO_ERROR("Failed to close config.lv.");
         goto cleanup;
     }
 
-    if ((s = lv_open_file(db_path, LV_CONFIG_FILE_NAME, create_flag, &config_fd)) != LV_OK) {
-        LIVERO_ERROR("Faield to open config.lv");
-        goto cleanup;
-    }
+    const LVSize32_t total_meory_size =
+        lv_total_memory_bytes(option->read_batch_m, option->write_batch_m,
 
-    if ((s = lv_open_file(db_path, LV_COMMIT_FILE_NAME, create_flag, &commit_fd)) != LV_OK) {
-        LIVERO_ERROR("Failed to open commit.lv.");
-        goto cleanup;
-    }
-
-    if ((s = lv_save_config(config_fd, config)) != LV_OK) {
-        LIVERO_ERROR("Faield to save the config.");
-        goto cleanup;
-    }
-
-    if ((s = commit_init(commit_fd)) != LV_OK) {
-        LIVERO_ERROR("Failed to initialize commit.lv.");
-        goto cleanup;
-    }
-
-    const LVSize32_t total_meory_size = lv_total_memory_bytes(option->read_batch_m, option->write_batch_m,
-                                                              config->max_value_len, config->vector_dimension);
-    if ((s = lv_allocate_memory(total_meory_size, &m_arena)) != LV_OK) {
+                              config->max_value_len, config->vector_dimension, option->file_def_size);
+    s = lv_allocate_memory(total_meory_size, &m_arena);
+    if (s != LV_OK) {
         LIVERO_ERROR("Failed to allocate %d bytes.", total_meory_size);
         goto cleanup;
     }
 
-    LVInitCtx ctx = {.next_seq = LV_SEQ_START,
-                     .next_commit_seq = LV_COMMIT_SEQ_START,
-                     .row_fd = row_fd,
-                     .ternary_fd = ternary_fd,
-                     .val_fd = val_fd,
-                     .commit_fd = commit_fd,
-                     .row_bytes = 0,
-                     .ternary_bytes = 0,
-                     .val_bytes = 0,
-                     .max_disk_bytes = config->max_disk_bytes,
-                     .max_value_len = config->max_value_len,
-                     .vector_dimension = config->vector_dimension,
-                     .vector_type = config->vector_type,
-                     .read_batch_m = option->read_batch_m,
-                     .write_batch_m = option->write_batch_m,
-                     .sync_mode = option->sync_mode};
+    lv_init_memory(m_arena, db_out, config, option);
 
-    lv_init_memory(m_arena, &ctx);
-    lv_close_file(config_fd);
-    *db_out = (Livero *)m_arena;
+    LVFileDefList file_list = {
+        .row_file = (*db_out)->row_file,
+        .ternary_file = (*db_out)->ter_file,
+        .value_file = (*db_out)->val_file,
+        .commit_file = (*db_out)->commit_file,
+    };
+
+    if ((s = lv_file_open_all(db_path, 1, &file_list, option->io_ops->open)) != LV_OK) {
+        goto cleanup;
+    }
+
+    if ((s = commit_init((*db_out)->commit_file, option->io_ops->write, option->io_ops->sync)) != LV_OK) {
+        LIVERO_ERROR("Failed to initialize commit.lv.");
+        goto cleanup;
+    }
+
+    LVCommit empty_commit = {0};
+    empty_commit.commit_seq = LV_COMMIT_SEQ_ZERO;
+    lv_init_db_seq_and_file_stat(*db_out, &empty_commit, 0);
+
     return LV_OK;
 
 cleanup:
-    lv_close_file(row_fd);
-    lv_close_file(ternary_fd);
-    lv_close_file(val_fd);
-    lv_close_file(config_fd);
-    lv_close_file(commit_fd);
-    free(m_arena);
+    lv_close(*db_out);
     return s;
 }
 
@@ -180,120 +155,71 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
         return LV_ERR_INVALID_PARAM;
     }
 
-    int row_fd = -1;
-    int ternary_fd = -1;
-    int val_fd = -1;
-    int config_fd = -1;
-    int commit_fd = -1;
     void *m_arena = NULL;
 
-    const int open_flag = O_RDWR;
-
-    LVStatus s = lv_open_file(db_path, LV_ROW_FILE_NAME, open_flag, &row_fd);
-
-    if (s != LV_OK) {
-        LIVERO_ERROR("Failed to open row.lv.");
-        goto cleanup;
-    }
-
-    if ((s = lv_open_file(db_path, LV_TERNARY_FILE_NAME, open_flag, &ternary_fd)) != LV_OK) {
-        LIVERO_ERROR("Failed to open vec.lv.");
-        goto cleanup;
-    }
-
-    if ((s = lv_open_file(db_path, LV_VAL_FILE_NAME, open_flag, &val_fd)) != LV_OK) {
-        LIVERO_ERROR("Failed to open val.lv.");
-        goto cleanup;
-    }
-
-    // fix bug. opened commit.lv twice, did not open config.lv
-    if ((s = lv_open_file(db_path, LV_CONFIG_FILE_NAME, open_flag, &config_fd)) != LV_OK) {
-        LIVERO_ERROR("Failed to open config.lv.");
-        goto cleanup;
-    }
-
-    if ((s = lv_open_file(db_path, LV_COMMIT_FILE_NAME, open_flag, &commit_fd)) != LV_OK) {
-        LIVERO_ERROR("Failed to open commit.lv.");
-        goto cleanup;
-    }
-
     LVConfig config;
-    if ((s = lv_config_d2m(config_fd, &config)) != LV_OK) {
+
+    uint8_t config_file_def[option->file_def_size];
+    LVStatus s =
+        lv_file_open_single(db_path, 0, LV_CONFIG_FILE_NAME, (LVFILEDef *)config_file_def, option->io_ops->open);
+    if (s != LV_OK) {
+        goto cleanup;
+    }
+
+    if ((s = lv_config_d2m((LVFILEDef *)config_file_def, option->io_ops->read, &config)) != LV_OK) {
         LIVERO_ERROR("Failed to read the config.");
         goto cleanup;
     }
 
-    LVCommit commit;
-    LVRecoverCtx recover_ctx = {
-        .row_fd = row_fd,
-        .ternary_fd = ternary_fd,
-        .val_fd = val_fd,
-        .commit_fd = commit_fd,
-        .max_disk_bytes = config.max_disk_bytes,
-        .vector_dimension = config.vector_dimension,
-    };
-    int first_commit_torn_out = 0;
-    if ((s = lv_recover(&recover_ctx, &commit, &first_commit_torn_out)) != LV_OK) {
-        LIVERO_ERROR("Failed to recover the db.");
+    if ((s = option->io_ops->close((LVFILEDef *)config_file_def)) != LV_OK) {
+        LIVERO_ERROR("Failed to close config.lv.");
         goto cleanup;
     }
 
-    const LVSize32_t total_memory_size = lv_total_memory_bytes(option->read_batch_m, option->write_batch_m,
-                                                               config.max_value_len, config.vector_dimension);
+    const LVSize32_t total_memory_size =
+        lv_total_memory_bytes(option->read_batch_m, option->write_batch_m, config.max_value_len,
+                              config.vector_dimension, option->file_def_size);
     if ((s = lv_allocate_memory(total_memory_size, &m_arena)) != LV_OK) {
         LIVERO_ERROR("Failed to allocate %d bytes.", total_memory_size);
         goto cleanup;
     }
 
-    const int is_empty_db = commit.commit_seq == LV_COMMIT_SEQ_ZERO;
-    LVSeq_t next_commit_seq;
-    LVSeq_t next_seq;
+    lv_init_memory(m_arena, db_out, &config, option);
 
-    if (is_empty_db) {
-        if (first_commit_torn_out) {
-            next_commit_seq = LV_COMMIT_SEQ_START;
-            next_seq = LV_SEQ_START + LV_MAX_BATCH_M;
-        } else {
-            next_commit_seq = LV_COMMIT_SEQ_START;
-            next_seq = LV_SEQ_START;
-        }
-
-    } else {
-        next_commit_seq = commit.commit_seq + 1;
-        next_seq = commit.reserved_seq + 1;
-    }
-
-    LVInitCtx init_ctx = {
-        .row_fd = row_fd,
-        .ternary_fd = ternary_fd,
-        .val_fd = val_fd,
-        .commit_fd = commit_fd,
-        .max_disk_bytes = config.max_disk_bytes,
-        .max_value_len = config.max_value_len,
-        .vector_dimension = config.vector_dimension,
-        .vector_type = config.vector_type,
-        .read_batch_m = option->read_batch_m,
-        .write_batch_m = option->write_batch_m,
-        .sync_mode = option->sync_mode,
-        .next_commit_seq = next_commit_seq,
-        .next_seq = next_seq,
-        .row_bytes = LV_ROW_BYTES * commit.total_count,
-        .ternary_bytes = ternary_chunks_bytes(config.vector_dimension) * commit.total_count,
-        .val_bytes = commit.total_value_bytes,
+    LVFileDefList file_list = {
+        .row_file = (*db_out)->row_file,
+        .ternary_file = (*db_out)->ter_file,
+        .value_file = (*db_out)->val_file,
+        .commit_file = (*db_out)->commit_file,
     };
 
-    lv_init_memory(m_arena, &init_ctx);
-    lv_close_file(config_fd);
-    *db_out = (Livero *)m_arena;  // fix bug
+    if ((s = lv_file_open_all(db_path, 0, &file_list, option->io_ops->open)) != LV_OK) {
+        goto cleanup;
+    }
+
+    LVCommit commit;
+    LVRecoverCtx recover_ctx = {
+        .row_file = (*db_out)->row_file,
+        .ter_file = (*db_out)->ter_file,
+        .val_file = (*db_out)->val_file,
+        .commit_file = (*db_out)->commit_file,
+        .read = option->io_ops->read,
+        .file_def_size = option->file_def_size,
+        .max_disk_bytes = config.max_disk_bytes,
+        .vector_dimension = config.vector_dimension,
+    };
+    int first_commit_torn = 0;
+    if ((s = lv_recover(&recover_ctx, &commit, &first_commit_torn)) != LV_OK) {
+        LIVERO_ERROR("Failed to recover the db.");
+        goto cleanup;
+    }
+
+    lv_init_db_seq_and_file_stat(*db_out, &commit, first_commit_torn);
+
     return LV_OK;
 
 cleanup:
-    lv_close_file(row_fd);
-    lv_close_file(ternary_fd);
-    lv_close_file(val_fd);
-    lv_close_file(config_fd);
-    lv_close_file(commit_fd);
-    free(m_arena);
+    lv_close(*db_out);
     return s;
 }
 
@@ -314,8 +240,8 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
         return LV_ERR_INVALID_PARAM;
     }
 
-    if (value_len > db->max_value_len) {
-        LIVERO_ERROR("value_len exceeds max_value_len(%d)", db->max_value_len);
+    if (value_len > db->config.max_value_len) {
+        LIVERO_ERROR("value_len exceeds max_value_len(%d)", db->config.max_value_len);
         return LV_ERR_INVALID_PARAM;
     }
 
@@ -331,17 +257,17 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
 
     const LVSeq_t current_seq = db->next_seq;
     const uint64_t epoch_date = lv_convert_date_to_epoch(date);
-    const LVOffset_t value_disk_offset = db->val_file_bytes;
+    const LVOffset_t value_disk_offset = db->value_file_bytes;
     const LVOffset_t value_pending_offset = db->value_pending_bytes;
     const LVOffset_t value_offset =
         value_disk_offset + value_pending_offset;  // fix offset bug: value_offset should be disk + pending bytes
 
-    ternary_convert(vector, db->vector_type, db->vector_dimension, db->ternary_scratch);
+    ternary_convert(vector, db->config.vector_type, db->config.vector_dimension, db->ternary_scratch);
     LVRowCalcChecksumCtx row_checksum_ctx = {.seq = current_seq,
                                              .epoch_date = epoch_date,
                                              .value_offset = value_offset,
                                              .value_len = value_len,
-                                             .vector_dimension = db->vector_dimension,
+                                             .vector_dimension = db->config.vector_dimension,
                                              .value = value,
                                              .ternary_chunks = db->ternary_scratch};
     const uint32_t row_checksum = row_calc_checksum(&row_checksum_ctx);
@@ -354,7 +280,7 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
 
     const int pending_result = lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
 
-    if (pending_result < 0 || db->sync_mode == LV_SYNC_EVERY_PUT) {
+    if (pending_result < 0 || db->option.sync_mode == LV_SYNC_EVERY_PUT) {
         LVStatus s = lv_flush(db);
         if (s != LV_OK) {
             LIVERO_ERROR("Failed to flush data.");
@@ -431,7 +357,7 @@ LVStatus lv_delete(Livero *db, const LVSeq_t target_seq) {
         LVDiskSearchCtx c = lv_disk_search_ctx(db);
         s = lv_binary_search_from_disk(&c, target_seq, NULL, &row_offset);
         if (s == LV_OK) {
-            return lv_write_file(db->row_fd, &tombstone, 1, row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET);
+            return db->option.io_ops->write(db->row_file, &tombstone, 1, row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET);
         }
         return s;
     } else {
@@ -477,11 +403,11 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     const uint64_t min_epoch_date = epoch_date1 < epoch_date2 ? epoch_date1 : epoch_date2;
     const uint64_t max_epoch_date = epoch_date2 > epoch_date1 ? epoch_date2 : epoch_date1;
 
-    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->vector_dimension);
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
 
     memset(db->ternary_scratch, 0, ternary_bytes);
-    ternary_convert(query_vector, db->vector_type, db->vector_dimension, db->ternary_scratch);
+    ternary_convert(query_vector, db->config.vector_type, db->config.vector_dimension, db->ternary_scratch);
 
     const LVTernaryChunk *query_ternary = db->ternary_scratch;
 
@@ -501,13 +427,13 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     }
 
     const LVCount_t disk_record_count = lv_disk_record_count(db);
-    const LVCount_t batch_m = db->window_batch_m;
+    const LVCount_t batch_m = db->option.read_batch_m;
     for (LVCount_t base = 0; base < disk_record_count; base += batch_m) {
         const LVCount_t remaining = disk_record_count - base;
         const LVCount_t n = remaining < batch_m ? remaining : batch_m;
 
-        LVStatus s =
-            lv_read_file(db->ternary_fd, db->ternary_window, n * ternary_bytes, (LVOffset_t)base * ternary_bytes);
+        LVStatus s = db->option.io_ops->read(db->ter_file, db->ternary_window, n * ternary_bytes,
+                                             (LVOffset_t)base * ternary_bytes);
 
         if (s != LV_OK) {
             return s;
@@ -525,8 +451,8 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
 
             if (j >= cache_hi) {
                 const LVCount_t fetch_count = (heap_size * 10 <= TOP_K * 3) ? n - j : 1;
-                s = lv_read_file(db->row_fd, db->row_window, fetch_count * LV_ROW_BYTES,
-                                 (LVOffset_t)(base + j) * LV_ROW_BYTES);
+                s = db->option.io_ops->read(db->row_file, db->row_window, fetch_count * LV_ROW_BYTES,
+                                            (LVOffset_t)(base + j) * LV_ROW_BYTES);
                 if (s != LV_OK) {
                     return s;
                 }
@@ -573,25 +499,33 @@ void lv_close(Livero *db) {
         }
     }
 
-    lv_close_file(db->row_fd);
-    lv_close_file(db->ternary_fd);
-    lv_close_file(db->val_fd);
-    lv_close_file(db->commit_fd);
+    LVStatus s = db->option.io_ops->close(db->row_file);
+    if (s != LV_OK) {
+        LIVERO_ERROR("Failed to close row.lv.");
+    }
+
+    if ((s = db->option.io_ops->close(db->ter_file)) != LV_OK) {
+        LIVERO_ERROR("Failed to close ter.lv.");
+    }
+
+    if ((s = db->option.io_ops->close(db->val_file)) != LV_OK) {
+        LIVERO_ERROR("Failed to close val.lv.");
+    }
+
+    if ((s = db->option.io_ops->close(db->commit_file)) != LV_OK) {
+        LIVERO_ERROR("Failed to close commit.lv.");
+    }
+
     free(db);
 }
 
 void lv_stat(const Livero *db, LVDBStat *stat) {
     if (db && stat) {
-        stat->config.max_disk_bytes = db->max_disk_bytes;
-        stat->config.max_value_len = db->max_value_len;
-        stat->config.vector_dimension = db->vector_dimension;
-        stat->config.vector_type = db->vector_type;
-        stat->option.write_batch_m = db->pending_batch_m;
-        stat->option.read_batch_m = db->window_batch_m;
-        stat->option.sync_mode = db->sync_mode;
+        stat->config = db->config;
+        stat->option = db->option;
         stat->row_file_bytes = db->row_file_bytes;
         stat->ternary_file_bytes = db->ternary_file_bytes;
-        stat->val_file_bytes = db->val_file_bytes;
+        stat->val_file_bytes = db->value_file_bytes;
         stat->row_pending_bytes = lv_pending_row_bytes(db);
         stat->ternary_pending_bytes = lv_pending_ternary_bytes(db);
         stat->val_pending_bytes = lv_pending_val_bytes(db);
@@ -620,57 +554,101 @@ LVStatus lv_allocate_memory(const LVSize32_t size, void **ptr_out) {
     return LV_OK;
 }
 
-void lv_init_memory(uint8_t *m_arena, const LVInitCtx *ctx) {
-    assert(m_arena && ctx);
+void lv_init_memory(uint8_t *m_arena, Livero **db_out, const LVConfig *config, const LVOption *option) {
+    assert(m_arena && config && option);
     assert((uintptr_t)m_arena % LV_MEMORY_ALIGNMENT == 0);
 
     LVOffset_t offset = 0;
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(ctx->vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(config->vector_dimension);
 
     Livero *db = (Livero *)m_arena;
     offset += sizeof(Livero);
+
+    LVFILEDef *row_file = (LVFILEDef *)(m_arena + offset);
+    offset += option->file_def_size;
+
+    LVFILEDef *ter_file = (LVFILEDef *)(m_arena + offset);
+    offset += option->file_def_size;
+
+    LVFILEDef *val_file = (LVFILEDef *)(m_arena + offset);
+    offset += option->file_def_size;
+
+    LVFILEDef *commit_file = (LVFILEDef *)(m_arena + offset);
+    offset += option->file_def_size;
 
     LVTernaryChunk *ternary_scratch = (LVTernaryChunk *)(m_arena + offset);
     offset += ternary_bytes;
 
     LVTernaryChunk *ternary_window = (LVTernaryChunk *)(m_arena + offset);
-    offset += ternary_bytes * ctx->read_batch_m;
+    offset += ternary_bytes * option->read_batch_m;
 
     LVTernaryChunk *ternary_pending = (LVTernaryChunk *)(m_arena + offset);
-    offset += ternary_bytes * ctx->write_batch_m;
+    offset += ternary_bytes * option->write_batch_m;
 
     uint8_t *row_window = m_arena + offset;
-    offset += LV_ROW_BYTES * ctx->read_batch_m;
+    offset += LV_ROW_BYTES * option->read_batch_m;
 
     uint8_t *row_pending = (m_arena + offset);
-    offset += LV_ROW_BYTES * ctx->write_batch_m;
+    offset += LV_ROW_BYTES * option->write_batch_m;
 
     uint8_t *value_pending = m_arena + offset;
 
-    db->next_seq = ctx->next_seq;
-    db->next_commit_seq = ctx->next_commit_seq;
+    db->next_seq = LV_SEQ_START;
+    db->next_commit_seq = LV_COMMIT_SEQ_START;
     db->ternary_scratch = ternary_scratch;
     db->ternary_window = ternary_window;
     db->ternary_pending = ternary_pending;
     db->row_window = row_window;
     db->row_pending = row_pending;
     db->value_pending = value_pending;
-    db->row_fd = ctx->row_fd;
-    db->ternary_fd = ctx->ternary_fd;
-    db->val_fd = ctx->val_fd;
-    db->commit_fd = ctx->commit_fd;
-    db->row_file_bytes = ctx->row_bytes;
-    db->ternary_file_bytes = ctx->ternary_bytes;
-    db->val_file_bytes = ctx->val_bytes;
-    db->max_disk_bytes = ctx->max_disk_bytes;
+    db->row_file = row_file;
+    db->ter_file = ter_file;
+    db->val_file = val_file;
+    db->commit_file = commit_file;
+    db->option = *option;
+    db->config = *config;
     db->pending_count = 0;
-    db->window_batch_m = ctx->read_batch_m;
-    db->pending_batch_m = ctx->write_batch_m;
-    db->max_value_len = ctx->max_value_len;
     db->value_pending_bytes = 0;
-    db->vector_dimension = ctx->vector_dimension;
-    db->vector_type = ctx->vector_type;
-    db->sync_mode = ctx->sync_mode;
+    db->row_file_bytes = 0;
+    db->ternary_file_bytes = 0;
+    db->value_file_bytes = 0;
+
+    *db_out = (Livero *)m_arena;
+}
+
+void lv_init_db_seq_and_file_stat(Livero *db, const LVCommit *commit, const int is_first_torn) {
+    assert(db && commit);
+
+    const int is_empty_db = commit->commit_seq == LV_COMMIT_SEQ_ZERO;
+    LVSeq_t next_commit_seq;
+    LVSeq_t next_seq;
+
+    if (is_empty_db) {
+        if (is_first_torn) {
+            next_commit_seq = LV_COMMIT_SEQ_START;
+            next_seq = LV_SEQ_START + LV_MAX_BATCH_M;
+        } else {
+            next_commit_seq = LV_COMMIT_SEQ_START;
+            next_seq = LV_SEQ_START;
+        }
+
+    } else {
+        next_commit_seq = commit->commit_seq + 1;
+        next_seq = commit->reserved_seq + 1;
+    }
+
+    if (is_empty_db) {
+        db->row_file_bytes = 0;
+        db->ternary_file_bytes = 0;
+        db->value_file_bytes = 0;
+    } else {
+        db->row_file_bytes = commit->total_count * LV_ROW_BYTES;
+        db->ternary_file_bytes = commit->total_count * ternary_chunks_bytes(db->config.vector_dimension);
+        db->value_file_bytes = commit->total_value_bytes;
+    }
+
+    db->next_commit_seq = next_commit_seq;
+    db->next_seq = next_seq;
 }
 
 LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_commit_torn_out) {
@@ -686,7 +664,7 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
     int corrupted_idx = -1;
 
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVCommitStatus cmt_status = commit_d2m(ctx->commit_fd, i * LV_COMMIT_SECTOR_BYTES, &cmt);
+        LVCommitStatus cmt_status = commit_d2m(ctx->commit_file, ctx->read, i * LV_COMMIT_SECTOR_BYTES, &cmt);
 
         if (cmt_status.db == LV_OK) {
             if (cmt_status.commit == LV_COMMIT_EMPTY) {
@@ -765,9 +743,10 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
         Finally check batched data that the best commit saved.
         possible errors are LV_ERR_DATA_CORRUPT or LV_ERR_IO.
     */
-    LVRowCCFDCtx rccfd = {.row_fd = ctx->row_fd,
-                          .ternary_fd = ctx->ternary_fd,
-                          .val_fd = ctx->val_fd,
+    LVRowCCFDCtx rccfd = {.row_file = ctx->row_file,
+                          .ter_file = ctx->ter_file,
+                          .val_file = ctx->val_file,
+                          .read = ctx->read,
                           .row_offset = 0,
                           .ternary_offset = 0,
                           .ternary_bytes = ternary_bytes};
@@ -789,11 +768,11 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
 LVStatus lv_flush(Livero *db) {
     assert(db);
 
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
     const LVOffset_t row_offset_to_write = db->row_file_bytes;
     const LVOffset_t ternary_offset_to_write = db->ternary_file_bytes;
-    const LVOffset_t val_offset_to_write = db->val_file_bytes;
-    const int sync = db->sync_mode != LV_SYNC_NONE;
+    const LVOffset_t val_offset_to_write = db->value_file_bytes;
+    const int sync = db->option.sync_mode != LV_SYNC_NONE;
 
     LVSize32_t packed = 0;
     for (LVCount_t i = 0; i < db->pending_count; ++i) {
@@ -802,27 +781,27 @@ LVStatus lv_flush(Livero *db) {
         packed += len;
     }
 
-    LVStatus s = lv_write_file(db->val_fd, db->value_pending, packed, val_offset_to_write);
+    LVStatus s = db->option.io_ops->write(db->val_file, db->value_pending, packed, val_offset_to_write);
 
     if (s != LV_OK) {
         return s;
     }
 
     if (sync) {
-        if ((s = lv_sync_file(db->val_fd)) != LV_OK) {
+        if ((s = db->option.io_ops->sync(db->val_file)) != LV_OK) {
             LIVERO_ERROR("Faield to sync val.lv.");
             return s;
         }
     }
 
     const LVSize32_t ternary_bytes_to_flush = db->pending_count * ternary_bytes;
-    if ((s = lv_write_file(db->ternary_fd, db->ternary_pending, ternary_bytes_to_flush, ternary_offset_to_write)) !=
-        LV_OK) {
+    if ((s = db->option.io_ops->write(db->ter_file, db->ternary_pending, ternary_bytes_to_flush,
+                                      ternary_offset_to_write)) != LV_OK) {
         return s;
     }
 
     if (sync) {
-        if ((s = lv_sync_file(db->ternary_fd)) != LV_OK) {
+        if ((s = db->option.io_ops->sync(db->ter_file)) != LV_OK) {
             LIVERO_ERROR("Failed to sync vec.lv.");
             return s;
         }
@@ -830,12 +809,13 @@ LVStatus lv_flush(Livero *db) {
 
     const LVSize32_t row_bytes_to_flush = db->pending_count * LV_ROW_BYTES;
 
-    if ((s = lv_write_file(db->row_fd, db->row_pending, row_bytes_to_flush, row_offset_to_write)) != LV_OK) {
+    if ((s = db->option.io_ops->write(db->row_file, db->row_pending, row_bytes_to_flush, row_offset_to_write)) !=
+        LV_OK) {
         return s;
     }
 
     if (sync) {
-        if ((s = lv_sync_file(db->row_fd)) != LV_OK) {
+        if ((s = db->option.io_ops->sync(db->row_file)) != LV_OK) {
             LIVERO_ERROR("Failed to sync row.lv.");
             return s;
         }
@@ -847,15 +827,15 @@ LVStatus lv_flush(Livero *db) {
         .reserved_seq = row_get_seq(lv_last_pending_row(db)),
         .total_count = lv_total_record_count(db),
         .batch_count = db->pending_count,
-        .total_value_bytes = db->val_file_bytes + db->value_pending_bytes,  // fix db->row_bytes to db->val_bytes
+        .total_value_bytes = db->value_file_bytes + db->value_pending_bytes,  // fix db->row_bytes to db->val_bytes
         .batch_value_bytes = db->value_pending_bytes};
 
-    if ((s = commit_write(db->commit_fd, &cmt)) != LV_OK) {
+    if ((s = commit_write(db->commit_file, db->option.io_ops->write, &cmt)) != LV_OK) {
         return s;
     }
 
     if (sync) {
-        if ((s = lv_sync_file(db->commit_fd)) != LV_OK) {
+        if ((s = db->option.io_ops->sync(db->commit_file)) != LV_OK) {
             LIVERO_ERROR("Failed to sync commit.lv.");
             return s;
         }
@@ -863,7 +843,7 @@ LVStatus lv_flush(Livero *db) {
 
     db->row_file_bytes += row_bytes_to_flush;
     db->ternary_file_bytes += ternary_bytes_to_flush;
-    db->val_file_bytes += db->value_pending_bytes;
+    db->value_file_bytes += db->value_pending_bytes;
 
     db->pending_count = 0;
     db->value_pending_bytes = 0;
@@ -875,14 +855,14 @@ int lv_pending_append(Livero *db, const LVRow *row, const LVTernaryChunk *ternar
                       const LVSize16_t value_len) {
     assert(db && row && ternary && value);
 
-    if (db->pending_count >= db->pending_batch_m) {
+    if (db->pending_count >= db->option.write_batch_m) {
         return -1;
     }
 
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
     const LVOffset_t row_batch_offset = db->pending_count * LV_ROW_BYTES;
     const LVOffset_t ternary_batch_offset = db->pending_count * ternary_bytes;
-    const LVOffset_t value_batch_offset = db->pending_count * db->max_value_len;
+    const LVOffset_t value_batch_offset = db->pending_count * db->config.max_value_len;
 
     row_write_on_memory(db->row_pending + row_batch_offset, row);
     memcpy((uint8_t *)db->ternary_pending + ternary_batch_offset, ternary, ternary_bytes);
@@ -920,7 +900,13 @@ LVStatus lv_pending_search(const Livero *db, const LVSeq_t target_seq, LVGetResu
     }
 
     if (result) {
-        lv_fill_get_result(row, value, -1, result);
+        LVFillGetResultCtx get_result_ctx = {
+            .row = (uint8_t *)row,
+            .value_memory_src = (uint8_t *)value,
+            .value_file = NULL,
+            .read = NULL,
+        };
+        lv_fill_get_result(&get_result_ctx, result);
     }
 
     if (row_offset_out) {
@@ -945,12 +931,12 @@ LVStatus lv_interpolation_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t t
     const int low_idx = 0;
     const int high_idx = (int)(disk_record_count - 1);
 
-    LVStatus s = lv_read_file(ctx->row_fd, low, LV_ROW_BYTES, (LVOffset_t)low_idx * LV_ROW_BYTES);
+    LVStatus s = ctx->read(ctx->row_file, low, LV_ROW_BYTES, (LVOffset_t)low_idx * LV_ROW_BYTES);
     if (s != LV_OK) {
         return s;
     }
 
-    s = lv_read_file(ctx->row_fd, high, LV_ROW_BYTES, (LVOffset_t)high_idx * LV_ROW_BYTES);
+    s = ctx->read(ctx->row_file, high, LV_ROW_BYTES, (LVOffset_t)high_idx * LV_ROW_BYTES);
     if (s != LV_OK) {
         return s;
     }
@@ -963,7 +949,14 @@ LVStatus lv_interpolation_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t t
             if (!row_is_alive(low)) {
                 return LV_ERR_DELETED;
             }
-            if ((s = lv_fill_get_result(low, NULL, ctx->val_fd, result)) != LV_OK) {
+
+            LVFillGetResultCtx get_result_ctx = {
+                .row = low,
+                .value_memory_src = NULL,
+                .value_file = ctx->val_file,
+                .read = ctx->read,
+            };
+            if ((s = lv_fill_get_result(&get_result_ctx, result)) != LV_OK) {
                 return s;
             }
         }
@@ -976,7 +969,7 @@ LVStatus lv_interpolation_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t t
 
     const int p_idx = low_idx + (int)(((target_seq - low_seq) * (high_idx - low_idx)) / (high_seq - low_seq));
 
-    LVWindowRange r = lv_window_range(p_idx, low_idx, high_idx, (int)ctx->window_batch_m);
+    LVWindowRange r = lv_window_range(p_idx, low_idx, high_idx, (int)ctx->read_batch_m);
 
     int start_idx = r.start_idx;
     int end_idx = r.end_idx;
@@ -984,13 +977,21 @@ LVStatus lv_interpolation_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t t
     LVOffset_t read_offset = (LVOffset_t)start_idx * LV_ROW_BYTES;
     LVCount_t read_count = (LVCount_t)(end_idx - start_idx + 1);
 
-    if ((s = lv_read_file(ctx->row_fd, ctx->row_window, read_count * LV_ROW_BYTES, read_offset)) != LV_OK) {
+    if ((s = ctx->read(ctx->row_file, ctx->row_window, read_count * LV_ROW_BYTES, read_offset)) != LV_OK) {
         return s;
     }
 
     const LVOffset_t expected_offset = lv_window_target_offset(p_idx, r.start_idx, LV_ROW_BYTES);
     LVOffset_t row_offset = expected_offset;
-    s = lv_window_search(ctx->row_window, ctx->val_fd, target_seq, read_count, expected_offset, result, &row_offset);
+    LVWindowSearchCtx window_search_ctx = {
+        .row_window = ctx->row_window,
+        .value_file = ctx->val_file,
+        .target_offset = expected_offset,
+        .target_seq = target_seq,
+        .count_on_window = read_count,
+        .read = ctx->read,
+    };
+    s = lv_window_search(&window_search_ctx, result, &row_offset);
 
     if (s == LV_OK) {
         if (row_offset_out) {
@@ -1016,12 +1017,12 @@ LVStatus lv_binary_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t target_s
     int mid = low + (high - low) / 2;
 
     while (low <= high) {
-        LVWindowRange r = lv_window_range(mid, low, high, (int)ctx->window_batch_m);
+        LVWindowRange r = lv_window_range(mid, low, high, (int)ctx->read_batch_m);
 
         LVOffset_t read_offset = (LVOffset_t)r.start_idx * LV_ROW_BYTES;
         LVCount_t read_count = (LVCount_t)(r.end_idx - r.start_idx + 1);
 
-        LVStatus s = lv_read_file(ctx->row_fd, ctx->row_window, read_count * LV_ROW_BYTES, read_offset);
+        LVStatus s = ctx->read(ctx->row_file, ctx->row_window, read_count * LV_ROW_BYTES, read_offset);
 
         if (s != LV_OK) {
             return s;
@@ -1032,8 +1033,13 @@ LVStatus lv_binary_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t target_s
         const LVSeq_t expected_seq = row_get_seq(expected_row);
         LVOffset_t row_offset = expected_offset;
 
-        s = lv_window_search(ctx->row_window, ctx->val_fd, target_seq, read_count, expected_offset, result,
-                             &row_offset);
+        LVWindowSearchCtx window_search_ctx = {.row_window = ctx->row_window,
+                                               .value_file = ctx->val_file,
+                                               .target_offset = expected_offset,
+                                               .target_seq = target_seq,
+                                               .count_on_window = read_count,
+                                               .read = ctx->read};
+        s = lv_window_search(&window_search_ctx, result, &row_offset);
 
         if (s == LV_OK) {
             if (row_offset_out) {
@@ -1085,36 +1091,47 @@ LVWindowRange lv_window_range(const int p, const int low, const int high, const 
     return (LVWindowRange){.start_idx = start_idx, .end_idx = end_idx};
 }
 
-LVStatus lv_window_search(const uint8_t *row_window, const int val_fd, const LVSeq_t target_seq, const LVCount_t count,
-                          const LVOffset_t target_offset, LVGetResult *result, LVOffset_t *row_offset_out) {
-    assert(row_window);
+LVStatus lv_window_search(LVWindowSearchCtx *ctx, LVGetResult *result, LVOffset_t *row_offset_out) {
+    assert(ctx);
 
-    const uint8_t *expected_row = row_window + target_offset;
+    const uint8_t *expected_row = ctx->row_window + ctx->target_offset;
     const LVSeq_t expected_seq = row_get_seq(expected_row);
-    if (expected_seq == target_seq) {
+    if (expected_seq == ctx->target_seq) {
         if (!row_is_alive(expected_row)) {
             return LV_ERR_DELETED;
         }
         if (result) {
-            LVStatus s = lv_fill_get_result(expected_row, NULL, val_fd, result);
+            LVFillGetResultCtx get_result_ctx = {
+                .row = expected_row,
+                .value_memory_src = NULL,
+                .value_file = ctx->value_file,
+                .read = ctx->read,
+            };
+            LVStatus s = lv_fill_get_result(&get_result_ctx, result);
             if (s != LV_OK) {
                 return s;
             }
         }
 
         if (row_offset_out) {
-            *row_offset_out = target_offset;
+            *row_offset_out = ctx->target_offset;
         }
         return LV_OK;
     } else {
-        for (LVCount_t i = 0; i < count; ++i) {
-            const uint8_t *row = row_window + i * LV_ROW_BYTES;
-            if (row_get_seq(row) == target_seq) {
+        for (LVCount_t i = 0; i < ctx->count_on_window; ++i) {
+            const uint8_t *row = ctx->row_window + i * LV_ROW_BYTES;
+            if (row_get_seq(row) == ctx->target_seq) {
                 if (!row_is_alive(row)) {
                     return LV_ERR_DELETED;
                 }
                 if (result) {
-                    LVStatus s = lv_fill_get_result(row, NULL, val_fd, result);
+                    LVFillGetResultCtx get_result_ctx = {
+                        .row = row,
+                        .value_memory_src = NULL,
+                        .value_file = ctx->value_file,
+                        .read = ctx->read,
+                    };
+                    LVStatus s = lv_fill_get_result(&get_result_ctx, result);
                     if (s != LV_OK) {
                         return s;
                     }
@@ -1130,21 +1147,24 @@ LVStatus lv_window_search(const uint8_t *row_window, const int val_fd, const LVS
     }
 }
 
-LVStatus lv_fill_get_result(const uint8_t *row, const void *value_src, const int val_fd, LVGetResult *result) {
-    assert(row && result);
-    const LVOffset_t value_offset = row_get_value_offset(row);
-    const LVSize16_t value_len = row_get_value_len(row);
+LVStatus lv_fill_get_result(LVFillGetResultCtx *ctx, LVGetResult *result) {
+    assert(ctx && result);
+    const LVSize16_t value_len = row_get_value_len(ctx->row);
+    const LVOffset_t value_offset = row_get_value_offset(ctx->row);
     if (result->value) {
-        if (value_src) {
-            memcpy(result->value, value_src, value_len);
+        assert(ctx->value_memory_src || ctx->value_file);
+        if (ctx->value_memory_src) {
+            memcpy(result->value, ctx->value_memory_src, value_len);
+
         } else {
-            LVStatus s = lv_read_file(val_fd, result->value, value_len, value_offset);
+            assert(ctx->read);
+            LVStatus s = ctx->read(ctx->value_file, result->value, value_len, value_offset);
             if (s != LV_OK) {
                 return s;
             }
         }
     }
-    lv_convert_epoch_to_date(row_get_epoch_date(row), &result->date);
+    lv_convert_epoch_to_date(row_get_epoch_date(ctx->row), &result->date);
     result->value_len = value_len;
     return LV_OK;
 }
