@@ -99,7 +99,7 @@ LVStatus test_file_write(LVFILEDef* file, const void* data, const LVSize32_t siz
     return LV_OK;
 }
 
-LVStatus test_file_read(LVFILEDef* file, const void* buf, const LVSize32_t size, const LVOffset_t offset) {
+LVStatus test_file_read(LVFILEDef* file, void* buf, const LVSize32_t size, const LVOffset_t offset) {
     assert(file->fd > STDERR_FILENO);
     ssize_t _read = pread(file->fd, (void*)buf, size, offset);
     if (_read < 0) {
