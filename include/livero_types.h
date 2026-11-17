@@ -42,7 +42,7 @@ typedef struct LVFILEDef LVFILEDef;
 typedef LVStatus (*lv_file_open)(const char* path, const int is_create, LVFILEDef* file);
 typedef LVStatus (*lv_file_close)(LVFILEDef* file);
 typedef LVStatus (*lv_file_write)(LVFILEDef* file, const void* data, const LVSize32_t len, const LVOffset_t offset);
-typedef LVStatus (*lv_file_read)(LVFILEDef* file, const void* buffer, const LVSize32_t len, const LVOffset_t offset);
+typedef LVStatus (*lv_file_read)(LVFILEDef* file, void* buffer, const LVSize32_t len, const LVOffset_t offset);
 typedef LVStatus (*lv_file_sync)(LVFILEDef* file);
 
 typedef struct {
