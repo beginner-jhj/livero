@@ -113,5 +113,46 @@ int lv_check_option(const LVOption* option) {
         LIVERO_ERROR("Both read_batch_mand write_batch_m must be smaller than %d .", LV_MAX_BATCH_M);
         return 0;
     }
+
+    if (option->file_def_size == 0) {
+        LIVERO_ERROR("file_def_size must be greater than 0.");
+        return 0;
+    }
+
+    if (option->file_def_size > LV_MAX_VLA_LEN) {
+        LIVERO_ERROR("file_def_size must be under %d bytes.", LV_MAX_VLA_LEN);
+        return 0;
+    }
+
+    if (!option->io_ops) {
+        LIVERO_ERROR("io_ops must not be NULL.");
+        return 0;
+    }
+
+    if (!option->io_ops->open) {
+        LIVERO_ERROR("lv_file_open must not be NULL.");
+        return 0;
+    }
+
+    if (!option->io_ops->close) {
+        LIVERO_ERROR("lv_file_close must not be NULL.");
+        return 0;
+    }
+
+    if (!option->io_ops->write) {
+        LIVERO_ERROR("lv_file_write must not be NULL.");
+        return 0;
+    }
+
+    if (!option->io_ops->read) {
+        LIVERO_ERROR("lv_file_read must not be NULL.");
+        return 0;
+    }
+
+    if (!option->io_ops->sync) {
+        LIVERO_ERROR("lv_file_sync must not be NULL.");
+        return 0;
+    }
+
     return 1;
 }
