@@ -2,7 +2,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "file/file.h"
+#include <assert.h>
+
 #include "livero_internal.h"
 #include "livero_types.h"
 #include "struct/commit.h"
@@ -10,6 +11,95 @@
 #include "tests_helper.h"
 
 static const char* TEST_DIR = "./TEST_RECOVER_TMP/";
+
+static LVRecoverCtx get_recover_ctx(const Livero* db) {
+    assert(db);
+    LVRecoverCtx ctx = {.row_file = db->row_file,
+                        .ter_file = db->ter_file,
+                        .val_file = db->val_file,
+                        .commit_file = db->commit_file,
+                        .max_disk_bytes = db->config.max_disk_bytes,
+                        .vector_dimension = db->config.vector_dimension,
+                        .file_def_size = db->option.file_def_size,
+                        .read = db->option.io_ops->read};
+    return ctx;
+}
+
+typedef struct {
+    LVSeq_t last_commit_seq;
+    LVSeq_t answer_commit_seq;
+    LVCommit* answer_commit_out;
+    LVCount_t data_count;
+    int make_multiple_commits;
+} LVTestWDACCtx;
+static int write_data_and_commit(Livero* db, LVTestWDACCtx* ctx) {
+    assert(db && ctx->data_count > 0);
+    LVTestAnswer answers[ctx->data_count];
+    LVOffset_t val_offset = 0;
+    LVWriteTestDataCtx wtdc = {
+        .row_file = db->row_file,
+        .ter_file = db->ter_file,
+        .val_file = db->val_file,
+        .commit_file = db->commit_file,
+    };
+    LVCommit answer_commit = {0};
+    for (LVCount_t i = 0; i < ctx->data_count; ++i) {
+        LVMakeTestAnswerCtx mtac = {.seq = i,
+                                    .max_year = 2026,
+                                    .min_year = 2000,
+                                    .fixed_date = NULL,
+                                    .alive = 1,
+                                    .prev_value_offset = val_offset,
+                                    .value_len = -1,
+                                    .use_test_vector = 0
+
+        };
+        make_test_answer(&mtac, &answers[i]);
+
+        if (ctx->make_multiple_commits) {
+            const LVSeq_t commit_seq = ctx->last_commit_seq + (LVSeq_t)(i + 1);
+            wtdc.commit_seq = commit_seq;
+            wtdc.data = &answers[i];
+            wtdc.data_count = 1;
+            wtdc.prev_count = (LVCount_t)i;
+            wtdc.prev_val_bytes = (LVSize32_t)val_offset;
+            wtdc.row_start_offset = i * LV_ROW_BYTES;
+            wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
+
+            const int is_answer = commit_seq == ctx->answer_commit_seq;
+            if (write_test_data(&wtdc, is_answer ? &answer_commit : NULL) < 0) {
+                fprintf(stderr, "Failed to write data at record seq: %" PRIu64 ", commit seq: %" PRIu64 ".\n",
+                        (LVSeq_t)(i), commit_seq);
+                return -1;
+            }
+        }
+
+        val_offset += answers[i].row.value_len;
+    }
+
+    if (!ctx->make_multiple_commits) {
+        wtdc.commit_seq = LV_COMMIT_SEQ_START + ctx->last_commit_seq;
+        wtdc.data = answers;
+        wtdc.data_count = ctx->data_count;
+        wtdc.prev_count = 0;
+        wtdc.prev_val_bytes = 0;
+        wtdc.row_start_offset = 0;
+        wtdc.ternary_start_offset = 0;
+
+        const int is_answer = wtdc.commit_seq == ctx->answer_commit_seq;
+        if (write_test_data(&wtdc, is_answer ?  &answer_commit:NULL) < 0) {
+            fprintf(stderr, "Failed to write data at record seq: %" PRIu64 ", commit seq: %" PRIu64 ".\n", (LVSeq_t)0,
+                    (LVSeq_t)(LV_COMMIT_SEQ_START));
+            return -1;
+        }
+    }
+
+    if (ctx->answer_commit_out) {
+        *ctx->answer_commit_out = answer_commit;
+    }
+
+    return 0;
+}
 
 int test_recover_1(void) {
     /*
@@ -25,14 +115,7 @@ int test_recover_1(void) {
         goto cleanup;
     }
 
-    LVRecoverCtx ctx = {
-        .row_fd = db->row_fd,
-        .val_fd = db->val_fd,
-        .ternary_fd = db->ternary_fd,
-        .commit_fd = db->commit_fd,
-        .max_disk_bytes = db->max_disk_bytes,
-        .vector_dimension = db->vector_dimension,
-    };
+    LVRecoverCtx ctx = get_recover_ctx(db);
 
     LVCommit cmt;
 
@@ -70,56 +153,28 @@ int test_recover_2(void) {
     const LVCount_t data_count = 10;
     Livero* db = NULL;
 
-    LVTestAnswer answers[data_count];
-
     if (create_test_db(TEST_DIR, NULL, NULL, &db) < 0) {
         result = -1;
         goto cleanup;
     }
 
-    LVOffset_t value_offset = 0;
-    for (LVCount_t i = 0; i < data_count; ++i) {
-        LVMakeTestAnswerCtx c = {.alive = i % 2,
-                                 .max_year = 2026,
-                                 .min_year = 2000,
-                                 .fixed_date = NULL,
-                                 .prev_value_offset = value_offset,
-                                 .value_len = -1,  // random
-                                 .seq = i,
-                                 .use_test_vector = 0};
-
-        make_test_answer(&c, &answers[i]);
-        value_offset += answers[i].row.value_len;
-    }
-    const LVSeq_t commit_seq = 1;
-
-    LVWriteTestDataCtx wtdc = {.data = answers,
-                               .data_count = data_count,
-                               .prev_count = 0,
-                               .prev_val_bytes = 0,
-                               .commit_seq = commit_seq,
-                               .row_start_offset = 0,
-                               .ternary_start_offset = 0,
-                               .row_fd = db->row_fd,
-                               .val_fd = db->val_fd,
-                               .ternary_fd = db->ternary_fd,
-                               .commit_fd = db->commit_fd};
-
     LVCommit expected = {0};
 
-    if (write_test_data(&wtdc, &expected) < 0) {
+    LVTestWDACCtx wdacc = {
+        .answer_commit_out = &expected,
+        .answer_commit_seq = LV_COMMIT_SEQ_START,
+        .data_count = data_count,
+        .last_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .make_multiple_commits = 0
+    };
+
+    if (write_data_and_commit(db, &wdacc) < 0) {
         result = -1;
         goto cleanup;
     }
 
-    LVRecoverCtx recover_ctx = {.commit_fd = db->commit_fd,
-                                .row_fd = db->row_fd,
-                                .val_fd = db->val_fd,
-                                .ternary_fd = db->ternary_fd,
-                                .max_disk_bytes = db->max_disk_bytes,
-                                .vector_dimension = db->vector_dimension};
+    LVRecoverCtx recover_ctx = get_recover_ctx(db);
     LVCommit recovered = {0};
-
     int first_commit_torn_out = 0;
 
     LVStatus s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
@@ -157,77 +212,29 @@ int test_recover_3(void) {
         goto cleanup;
     }
 
-    LVTestAnswer answer = {0};
-    LVOffset_t val_offset = 0;
-    LVWriteTestDataCtx wtdc = {
-        .row_fd = db->row_fd,
-        .ternary_fd = db->ternary_fd,
-        .val_fd = db->val_fd,
-        .commit_fd = db->commit_fd,
+    LVTestWDACCtx wdacc = {
+        .answer_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .answer_commit_out = NULL,
+        .make_multiple_commits = 1,
+        .last_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .data_count = LV_COMMIT_SLOT_M
     };
-    for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {.seq = i,
-                                    .max_year = 2026,
-                                    .min_year = 2000,
-                                    .fixed_date = NULL,
-                                    .alive = 1,
-                                    .prev_value_offset = val_offset,
-                                    .value_len = -1,
-                                    .use_test_vector = 0
-
-        };
-        make_test_answer(&mtac, &answer);
-
-        wtdc.commit_seq = (LVSeq_t)(i + 1);
-        wtdc.data = &answer;
-        wtdc.data_count = 1;
-        wtdc.prev_count = (LVCount_t)i;
-        wtdc.prev_val_bytes = (LVSize32_t)val_offset;
-        wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
-
-        if (write_test_data(&wtdc, NULL) < 0) {
-            result = -1;
-            goto cleanup;
-        }
-
-        val_offset += answer.row.value_len;
-    }
-
-    LVTestAnswer last_ans;
-    LVMakeTestAnswerCtx mtac = {.seq = LV_COMMIT_SLOT_M,
-                                .max_year = 2026,
-                                .min_year = 2000,
-                                .fixed_date = NULL,
-                                .alive = 1,
-                                .prev_value_offset = val_offset,
-                                .value_len = -1,
-                                .use_test_vector = 0
-
-    };
-    make_test_answer(&mtac, &last_ans);
-
-    wtdc.commit_seq = LV_COMMIT_SLOT_M + 1;
-    wtdc.data = &last_ans;
-    wtdc.data_count = 1;
-    wtdc.prev_count = LV_COMMIT_SLOT_M;
-    wtdc.prev_val_bytes = (LVSize32_t)val_offset;
-    wtdc.row_start_offset = (LV_COMMIT_SLOT_M)*LV_ROW_BYTES;
-    wtdc.ternary_start_offset = (LV_COMMIT_SLOT_M)*TEST_TERNARY_BYTES;
-
-    LVCommit expected = {0};
-
-    if (write_test_data(&wtdc, &expected) < 0) {
+    if (write_data_and_commit(db, &wdacc) < 0) {
         result = -1;
         goto cleanup;
     }
 
-    LVRecoverCtx recover_ctx = {.commit_fd = db->commit_fd,
-                                .row_fd = db->row_fd,
-                                .val_fd = db->val_fd,
-                                .ternary_fd = db->ternary_fd,
-                                .max_disk_bytes = db->max_disk_bytes,
-                                .vector_dimension = db->vector_dimension};
+    LVCommit expected = {0};
+    wdacc.answer_commit_seq = (LVSeq_t)LV_COMMIT_SLOT_M+1;
+    wdacc.answer_commit_out = &expected;
+    wdacc.last_commit_seq = (LVSeq_t)LV_COMMIT_SLOT_M;
+    wdacc.make_multiple_commits = 0;
+    wdacc.data_count = LV_COMMIT_SLOT_M;
+    if (write_data_and_commit(db, &wdacc) < 0) {
+        result = -1;
+        goto cleanup;
+    }
+    LVRecoverCtx recover_ctx = get_recover_ctx(db);
     LVCommit recovered = {0};
 
     int first_commit_torn_out = 0;
@@ -268,57 +275,24 @@ int test_recover_4(void) {
         goto cleanup;
     }
 
-    LVTestAnswer answer = {0};
-    LVOffset_t val_offset = 0;
-    LVWriteTestDataCtx wtdc = {
-        .row_fd = db->row_fd,
-        .ternary_fd = db->ternary_fd,
-        .val_fd = db->val_fd,
-        .commit_fd = db->commit_fd,
-    };
-
     LVCommit expected = {0};
-    for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {.seq = i,
-                                    .max_year = 2026,
-                                    .min_year = 2000,
-                                    .fixed_date = NULL,
-                                    .alive = 1,
-                                    .prev_value_offset = val_offset,
-                                    .value_len = -1,
-                                    .use_test_vector = 0
-
-        };
-        make_test_answer(&mtac, &answer);
-
-        wtdc.commit_seq = (LVSeq_t)(i + 1);
-        wtdc.data = &answer;
-        wtdc.data_count = 1;
-        wtdc.prev_count = (LVCount_t)i;
-        wtdc.prev_val_bytes = (LVSize32_t)val_offset;
-        wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
-
-        if (i == LV_COMMIT_SLOT_M - 2) {  // save M-1th commit which is the answer
-            if (write_test_data(&wtdc, &expected) < 0) {
-                result = -1;
-                goto cleanup;
-            }
-        } else {
-            if (write_test_data(&wtdc, NULL) < 0) {
-                result = -1;
-                goto cleanup;
-            }
-        }
-
-        val_offset += answer.row.value_len;
+    LVTestWDACCtx wdacc = {
+        .answer_commit_out = &expected,
+        .answer_commit_seq = LV_COMMIT_SLOT_M-1,
+        .last_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .make_multiple_commits = 1,
+        .data_count = LV_COMMIT_SLOT_M
+    };
+    if(write_data_and_commit(db, &wdacc) < 0){
+        result = -1;
+        goto cleanup;
     }
 
     /*
         Corrupt the Mth commit
     */
     const uint64_t trash = 0xdeadbeef;
-    LVStatus s = lv_write_file(db->commit_fd, &trash, sizeof(trash),
+    LVStatus s = test_file_write(db->commit_file, &trash, sizeof(trash),
                                commit_slot_index(cmt_seq_to_corrupt) * LV_COMMIT_SECTOR_BYTES);
 
     if (s != LV_OK) {
@@ -328,14 +302,7 @@ int test_recover_4(void) {
     }
 
     LVCommit recovered = {0};
-    LVRecoverCtx recover_ctx = {
-        .commit_fd = db->commit_fd,
-        .val_fd = db->val_fd,
-        .ternary_fd = db->ternary_fd,
-        .row_fd = db->row_fd,
-        .max_disk_bytes = db->max_disk_bytes,
-        .vector_dimension = db->vector_dimension,
-    };
+    LVRecoverCtx recover_ctx = get_recover_ctx(db);
     int first_commit_torn_out = 0;
 
     s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
@@ -369,49 +336,23 @@ int test_recover_5(void) {
         goto cleanup;
     }
 
-    LVTestAnswer answer = {0};
-    LVOffset_t val_offset = 0;
-    LVWriteTestDataCtx wtdc = {
-        .row_fd = db->row_fd,
-        .ternary_fd = db->ternary_fd,
-        .val_fd = db->val_fd,
-        .commit_fd = db->commit_fd,
+    LVTestWDACCtx wdacc = {
+        .answer_commit_out = NULL,
+        .answer_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .last_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .make_multiple_commits = 1,
+        .data_count = LV_COMMIT_SLOT_M
     };
-
-    for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {.seq = i,
-                                    .max_year = 2026,
-                                    .min_year = 2000,
-                                    .fixed_date = NULL,
-                                    .alive = 1,
-                                    .prev_value_offset = val_offset,
-                                    .value_len = -1,
-                                    .use_test_vector = 0
-
-        };
-        make_test_answer(&mtac, &answer);
-
-        wtdc.commit_seq = (LVSeq_t)(i + 1);
-        wtdc.data = &answer;
-        wtdc.data_count = 1;
-        wtdc.prev_count = (LVCount_t)i;
-        wtdc.prev_val_bytes = (LVSize32_t)val_offset;
-        wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
-
-        if (write_test_data(&wtdc, NULL) < 0) {
-            result = -1;
-            goto cleanup;
-        }
-
-        val_offset += answer.row.value_len;
+    if(write_data_and_commit(db, &wdacc) < 0){
+        result = -1;
+        goto cleanup;
     }
 
     /*
     Corrupt the second commit
 */
     const uint64_t trash = 0xdeadbeef;
-    LVStatus s = lv_write_file(db->commit_fd, &trash, sizeof(trash),
+    LVStatus s = test_file_write(db->commit_file, &trash, sizeof(trash),
                                commit_slot_index(cmt_seq_to_corrupt) * LV_COMMIT_SECTOR_BYTES);
 
     if (s != LV_OK) {
@@ -421,14 +362,7 @@ int test_recover_5(void) {
     }
 
     LVCommit recovered = {0};
-    LVRecoverCtx recover_ctx = {
-        .commit_fd = db->commit_fd,
-        .val_fd = db->val_fd,
-        .ternary_fd = db->ternary_fd,
-        .row_fd = db->row_fd,
-        .max_disk_bytes = db->max_disk_bytes,
-        .vector_dimension = db->vector_dimension,
-    };
+    LVRecoverCtx recover_ctx = get_recover_ctx(db);
     int first_commit_torn_out = 0;
 
     s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
@@ -463,47 +397,22 @@ int test_recover_6(void) {
         goto cleanup;
     }
 
-    LVTestAnswer answer = {0};
-    LVOffset_t val_offset = 0;
-    LVWriteTestDataCtx wtdc = {
-        .row_fd = db->row_fd,
-        .ternary_fd = db->ternary_fd,
-        .val_fd = db->val_fd,
-        .commit_fd = db->commit_fd,
+    LVTestWDACCtx wdacc = {
+        .answer_commit_out = NULL,
+        .answer_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .make_multiple_commits = 1,
+        .last_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .data_count = LV_COMMIT_SLOT_M
     };
-
-    for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {.seq = i,
-                                    .max_year = 2026,
-                                    .min_year = 2000,
-                                    .fixed_date = NULL,
-                                    .alive = 1,
-                                    .prev_value_offset = val_offset,
-                                    .value_len = -1,
-                                    .use_test_vector = 0
-
-        };
-        make_test_answer(&mtac, &answer);
-
-        wtdc.commit_seq = (LVSeq_t)(i + 1);
-        wtdc.data = &answer;
-        wtdc.data_count = 1;
-        wtdc.prev_count = (LVCount_t)i;
-        wtdc.prev_val_bytes = (LVSize32_t)val_offset;
-        wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
-
-        if (write_test_data(&wtdc, NULL) < 0) {
-            result = -1;
-            goto cleanup;
-        }
-
-        val_offset += answer.row.value_len;
+    if(write_data_and_commit(db, &wdacc) < 0){
+        result = -1;
+        goto cleanup;
     }
+
 
     const uint64_t trash = 0xCADFCADF;
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVStatus s = lv_write_file(db->commit_fd, &trash, sizeof(trash), i * LV_COMMIT_SECTOR_BYTES);
+        LVStatus s = test_file_write(db->commit_file, &trash, sizeof(trash), i * LV_COMMIT_SECTOR_BYTES);
         if (s != LV_OK) {
             PRINT_ERR_UNEXPECTED_STATUS("lv_write_file", LV_OK, s);
             result = -1;
@@ -512,14 +421,7 @@ int test_recover_6(void) {
     }
 
     LVCommit recovered = {0};
-    LVRecoverCtx recover_ctx = {
-        .commit_fd = db->commit_fd,
-        .val_fd = db->val_fd,
-        .ternary_fd = db->ternary_fd,
-        .row_fd = db->row_fd,
-        .max_disk_bytes = db->max_disk_bytes,
-        .vector_dimension = db->vector_dimension,
-    };
+    LVRecoverCtx recover_ctx = get_recover_ctx(db);
     int first_commit_torn_out = 0;
 
     LVStatus s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
@@ -553,49 +455,24 @@ int test_recover_7(void) {
         goto cleanup;
     }
 
-    LVTestAnswer answer = {0};
-    LVOffset_t val_offset = 0;
-    LVWriteTestDataCtx wtdc = {
-        .row_fd = db->row_fd,
-        .ternary_fd = db->ternary_fd,
-        .val_fd = db->val_fd,
-        .commit_fd = db->commit_fd,
+    LVTestWDACCtx wdacc = {
+        .answer_commit_out = NULL,
+        .answer_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .last_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .make_multiple_commits = 1,
+        .data_count = LV_COMMIT_SLOT_M
     };
-
-    for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVMakeTestAnswerCtx mtac = {.seq = i,
-                                    .max_year = 2026,
-                                    .min_year = 2000,
-                                    .fixed_date = NULL,
-                                    .alive = 1,
-                                    .prev_value_offset = val_offset,
-                                    .value_len = -1,
-                                    .use_test_vector = 0
-
-        };
-        make_test_answer(&mtac, &answer);
-
-        wtdc.commit_seq = (LVSeq_t)(i + 1);
-        wtdc.data = &answer;
-        wtdc.data_count = 1;
-        wtdc.prev_count = (LVCount_t)i;
-        wtdc.prev_val_bytes = (LVSize32_t)val_offset;
-        wtdc.row_start_offset = i * LV_ROW_BYTES;
-        wtdc.ternary_start_offset = i * TEST_TERNARY_BYTES;
-
-        if (write_test_data(&wtdc, NULL) < 0) {
-            result = -1;
-            goto cleanup;
-        }
-
-        val_offset += answer.row.value_len;
+    
+    if(write_data_and_commit(db, &wdacc) < 0){
+        result = -1;
+        goto cleanup;
     }
 
     /*
         Corrupt last row which is covered by the last commit
     */
     const uint64_t trash = 0xbeefbeef;
-    LVStatus s = lv_write_file(db->row_fd, &trash, sizeof(trash), (LV_COMMIT_SLOT_M - 1) * LV_ROW_BYTES);
+    LVStatus s = test_file_write(db->row_file, &trash, sizeof(trash), (LV_COMMIT_SLOT_M - 1) * LV_ROW_BYTES);
     if (s != LV_OK) {
         PRINT_ERR_UNEXPECTED_STATUS("lv_write_file", LV_OK, s);
         result = -1;
@@ -603,14 +480,7 @@ int test_recover_7(void) {
     }
 
     LVCommit recovered = {0};
-    LVRecoverCtx recover_ctx = {
-        .commit_fd = db->commit_fd,
-        .val_fd = db->val_fd,
-        .ternary_fd = db->ternary_fd,
-        .row_fd = db->row_fd,
-        .max_disk_bytes = db->max_disk_bytes,
-        .vector_dimension = db->vector_dimension,
-    };
+    LVRecoverCtx recover_ctx = get_recover_ctx(db);
     int first_commit_torn_out = 0;
     s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
 
@@ -644,39 +514,21 @@ int test_recover_8(void) {
         goto cleanup;
     }
 
-    LVTestAnswer answer = {0};
-    LVMakeTestAnswerCtx mtac = {.seq = 0,
-                                .max_year = 2026,
-                                .min_year = 2000,
-                                .fixed_date = NULL,
-                                .alive = 1,
-                                .prev_value_offset = 0,
-                                .value_len = -1,
-                                .use_test_vector = 0
-
-    };
-    make_test_answer(&mtac, &answer);
-    LVWriteTestDataCtx wtdc = {
-        .row_fd = db->row_fd,
-        .ternary_fd = db->ternary_fd,
-        .val_fd = db->val_fd,
-        .commit_fd = db->commit_fd,
-        .commit_seq = 1,
-        .data = &answer,
-        .data_count = 1,
-        .prev_count = 0,
-        .prev_val_bytes = 0,
-        .row_start_offset = 0,
-        .ternary_start_offset = 0,
+    LVTestWDACCtx wdacc = {
+        .answer_commit_out = NULL,
+        .answer_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .last_commit_seq = LV_COMMIT_SEQ_ZERO,
+        .make_multiple_commits = 0,
+        .data_count = 1
     };
 
-    if (write_test_data(&wtdc, NULL) < 0) {
+    if(write_data_and_commit(db, &wdacc) < 0){
         result = -1;
         goto cleanup;
     }
 
     const uint64_t trash = 0xbeefbeef;
-    LVStatus s = lv_write_file(db->commit_fd, &trash, sizeof(trash), 0);
+    LVStatus s = test_file_write(db->commit_file, &trash, sizeof(trash), 0);
     if (s != LV_OK) {
         PRINT_ERR_UNEXPECTED_STATUS("lv_write_file", LV_OK, s);
         result = -1;
@@ -684,14 +536,7 @@ int test_recover_8(void) {
     }
 
     LVCommit recovered = {0};
-    LVRecoverCtx recover_ctx = {
-        .commit_fd = db->commit_fd,
-        .val_fd = db->val_fd,
-        .ternary_fd = db->ternary_fd,
-        .row_fd = db->row_fd,
-        .max_disk_bytes = db->max_disk_bytes,
-        .vector_dimension = db->vector_dimension,
-    };
+    LVRecoverCtx recover_ctx = get_recover_ctx(db);
     int first_commit_torn_out = 0;
     s = lv_recover(&recover_ctx, &recovered, &first_commit_torn_out);
 
