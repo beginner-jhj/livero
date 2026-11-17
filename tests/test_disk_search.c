@@ -96,15 +96,14 @@ static void init_missing_seqs(void) {
     push_missing_seq(last + 1000);
 }
 
-static int full_compare(int row_fd, int val_fd, uint8_t* row_window, LVCount_t window_batch_m, LVDiskSearchFn fn,
-                        const char* search_fn_name, const int is_interp) {
-    LVDiskSearchCtx search_ctx = {
-        .disk_record_count = TEST_DATA_COUNT,
-        .row_fd = row_fd,
-        .val_fd = val_fd,
-        .row_window = row_window,
-        .window_batch_m = window_batch_m,
-    };
+static int full_compare(LVFILEDef* row_file, LVFILEDef* val_file, uint8_t* row_window, LVCount_t window_batch_m,
+                        LVDiskSearchFn fn, const char* search_fn_name, const int is_interp) {
+    LVDiskSearchCtx search_ctx = {.disk_record_count = TEST_DATA_COUNT,
+                                  .row_file = row_file,
+                                  .val_file = val_file,
+                                  .row_window = row_window,
+                                  .read_batch_m = window_batch_m,
+                                  .read = test_file_read};
     uint8_t value[TEST_MAX_VALUE_LEN] = {0xAA};
     LVGetResult got = {
         .value = value,
@@ -230,10 +229,10 @@ int test_interpolation_search(void) {
     LVWriteTestDataCtx wtdc = {
         .data = TEST_DATA,
         .data_count = TEST_DATA_COUNT,
-        .row_fd = db->row_fd,
-        .ternary_fd = db->ternary_fd,
-        .val_fd = db->val_fd,
-        .commit_fd = db->commit_fd,
+        .row_file = db->row_file,
+        .ter_file = db->ter_file,
+        .val_file = db->val_file,
+        .commit_file = db->commit_file,
         .commit_seq = LV_COMMIT_SEQ_START,
         .row_start_offset = 0,
         .ternary_start_offset = 0,
@@ -247,7 +246,7 @@ int test_interpolation_search(void) {
 
     const char* fn_name = "lv_interpolation_search_from_disk";
 
-    if ((result = full_compare(db->row_fd, db->val_fd, db->row_window, db->window_batch_m,
+    if ((result = full_compare(db->row_file, db->val_file, db->row_window, db->option.read_batch_m,
                                lv_interpolation_search_from_disk, fn_name, 1)) < 0) {
         fprintf(stderr, "%s. \n", fn_name);
         result = -1;
@@ -278,10 +277,10 @@ int test_binary_search(void) {
     LVWriteTestDataCtx wtdc = {
         .data = TEST_DATA,
         .data_count = TEST_DATA_COUNT,
-        .row_fd = db->row_fd,
-        .ternary_fd = db->ternary_fd,
-        .val_fd = db->val_fd,
-        .commit_fd = db->commit_fd,
+        .row_file = db->row_file,
+        .ter_file = db->ter_file,
+        .val_file = db->val_file,
+        .commit_file = db->commit_file,
         .commit_seq = LV_COMMIT_SEQ_START,
         .row_start_offset = 0,
         .ternary_start_offset = 0,
@@ -295,8 +294,8 @@ int test_binary_search(void) {
 
     const char* fn_name = "lv_binary_search_from_disk";
 
-    if ((result = full_compare(db->row_fd, db->val_fd, db->row_window, db->window_batch_m, lv_binary_search_from_disk,
-                               fn_name, 0)) < 0) {
+    if ((result = full_compare(db->row_file, db->val_file, db->row_window, db->option.read_batch_m,
+                               lv_binary_search_from_disk, fn_name, 0)) < 0) {
         fprintf(stderr, "%s. \n", fn_name);
         result = -1;
         goto cleanup;
