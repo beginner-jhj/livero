@@ -41,70 +41,6 @@ LVStatus lv_concat_path(const char* path, const char* file_name, char* outbuf, c
     }
 }
 
-LVStatus lv_open_file(const char* db_path, const char* file_name, const int flags, int* fd_out) {
-    assert(db_path && file_name && fd_out);
-
-    char PATH[LV_MAX_PATH_LEN] = {0};
-    LVStatus status = lv_concat_path(db_path, file_name, PATH, LV_MAX_PATH_LEN);
-    if (status != LV_OK) {
-        return status;
-    }
-
-    int fd = open(PATH, flags, 0644);
-
-    if (fd < 0) {
-        if (errno == EEXIST) {
-            return LV_ERR_EXSIST;
-        } else if (errno == ENOENT) {
-            return LV_ERR_DNEXSIST;
-        }
-        return LV_ERR_IO;
-    }
-
-    *fd_out = fd;
-
-    return LV_OK;
-}
-
-LVStatus lv_close_file(int fd) {
-    if (fd == -1) {
-        return LV_OK;
-    }
-    return close(fd) < 0 ? LV_ERR_IO : LV_OK;
-}
-
-LVStatus lv_write_file(int fd, const void* data, const LVSize32_t size, const LVOffset_t offset) {
-    assert(fd > STDERR_FILENO);
-    ssize_t _written = pwrite(fd, data, size, offset);
-    if (_written < 0) {
-        perror("write failed:");
-        return LV_ERR_IO;
-    }
-
-    return LV_OK;
-}
-
-LVStatus lv_read_file(const int fd, void* buf, const LVSize32_t size, const LVOffset_t offset) {
-    assert(fd > STDERR_FILENO);
-    ssize_t _read = pread(fd, buf, size, offset);
-    if (_read < 0) {
-        perror("read failed:");
-        return LV_ERR_IO;
-    }
-
-    return LV_OK;
-}
-
-LVStatus lv_sync_file(int fd) {
-    int result = 0;
-    #if defined(__APPLE__)
-        result = fcntl(fd, F_FULLFSYNC);
-    #else
-        result = fsync(fd);
-    #endif
-    return result < 0 ?  LV_ERR_IO:LV_OK;
-}
-
 void lv_put_fixed_16(uint8_t* buf, uint16_t value) {
     buf[0] = (uint8_t)(value & 0xff);
     buf[1] = (uint8_t)((value >> 8) & 0xff);
@@ -137,4 +73,36 @@ uint64_t lv_get_fixed_64(const uint8_t* buf) {
     }
 
     return result;
+}
+
+LVStatus lv_file_open_single(const char* db_path, const int is_create, const char* file_name, LVFILEDef* file,
+                             lv_file_open open) {
+    char PATH[LV_MAX_PATH_LEN] = {0};
+    LVStatus s = lv_concat_path(db_path, file_name, PATH, sizeof(PATH));
+    if (s != LV_OK) {
+        return s;
+    }
+    if ((s = open(PATH, is_create, file)) != LV_OK) {
+        LIVERO_ERROR("Failed to open %s.", file_name);
+    }
+    return s;
+}
+
+LVStatus lv_file_open_all(const char* db_path, const int is_create, LVFileDefList* file_list, lv_file_open open) {
+    assert(db_path && file_list && open);
+
+    LVStatus s = lv_file_open_single(db_path, is_create, LV_ROW_FILE_NAME, file_list->row_file, open);
+    if (s != LV_OK) {
+        return s;
+    }
+
+    if ((s = lv_file_open_single(db_path, is_create, LV_TERNARY_FILE_NAME, file_list->ternary_file, open)) != LV_OK) {
+        return s;
+    }
+
+    if ((s = lv_file_open_single(db_path, is_create, LV_VAL_FILE_NAME, file_list->value_file, open)) != LV_OK) {
+        return s;
+    }
+
+    return lv_file_open_single(db_path, is_create, LV_COMMIT_FILE_NAME, file_list->commit_file, open);
 }
