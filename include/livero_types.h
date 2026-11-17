@@ -39,12 +39,18 @@ enum {
 
 typedef struct LVFILEDef LVFILEDef;
 
+typedef LVStatus (*lv_file_open)(const char* path, const int is_create, LVFILEDef* file);
+typedef LVStatus (*lv_file_close)(LVFILEDef* file);
+typedef LVStatus (*lv_file_write)(LVFILEDef* file, const void* data, const LVSize32_t len, const LVOffset_t offset);
+typedef LVStatus (*lv_file_read)(LVFILEDef* file, const void* buffer, const LVSize32_t len, const LVOffset_t offset);
+typedef LVStatus (*lv_file_sync)(LVFILEDef* file);
+
 typedef struct {
-    LVStatus (*lv_file_open)(const char* path, LVFILEDef* file);
-    LVStatus (*lv_file_close)(LVFILEDef* file);
-    LVStatus (*lv_file_write)(LVFILEDef* file, const void* data, const LVSize32_t len, const LVOffset_t offset);
-    LVStatus (*lv_file_read)(LVFILEDef* file, const void* buffer, const LVSize32_t len, const LVOffset_t offset);
-    LVStatus (*lv_file_sync)(LVFILEDef* file);
+    lv_file_open open;
+    lv_file_close close;
+    lv_file_write write;
+    lv_file_read read;
+    lv_file_sync sync;
 } LVIOOps;
 
 typedef struct LVConfig {
@@ -58,7 +64,6 @@ typedef struct LVOption {
     LVCount_t read_batch_m;
     LVCount_t write_batch_m;
     LVSyncMode sync_mode;
-    LVFILEDef* file_def;
     LVSize16_t file_def_size;
     LVIOOps* io_ops;
 } LVOption;
