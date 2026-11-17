@@ -75,9 +75,10 @@ typedef struct LVRowCalcChecksumCtx {
 uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx);
 
 typedef struct LVRowCCFDCtx {
-    int row_fd;
-    int ternary_fd;
-    int val_fd;
+    LVFILEDef* row_file;
+    LVFILEDef* ter_file;
+    LVFILEDef* val_file;
+    lv_file_read read;
     LVOffset_t row_offset;
     LVOffset_t ternary_offset;
     LVSize32_t ternary_bytes;

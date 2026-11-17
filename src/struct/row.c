@@ -52,7 +52,7 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
     assert(ctx);
     uint8_t row[LV_ROW_BYTES] = {0};
 
-    LVStatus s = lv_read_file(ctx->row_fd, row, LV_ROW_BYTES, ctx->row_offset);
+    LVStatus s = ctx->read(ctx->row_file, row, LV_ROW_BYTES, ctx->row_offset);
 
     if (s != LV_OK) {
         return s;
@@ -66,12 +66,12 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
 
     uint8_t checksum_buffer[LV_MAX_VLA_LEN] = {0};
 
-    if ((s = lv_crc32c_update_from_file(ctx->ternary_fd, ctx->ternary_offset, ctx->ternary_bytes, checksum_buffer,
+    if ((s = lv_crc32c_update_from_file(ctx->ter_file, ctx->read, ctx->ternary_offset, ctx->ternary_bytes, checksum_buffer,
                                         sizeof(checksum_buffer), &checksum)) != LV_OK) {
         return s;
     }
 
-    if ((s = lv_crc32c_update_from_file(ctx->val_fd, value_offset, value_len, checksum_buffer,
+    if ((s = lv_crc32c_update_from_file(ctx->val_file, ctx->read, value_offset, value_len, checksum_buffer,
                                         sizeof(checksum_buffer), &checksum)) != LV_OK) {
         return s;
     }
