@@ -88,7 +88,7 @@ function(lv_add_test name file)
     add_executable(${name} ${file})
     target_link_libraries(${name} PRIVATE livero)
     target_include_directories(${name} PRIVATE src include tests)
-    target_compile_definitions(${name} PRIVATE _DARWIN_C_SOURCE)
+    target_compile_definitions(${name} PRIVATE _POSIX_C_SOURCE=200809L _DARWIN_C_SOURCE)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
