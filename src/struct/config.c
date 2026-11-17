@@ -1,7 +1,10 @@
 #include "config.h"
 
+#include <stdint.h>
+
 #include "file/file.h"
 #include "helper/crc32c.h"
+#include "livero_types.h"
 
 LVConfigDisk lv_config_m2d(const LVConfig* config) {
     assert(config);
@@ -18,7 +21,8 @@ LVConfigDisk lv_config_m2d(const LVConfig* config) {
     checksum = lv_crc32c_update(checksum, cfg_disk.vector_dimension, sizeof(cfg_disk.vector_dimension));
 
     cfg_disk.vector_type = config->vector_type;
-    checksum = lv_crc32c_update(checksum, &cfg_disk.vector_type, sizeof(cfg_disk.vector_type)); //fix bug, didn't update checksum with vector_type
+    checksum = lv_crc32c_update(checksum, &cfg_disk.vector_type,
+                                sizeof(cfg_disk.vector_type));  // fix bug, didn't update checksum with vector_type
 
     checksum = lv_crc32c_end(checksum);
     lv_put_fixed_32(cfg_disk.checksum, checksum);
@@ -26,11 +30,11 @@ LVConfigDisk lv_config_m2d(const LVConfig* config) {
     return cfg_disk;
 }
 
-LVStatus lv_config_d2m(const int fd, LVConfig* config_out) {
+LVStatus lv_config_d2m(LVFILEDef* config_file, lv_file_read read, LVConfig* config_out) {
     assert(config_out);
 
     LVConfigDisk cfg_disk;
-    LVStatus s = lv_read_file(fd, &cfg_disk, LV_CONFIG_DISK_BYTES, 0);
+    LVStatus s = read(config_file, &cfg_disk, sizeof(cfg_disk), 0);
     if (s != LV_OK) {
         return s;
     }
@@ -48,12 +52,12 @@ LVStatus lv_config_d2m(const int fd, LVConfig* config_out) {
     return LV_OK;
 }
 
-LVStatus lv_save_config(int fd, const LVConfig* config) {
-    assert(config);
+LVStatus lv_save_config(LVFILEDef* config_file, const LVConfig* config, lv_file_write write, lv_file_sync sync) {
+    assert(config_file && config && write && sync);
     LVConfigDisk cfg_disk = lv_config_m2d(config);
-    LVStatus s = lv_write_file(fd, &cfg_disk, LV_CONFIG_DISK_BYTES, 0);
+    LVStatus s = write(config_file, &cfg_disk, LV_CONFIG_DISK_BYTES, 0);
     if (s != LV_OK) {
         return s;
     }
-    return lv_sync_file(fd);
+    return sync(config_file);
 }

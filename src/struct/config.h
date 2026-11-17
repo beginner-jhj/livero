@@ -28,11 +28,11 @@ LVConfigDisk lv_config_m2d(const LVConfig* config);
 /*
     Convert a LVConfigDisk to a LVConfig
 */
-LVStatus lv_config_d2m(const int fd, LVConfig* config_out);
+LVStatus lv_config_d2m(LVFILEDef* config_file, lv_file_read read, LVConfig* config_out);
 
 /*
     Write LVConfigDisk on the config.lv
 */
-LVStatus lv_save_config(int fd, const LVConfig* config);
+LVStatus lv_save_config(LVFILEDef* config_file, const LVConfig* config, lv_file_write write, lv_file_sync sync);
 
 #endif
