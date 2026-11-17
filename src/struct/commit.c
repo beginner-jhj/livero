@@ -13,16 +13,16 @@
 static const char LV_ZERO_SECTOR[LV_COMMIT_SECTOR_BYTES] = {0};
 static char LV_WRITABLE_SECTOR[LV_COMMIT_SECTOR_BYTES] = {0};
 
-LVStatus commit_init(int fd) {
+LVStatus commit_init(LVFILEDef* commit_file, lv_file_write write, lv_file_sync sync){
     LVStatus s = LV_OK;
 
     for (int i = 0; i < LV_COMMIT_SLOT_M; i++) {
-        if ((s = lv_write_file(fd, LV_ZERO_SECTOR, LV_COMMIT_SECTOR_BYTES, i * LV_COMMIT_SECTOR_BYTES)) != LV_OK) {
+        if ((s = write(commit_file, LV_ZERO_SECTOR, LV_COMMIT_SECTOR_BYTES, i*LV_COMMIT_SECTOR_BYTES)) != LV_OK) {
             return s;
         }
     }
 
-    return lv_sync_file(fd);
+    return sync(commit_file);
 }
 
 LVCommitDisk commit_m2d(const LVCommit* commit) {
@@ -59,11 +59,11 @@ LVCommitDisk commit_m2d(const LVCommit* commit) {
     return cmt_disk;
 }
 
-LVCommitStatus commit_d2m(const int fd, const LVOffset_t offset, LVCommit* commit_out) {
-    assert(commit_out);
+LVCommitStatus commit_d2m(LVFILEDef* commit_file, lv_file_read read, const LVOffset_t offset, LVCommit* commit_out) {
+    assert(commit_file && read && commit_out);
 
     LVCommitDisk cmt_disk;
-    LVStatus s = lv_read_file(fd, &cmt_disk, LV_COMMIT_DISK_BYTES, offset);
+    LVStatus s = read(commit_file, &cmt_disk, LV_COMMIT_DISK_BYTES, offset);
     if (s != LV_OK) {
         return (LVCommitStatus){.db = s, .commit = LV_COMMIT_OK};
     }
@@ -112,12 +112,12 @@ int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const L
     return 1;
 }
 
-LVStatus commit_write(const int fd, const LVCommit* commit) {
+LVStatus commit_write(LVFILEDef* commit_file, lv_file_write write, const LVCommit* commit) {
     assert(commit);
     assert(commit->commit_seq != LV_COMMIT_SEQ_ZERO);
     memset(LV_WRITABLE_SECTOR, 0, LV_COMMIT_SECTOR_BYTES);
     LVCommitDisk cmt_disk = commit_m2d(commit);
     memcpy(LV_WRITABLE_SECTOR, &cmt_disk, sizeof(cmt_disk));
     const LVOffset_t offset = (commit_slot_index(commit->commit_seq))*LV_COMMIT_SECTOR_BYTES;
-    return lv_write_file(fd, LV_WRITABLE_SECTOR, LV_COMMIT_SECTOR_BYTES, offset);
+    return write(commit_file, LV_WRITABLE_SECTOR, LV_COMMIT_SECTOR_BYTES, offset);
 }

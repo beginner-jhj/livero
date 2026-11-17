@@ -50,7 +50,7 @@ static inline uint32_t commit_slot_index(const LVSeq_t commit_seq) {
 /*
     Write M zero-initialized slots on commit.lv
 */
-LVStatus commit_init(int fd);
+LVStatus commit_init(LVFILEDef* commit_file, lv_file_write write, lv_file_sync sync);
 
 /*
     Convert a LVCommit(memory) to a LVCommitDisk.
@@ -73,11 +73,11 @@ typedef struct {
 /*
     Convert a LVCommitDisk to a LVCommit
 */
-LVCommitStatus commit_d2m(const int fd, const LVOffset_t offset, LVCommit* commit_out);
+LVCommitStatus commit_d2m(LVFILEDef* commit_file, lv_file_read read, const LVOffset_t offset, LVCommit* commit_out);
 
 int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t ternary_bytes,
                   const LVSize32_t max_disk_bytes);
 
-LVStatus commit_write(const int fd, const LVCommit* commit);
+LVStatus commit_write(LVFILEDef* commit_file, lv_file_write write, const LVCommit* commit);
 
 #endif
