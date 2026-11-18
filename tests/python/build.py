@@ -44,10 +44,28 @@ typedef struct LVConfig {
     LVVectorType vector_type;
 } LVConfig;
 
+typedef struct LVFILEDef LVFILEDef;
+
+typedef LVStatus (*lv_file_open)(const char* path, const int is_create, LVFILEDef* file);
+typedef LVStatus (*lv_file_close)(LVFILEDef* file);
+typedef LVStatus (*lv_file_write)(LVFILEDef* file, const void* data, const LVSize32_t len, const LVOffset_t offset);
+typedef LVStatus (*lv_file_read)(LVFILEDef* file, void* buffer, const LVSize32_t len, const LVOffset_t offset);
+typedef LVStatus (*lv_file_sync)(LVFILEDef* file);
+
+typedef struct {
+    lv_file_open open;
+    lv_file_close close;
+    lv_file_write write;
+    lv_file_read read;
+    lv_file_sync sync;
+} LVIOOps;
+
 typedef struct LVOption {
     LVCount_t read_batch_m;
     LVCount_t write_batch_m;
     LVSyncMode sync_mode;
+    LVSize16_t file_def_size;
+    const LVIOOps* io_ops;
 } LVOption;
 
 typedef struct {
@@ -90,6 +108,7 @@ LVStatus lv_delete(Livero* db, const LVSeq_t target_seq);
 LVStatus lv_query(Livero* db,const LVTopK_t k, const void* query_vector, const LVDate* date1, const LVDate* date2, LVQueryResult* result, LVSize32_t* result_size);
 void lv_close(Livero* db);
 void lv_stat(const Livero* db, LVDBStat* stat);
+void lv_py_use_posix_io(LVOption* option);
 
 """
 
@@ -107,6 +126,19 @@ LV_SOURCES = [
     ]
 ]
 
+SHIM = r'''
+#include "livero_io_builtin.h"
+#include "livero.h"
+
+/* Exposes the header-only POSIX io_ops to Python.
+   POSIX_IO_OPS is `static const`, so it has no exported symbol
+   that cffi could look up by name. */
+void lv_py_use_posix_io(LVOption* option) {
+    option->io_ops = &POSIX_IO_OPS;         
+    option->file_def_size = POSIX_FILE_DEF_SIZE;
+}
+'''
+
 if __name__ == "__main__":
     build_dir = os.path.join(ROOT_DIR, "build", "cffi")
     os.makedirs(build_dir, exist_ok=True)
@@ -117,7 +149,7 @@ if __name__ == "__main__":
 
     builder.set_source(
         "_livero",
-        '#include "livero.h"',
+        SHIM,
         sources=LV_SOURCES,
         include_dirs=[INCLUDE_DIR, SRC_DIR],
         extra_compile_args=["-O3", "-DNDEBUG", "-std=c11"]
