@@ -103,7 +103,7 @@ static int full_compare(LVFILEDef* row_file, LVFILEDef* val_file, uint8_t* row_w
                                   .val_file = val_file,
                                   .row_window = row_window,
                                   .read_batch_m = window_batch_m,
-                                  .read = test_file_read};
+                                  .read = TEST_IO_OPS.read};
     uint8_t value[TEST_MAX_VALUE_LEN] = {0xAA};
     LVGetResult got = {
         .value = value,
