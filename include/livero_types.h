@@ -65,7 +65,7 @@ typedef struct LVOption {
     LVCount_t write_batch_m;
     LVSyncMode sync_mode;
     LVSize16_t file_def_size;
-    LVIOOps* io_ops;
+    const LVIOOps* io_ops;
 } LVOption;
 
 typedef struct {
