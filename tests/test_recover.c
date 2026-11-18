@@ -292,7 +292,7 @@ int test_recover_4(void) {
         Corrupt the Mth commit
     */
     const uint64_t trash = 0xdeadbeef;
-    LVStatus s = test_file_write(db->commit_file, &trash, sizeof(trash),
+    LVStatus s = TEST_IO_OPS.write(db->commit_file, &trash, sizeof(trash),
                                commit_slot_index(cmt_seq_to_corrupt) * LV_COMMIT_SECTOR_BYTES);
 
     if (s != LV_OK) {
@@ -352,7 +352,7 @@ int test_recover_5(void) {
     Corrupt the second commit
 */
     const uint64_t trash = 0xdeadbeef;
-    LVStatus s = test_file_write(db->commit_file, &trash, sizeof(trash),
+    LVStatus s = TEST_IO_OPS.write(db->commit_file, &trash, sizeof(trash),
                                commit_slot_index(cmt_seq_to_corrupt) * LV_COMMIT_SECTOR_BYTES);
 
     if (s != LV_OK) {
@@ -412,7 +412,7 @@ int test_recover_6(void) {
 
     const uint64_t trash = 0xCADFCADF;
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVStatus s = test_file_write(db->commit_file, &trash, sizeof(trash), i * LV_COMMIT_SECTOR_BYTES);
+        LVStatus s = TEST_IO_OPS.write(db->commit_file, &trash, sizeof(trash), i * LV_COMMIT_SECTOR_BYTES);
         if (s != LV_OK) {
             PRINT_ERR_UNEXPECTED_STATUS("lv_write_file", LV_OK, s);
             result = -1;
@@ -472,7 +472,7 @@ int test_recover_7(void) {
         Corrupt last row which is covered by the last commit
     */
     const uint64_t trash = 0xbeefbeef;
-    LVStatus s = test_file_write(db->row_file, &trash, sizeof(trash), (LV_COMMIT_SLOT_M - 1) * LV_ROW_BYTES);
+    LVStatus s = TEST_IO_OPS.write(db->row_file, &trash, sizeof(trash), (LV_COMMIT_SLOT_M - 1) * LV_ROW_BYTES);
     if (s != LV_OK) {
         PRINT_ERR_UNEXPECTED_STATUS("lv_write_file", LV_OK, s);
         result = -1;
@@ -528,7 +528,7 @@ int test_recover_8(void) {
     }
 
     const uint64_t trash = 0xbeefbeef;
-    LVStatus s = test_file_write(db->commit_file, &trash, sizeof(trash), 0);
+    LVStatus s = TEST_IO_OPS.write(db->commit_file, &trash, sizeof(trash), 0);
     if (s != LV_OK) {
         PRINT_ERR_UNEXPECTED_STATUS("lv_write_file", LV_OK, s);
         result = -1;
