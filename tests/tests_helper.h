@@ -26,6 +26,7 @@
 #include "struct/commit.h"
 #include "struct/row.h"
 #include "vector/ternary.h"
+#include "livero_io_builtin.h"
 // Report a mismatch using one printf conversion for both values.
 // fmt must be a string literal because it is joined with adjacent literals.
 #define PRINT_ERR_INVALID(param_name, fmt, expected, got) \
@@ -53,83 +54,13 @@ static LVConfig TEST_CONFIG = {
     .vector_type = TEST_VECTOR_TYPE,
 };
 
-struct LVFILEDef {
-    int fd;
-};
 
-LVStatus test_file_open(const char* path, const int is_create, LVFILEDef* file_out) {
-    assert(path && file_out);
-    int flags = 0;
-    if (is_create) {
-        flags = O_CREAT | O_EXCL | O_RDWR;
-    } else {
-        flags = O_RDWR;
-    }
-    int fd = open(path, flags, 0644);
-
-    if (fd < 0) {
-        if (errno == EEXIST) {
-            return LV_ERR_EXSIST;
-        } else if (errno == ENOENT) {
-            return LV_ERR_DNEXSIST;
-        }
-        return LV_ERR_IO;
-    }
-
-    file_out->fd = fd;
-
-    return LV_OK;
-}
-
-LVStatus test_file_close(LVFILEDef* file) {
-    if (file->fd == -1) {
-        return LV_OK;
-    }
-    return close(file->fd) < 0 ? LV_ERR_IO : LV_OK;
-}
-
-LVStatus test_file_write(LVFILEDef* file, const void* data, const LVSize32_t size, const LVOffset_t offset) {
-    assert(file->fd > STDERR_FILENO);
-    ssize_t _written = pwrite(file->fd, data, size, offset);
-    if (_written < 0) {
-        perror("write failed:");
-        return LV_ERR_IO;
-    }
-
-    return LV_OK;
-}
-
-LVStatus test_file_read(LVFILEDef* file, void* buf, const LVSize32_t size, const LVOffset_t offset) {
-    assert(file->fd > STDERR_FILENO);
-    ssize_t _read = pread(file->fd, (void*)buf, size, offset);
-    if (_read < 0) {
-        perror("read failed:");
-        return LV_ERR_IO;
-    }
-
-    return LV_OK;
-}
-
-LVStatus test_file_sync(LVFILEDef* file) {
-    int result = 0;
-#if defined(__APPLE__)
-    result = fcntl(file->fd, F_FULLFSYNC);
-#else
-    result = fsync(file->fd);
-#endif
-    return result < 0 ? LV_ERR_IO : LV_OK;
-}
-
-LVIOOps TEST_IO_OPS = {.open = test_file_open,
-                       .close = test_file_close,
-                       .write = test_file_write,
-                       .read = test_file_read,
-                       .sync = test_file_sync};
+LVIOOps TEST_IO_OPS = POSIX_IO_OPS;
 
 static LVOption TEST_OPTION = {.write_batch_m = TEST_WRITE_BATCH_M,
                                .read_batch_m = TEST_READ_BATCH_M,
                                .sync_mode = TEST_SYNC_MODE,
-                               .file_def_size = sizeof(LVFILEDef),
+                               .file_def_size = POSIX_FILE_DEF_SIZE,
                                .io_ops = &TEST_IO_OPS};
 
 static int8_t TEST_INT8_VEC_BUFFER[TEST_VECTOR_DIMENSION] = {0};
@@ -662,7 +593,7 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
     for (LVCount_t i = 0; i < ctx->data_count; ++i) {
         const LVTestAnswer* ans = &ctx->data[i];
         row_write_on_memory(row_buf, &ans->row);
-        LVStatus s = test_file_write(ctx->val_file, ans->value, ans->row.value_len, ans->row.value_offset);
+        LVStatus s = TEST_IO_OPS.write(ctx->val_file, ans->value, ans->row.value_len, ans->row.value_offset);
         if (s != LV_OK) {
             fprintf(stderr, "Failed to write test value data. (seq: %" PRIu64 ")\n", ans->row.seq);
             return -1;
@@ -670,13 +601,13 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
         batched_val_bytes += ans->row.value_len;
 
         const LVOffset_t ternary_offset = ctx->ternary_start_offset + i * TEST_TERNARY_BYTES;
-        if ((s = test_file_write(ctx->ter_file, ans->ternary_chunks, TEST_TERNARY_BYTES, ternary_offset)) != LV_OK) {
+        if ((s = TEST_IO_OPS.write(ctx->ter_file, ans->ternary_chunks, TEST_TERNARY_BYTES, ternary_offset)) != LV_OK) {
             fprintf(stderr, "Failed to write test teranry data. (seq: %" PRIu64 ")\n", ans->row.seq);
             return -1;
         }
 
         const LVOffset_t row_offset = ctx->row_start_offset + i * LV_ROW_BYTES;
-        if ((s = test_file_write(ctx->row_file, row_buf, LV_ROW_BYTES, row_offset)) != LV_OK) {
+        if ((s = TEST_IO_OPS.write(ctx->row_file, row_buf, LV_ROW_BYTES, row_offset)) != LV_OK) {
             fprintf(stderr, "Faield to write test row data. (seq: %" PRIu64 ")\n", ans->row.seq);
             return -1;
         }
@@ -692,7 +623,7 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
         .reserved_seq = ctx->data[ctx->data_count - 1].row.seq,
     };
 
-    LVStatus s = commit_write(ctx->commit_file, test_file_write, &cmt);
+    LVStatus s = commit_write(ctx->commit_file, TEST_IO_OPS.write, &cmt);
 
     if (s != LV_OK) {
         fprintf(stderr, "Failed to write test commit. \n");
