@@ -311,7 +311,7 @@ class Livero:
     @staticmethod
     def _c_option(option: LVOption | None):
         opt = option if option is not None else DEFAULT_OPTION
-        return ffi.new(
+        c_opt = ffi.new(
             "LVOption *",
             {
                 "read_batch_m": opt["read_batch_m"],
@@ -319,6 +319,8 @@ class Livero:
                 "sync_mode": opt["sync_mode"].value,
             },
         )
+        lib.lv_py_use_posix_io(c_opt)
+        return c_opt
 
     def _c_vector(self, vector: list[float] | list[int]):
         cfg = self._require_open()
