@@ -21,45 +21,22 @@
  * recover) section. ******************/
 
 LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *option, Livero **db_out) {
-    if (!db_path) {
-        LIVERO_ERROR("You missed a path to store data.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(db_path, "db_path");
 
-    if (!config) {
-        LIVERO_ERROR("You missed the config.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(db_out, "db_out");
 
-    if (config->max_disk_bytes <= LV_BASELINE_DISK_USAGE) {
-        LIVERO_ERROR("max_disk_bytes is too few. Baseline usage is %" PRIu64 "bytes.\n", LV_BASELINE_DISK_USAGE);
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(config, "config");
 
-    if (!option) {
-        LIVERO_ERROR("You missed the option.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_GT(config->max_disk_bytes, "max_disk_bytes", "%u", LV_BASELINE_DISK_USAGE);
 
-    if (!db_out) {
-        LIVERO_ERROR("You missed the db_out pointer.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (config->max_disk_bytes == 0) {
-        LIVERO_ERROR("max_disk_bytes must be greater than 0.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_GT(config->max_value_len, "max_value_len", "%d", 0);
 
     if (config->vector_dimension == 0 || config->vector_dimension % LV_DIMENSION_MULTIPLE != 0) {
         LIVERO_ERROR("vector_dimension must be a multiple of %d.", LV_DIMENSION_MULTIPLE);
         return LV_ERR_INVALID_PARAM;
     }
 
-    if (config->max_value_len == 0) {
-        LIVERO_ERROR("max_value_len must be greater than 0.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(option, "option");
 
     if (!lv_check_option(option)) {
         return LV_ERR_INVALID_PARAM;
@@ -124,20 +101,11 @@ cleanup:
 }
 
 LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
-    if (!db_path) {
-        LIVERO_ERROR("You missed a path to store data.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(db_path, "db_path");
 
-    if (!option) {
-        LIVERO_ERROR("You missed the option.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(db_out, "db_out");
 
-    if (!db_out) {
-        LIVERO_ERROR("You missed the db_out pointer.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(option, "option");
 
     if (!lv_check_option(option)) {
         return LV_ERR_INVALID_PARAM;
@@ -446,25 +414,15 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
 
 LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_len, const LVDate *date,
                 LVSeq_t *seq_out) {
-    if (!db) {
-        LIVERO_ERROR("You miss a db.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(db, "Db");
 
-    if (!vector) {
-        LIVERO_ERROR("You must pass vector.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(vector, "vector");
 
-    if (!value || value_len == 0) {
-        LIVERO_ERROR("You must pass value.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(value, "value");
 
-    if (value_len > db->config.max_value_len) {
-        LIVERO_ERROR("value_len exceeds max_value_len(%d)", db->config.max_value_len);
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_GT(value_len, "value_len", "%d", 0);
+
+    LIVERO_CHECK_LT(value_len, "value_len", "%u", db->config.max_value_len + 1);
 
     if (date && !lv_date_is_valid(date)) {
         LIVERO_ERROR("You passed an invalid date object.");
@@ -638,15 +596,9 @@ LVStatus lv_flush(Livero *db) {
  * ******************/
 
 LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
-    if (!db) {
-        LIVERO_ERROR("You miss a db.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(db, "Db");
 
-    if (!result) {
-        LIVERO_ERROR("You must pass a LVGetResult buffer.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(result, "Get result");
 
     if (target_seq >= db->next_seq) {
         return LV_ERR_NOT_FOUND;
@@ -669,10 +621,7 @@ LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
 }
 
 LVStatus lv_delete(Livero *db, const LVSeq_t target_seq) {
-    if (!db) {
-        LIVERO_ERROR("You miss a db.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(db, "Db");
 
     if (target_seq >= db->next_seq) {
         return LV_ERR_NOT_FOUND;
@@ -1001,23 +950,15 @@ LVStatus lv_window_search(LVWindowSearchCtx *ctx, LVGetResult *result, LVOffset_
 
 LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const LVDate *date1, const LVDate *date2,
                   LVQueryResult *result, LVSize32_t *result_size) {
-    if (!db) {
-        LIVERO_ERROR("You missed a db.");
-        return LV_ERR_INVALID_PARAM;
-    }
-    if (!query_vector) {
-        LIVERO_ERROR("You must pass a vector to query.");
-        return LV_ERR_INVALID_PARAM;
-    }
-    if (k == 0) {
-        LIVERO_ERROR("The k must be greater than 0.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(db, "Db");
 
-    if (!result || !result_size) {
-        LIVERO_ERROR("You must pass both result pointer and result_size pointer.");
-        return LV_ERR_INVALID_PARAM;
-    }
+    LIVERO_CHECK_MISSING(query_vector, "query_vector");
+
+    LIVERO_CHECK_GT(k, "k", "%d", 0);
+
+    LIVERO_CHECK_MISSING(result, "Query result");
+
+    LIVERO_CHECK_MISSING(result_size, "Query result_size");
 
     const LVCount_t total_record_count = lv_total_record_count(db);
     const LVTopK_t TOP_K = k <= total_record_count ? k : (LVTopK_t)total_record_count;
