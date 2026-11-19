@@ -36,6 +36,7 @@ set(LV_SOURCES
     src/struct/row.c
     src/struct/commit.c
     src/struct/config.c
+    src/struct/query_heap.c
 )
 
 option(LV_USE_SIMD "Enable SIMD (NEON) code paths when the target supports them" ON)
