@@ -8,7 +8,7 @@
 #include <stdlib.h>
 
 #include "livero_types.h"
-#include "simd.h" // simd.h itself does not contain any simd intrinsics, it only provids simd interface
+#include "simd.h"  // simd.h itself does not contain any simd intrinsics, it only provids simd interface
 
 static void ternary_make(LVTernaryChunk* ternary_chunks, const int ternary_value, const LVDim_t vector_index) {
     const LVDim_t chunk_index = vector_index / LV_TERNARY_CHUNK_CAPACITY;
@@ -112,12 +112,81 @@ int64_t ternary_dot_scalar(const LVTernaryChunk* ternary_a, const LVTernaryChunk
     return both_nonzero - 2 * sign_differs;
 }
 
-int64_t ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
-                    const LVCount_t ternary_chunk_count) {
-    
-    #if defined(LV_USE_SIMD) && defined(__aarch64__)
-        return ternary_dot_simd(ternary_a, ternary_b, ternary_chunk_count);
-    #else
-        return ternary_dot_scalar(ternary_a, ternary_b, ternary_chunk_count);
-    #endif
+float ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
+                  const LVCount_t ternary_chunk_count) {
+    assert(ternary_a && ternary_b);
+#if defined(LV_USE_SIMD) && defined(__aarch64__)
+    return (double)ternary_dot_simd(ternary_a, ternary_b, ternary_chunk_count);
+#else
+    return (double)ternary_dot_scalar(ternary_a, ternary_b, ternary_chunk_count);
+#endif
+}
+
+// Asymmetric score: fp32 query x ternary doc, cosine up to the constant ||q||.
+// float accumulator: ESP32-S3's FPU is single precision only; double is emulated.
+static float ternary_fp32_asymmetric_score(const float* q, const LVTernaryChunk* t, const LVCount_t chunk_count) {
+    assert(q && t);
+    float acc = 0.0f;
+    uint32_t nnz = 0;
+
+    for (LVCount_t w = 0; w < chunk_count; ++w) {
+        uint64_t m = t[w].mask;
+        uint64_t s = t[w].sign;
+        nnz += (uint32_t)__builtin_popcountll(m);
+        const float* qw = &q[LV_TERNARY_CHUNK_CAPACITY * w];
+
+        for (uint32_t b = 0; b < LV_TERNARY_CHUNK_CAPACITY; ++b) {
+            uint32_t bits;
+            memcpy(&bits, &qw[b], sizeof bits);
+            uint32_t active = -(uint32_t)(m >> 63);     // all ones if element is nonzero
+            uint32_t flip = (uint32_t)(s >> 63) << 31;  // IEEE-754: bit 31 is the sign
+            bits = (bits & active) ^ flip;             // 0, +q, or -q (sign-magnitude!)
+            float f;
+            memcpy(&f, &bits, sizeof f);
+            acc += f;
+            m <<= 1;
+            s <<= 1;
+        }
+    }
+    // cos(q, t) * ||q||: dividing by ||t|| = sqrt(nnz) removes the bias toward
+    return nnz ? acc / sqrtf((float)nnz) : 0.0f;
+}
+
+static float ternary_int8_asymmetric_score(const int8_t* q, const LVTernaryChunk* t, const LVCount_t chunk_count) {
+    assert(q && t);
+    int32_t acc = 0;
+    uint32_t nnz = 0;
+
+    for (LVCount_t w = 0; w < chunk_count; ++w) {
+        uint64_t m = t[w].mask;
+        uint64_t s = t[w].sign;
+        nnz += (uint32_t)__builtin_popcountll(m);
+        const int8_t* qw = &q[LV_TERNARY_CHUNK_CAPACITY * w];
+
+        for (uint32_t b = 0; b < LV_TERNARY_CHUNK_CAPACITY; ++b) {
+            int32_t active = -(int32_t)(m >> 63);
+            int32_t neg = -(int32_t)(s >> 63);
+            int32_t x = (int32_t)qw[b] & active;
+            acc += (x ^ neg) - neg;
+            m <<= 1;
+            s <<= 1;
+        }
+    }
+    return nnz ? (float)acc / sqrtf((float)nnz) : 0.0f;
+}
+
+float ternary_asymmetric_score(const void* vector, const LVTernaryChunk* ternary, const LVVectorType vector_type,
+                               const LVCount_t ternary_chunk_count) {
+    assert(vector && ternary);
+
+    switch (vector_type) {
+        case LV_VEC_TYPE_INT8:
+            return ternary_int8_asymmetric_score(vector, ternary, ternary_chunk_count);
+
+        case LV_VEC_TYPE_FP32:
+            return ternary_fp32_asymmetric_score(vector, ternary, ternary_chunk_count);
+
+        default:
+            return 0.0;
+    }
 }

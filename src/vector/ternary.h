@@ -34,8 +34,10 @@ void ternary_convert(const void* vector, const LVVectorType vector_type, const L
 int64_t ternary_dot_scalar(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
                                   const LVCount_t ternary_chunk_count);
 
-int64_t ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
+float ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
                     const LVCount_t ternary_chunk_count);
+
+float ternary_asymmetric_score(const void* vector, const LVTernaryChunk* ternary, const LVVectorType vector_type, const LVCount_t ternary_chunk_count);
 
 
 #endif
