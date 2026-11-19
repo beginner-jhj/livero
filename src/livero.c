@@ -1142,7 +1142,7 @@ void lv_query_heap_update(LVQueryIndex *heap, LVSize32_t *size, const LVQueryHea
 
 void lv_close(Livero *db) {
     if (!db) {
-        LIVERO_ERROR("You missed a db.");
+        LIVERO_ERROR("Db is missing.");
         return;
     }
 
