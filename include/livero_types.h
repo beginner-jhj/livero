@@ -66,6 +66,8 @@ typedef struct LVOption {
     LVSyncMode sync_mode;
     LVSize16_t file_def_size;
     const LVIOOps* io_ops;
+    LVTopK_t max_top_k;
+    uint8_t rerank_factor;
 } LVOption;
 
 typedef struct {
