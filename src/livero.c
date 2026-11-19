@@ -17,20 +17,8 @@
 #include "struct/row.h"
 #include "vector/ternary.h"
 
-static inline LVSize32_t lv_total_memory_bytes(const LVCount_t read_batch_m, const LVCount_t write_batch_m,
-                                               const LVSize32_t max_value_len, const LVDim_t vector_dimension,
-                                               const LVSize16_t file_def_size) {
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(vector_dimension);
-    LVSize32_t total = sizeof(Livero);
-    total += LV_RUNNING_FILE_COUNT * file_def_size;
-    total += ternary_bytes;
-    total += ternary_bytes * read_batch_m;
-    total += ternary_bytes * write_batch_m;
-    total += LV_ROW_BYTES * read_batch_m;
-    total += LV_ROW_BYTES * write_batch_m;
-    total += max_value_len * write_batch_m;
-    return total;
-}
+/*************** lv_create, lv_open and relevant internal functions (memory allocation/initialization, flash data
+ * recover) section. ******************/
 
 LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *option, Livero **db_out) {
     if (!db_path) {
@@ -222,319 +210,6 @@ cleanup:
     lv_close(*db_out);
     return s;
 }
-
-LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_len, const LVDate *date,
-                LVSeq_t *seq_out) {
-    if (!db) {
-        LIVERO_ERROR("You miss a db.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (!vector) {
-        LIVERO_ERROR("You must pass vector.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (!value || value_len == 0) {
-        LIVERO_ERROR("You must pass value.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (value_len > db->config.max_value_len) {
-        LIVERO_ERROR("value_len exceeds max_value_len(%d)", db->config.max_value_len);
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (date && !lv_date_is_valid(date)) {
-        LIVERO_ERROR("You passed an invalid date object.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (lv_is_disk_full(db, value_len)) {
-        LIVERO_ERROR("Disk is full");
-        return LV_ERR_DISK_FULL;
-    }
-
-    const LVSeq_t current_seq = db->next_seq;
-    const uint64_t epoch_date = lv_convert_date_to_epoch(date);
-    const LVOffset_t value_disk_offset = db->value_file_bytes;
-    const LVOffset_t value_pending_offset = db->value_pending_bytes;
-    const LVOffset_t value_offset =
-        value_disk_offset + value_pending_offset;  // fix offset bug: value_offset should be disk + pending bytes
-
-    ternary_convert(vector, db->config.vector_type, db->config.vector_dimension, db->ternary_scratch);
-    LVRowCalcChecksumCtx row_checksum_ctx = {.seq = current_seq,
-                                             .epoch_date = epoch_date,
-                                             .value_offset = value_offset,
-                                             .value_len = value_len,
-                                             .vector_dimension = db->config.vector_dimension,
-                                             .value = value,
-                                             .ternary_chunks = db->ternary_scratch};
-    const uint32_t row_checksum = row_calc_checksum(&row_checksum_ctx);
-    LVRow row = {.seq = current_seq,
-                 .epoch_date = epoch_date,
-                 .value_offset = value_offset,
-                 .value_len = value_len,
-                 .tombstone_flag = 0,
-                 .checksum = row_checksum};
-
-    const int pending_result = lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
-
-    if (pending_result < 0 || db->option.sync_mode == LV_SYNC_EVERY_PUT) {
-        LVStatus s = lv_flush(db);
-        if (s != LV_OK) {
-            LIVERO_ERROR("Failed to flush data.");
-            return s;
-        }
-    }
-
-    if (pending_result < 0) {
-        int r = lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
-        assert(r == 0);
-    }
-
-    if (seq_out) {
-        *seq_out = current_seq;
-    }
-
-    db->next_seq = current_seq + 1;
-
-    return LV_OK;
-}
-
-LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
-    if (!db) {
-        LIVERO_ERROR("You miss a db.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (!result) {
-        LIVERO_ERROR("You must pass a LVGetResult buffer.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (target_seq >= db->next_seq) {
-        return LV_ERR_NOT_FOUND;
-    }
-
-    LVStatus s = lv_pending_search(db, target_seq, result, NULL);
-
-    if (s == LV_OK || s == LV_ERR_DELETED) {
-        return s;
-    }
-
-    LVDiskSearchCtx c = lv_disk_search_ctx(db);
-    s = lv_interpolation_search_from_disk(&c, target_seq, result, NULL);
-
-    if (s == LV_ERR_NOT_FOUND) {
-        return lv_binary_search_from_disk(&c, target_seq, result, NULL);
-    } else {
-        return s;
-    }
-}
-
-LVStatus lv_delete(Livero *db, const LVSeq_t target_seq) {
-    if (!db) {
-        LIVERO_ERROR("You miss a db.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (target_seq >= db->next_seq) {
-        return LV_ERR_NOT_FOUND;
-    }
-
-    const uint8_t tombstone = LV_TOMBSTONE_FLAG;
-    LVOffset_t row_offset = 0;
-
-    LVStatus s = lv_pending_search(db, target_seq, NULL, &row_offset);
-
-    if (s == LV_OK) {
-        *(db->row_pending + row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET) = tombstone;
-        return LV_OK;
-    }
-
-    else if (s == LV_ERR_NOT_FOUND) {
-        LVDiskSearchCtx c = lv_disk_search_ctx(db);
-        s = lv_binary_search_from_disk(&c, target_seq, NULL, &row_offset);
-        if (s == LV_OK) {
-            return db->option.io_ops->write(db->row_file, &tombstone, 1, row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET);
-        }
-        return s;
-    } else {
-        return s;
-    }
-}
-
-LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const LVDate *date1, const LVDate *date2,
-                  LVQueryResult *result, LVSize32_t *result_size) {
-    if (!db) {
-        LIVERO_ERROR("You missed a db.");
-        return LV_ERR_INVALID_PARAM;
-    }
-    if (!query_vector) {
-        LIVERO_ERROR("You must pass a vector to query.");
-        return LV_ERR_INVALID_PARAM;
-    }
-    if (k == 0) {
-        LIVERO_ERROR("The k must be greater than 0.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    if (!result || !result_size) {
-        LIVERO_ERROR("You must pass both result pointer and result_size pointer.");
-        return LV_ERR_INVALID_PARAM;
-    }
-
-    const LVCount_t total_record_count = lv_total_record_count(db);
-    const LVTopK_t TOP_K = k <= total_record_count ? k : (LVTopK_t)total_record_count;
-
-    /*
-        Filter rule: min_epoch_date <= target <= max_epoch_date. Both bounds are optional;
-        a missing bound defaults to the full range so the scan has no branch for it.
-    */
-    uint64_t epoch_date1 = 0;
-    uint64_t epoch_date2 = UINT64_MAX;
-    if (date1) {
-        epoch_date1 = lv_convert_date_to_epoch(date1);
-    }
-    if (date2) {
-        epoch_date2 = lv_convert_date_to_epoch(date2);
-    }
-    const uint64_t min_epoch_date = epoch_date1 < epoch_date2 ? epoch_date1 : epoch_date2;
-    const uint64_t max_epoch_date = epoch_date2 > epoch_date1 ? epoch_date2 : epoch_date1;
-
-    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
-
-    memset(db->ternary_scratch, 0, ternary_bytes);
-    ternary_convert(query_vector, db->config.vector_type, db->config.vector_dimension, db->ternary_scratch);
-
-    const LVTernaryChunk *query_ternary = db->ternary_scratch;
-
-    LVQueryIndex heap[TOP_K];  // min-heap: [0] is the current k-th best (the "threshold")
-    LVSize32_t heap_size = 0;
-    LVQueryHeapCtx h_ctx = {.min_epoch_date = min_epoch_date, .max_epoch_date = max_epoch_date, .top_k = TOP_K};
-
-    for (LVCount_t i = 0; i < db->pending_count; i++) {
-        const LVTernaryChunk *ternary_candidate = lv_n_pending_ternary(db, i);
-        const int64_t dot_result = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
-        if (lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
-            const uint8_t *row = lv_n_pending_row(db, i);
-            h_ctx.row = (uint8_t *)row;
-            h_ctx.dot_result = dot_result;
-            lv_query_heap_update(heap, &heap_size, &h_ctx);
-        }
-    }
-
-    const LVCount_t disk_record_count = lv_disk_record_count(db);
-    const LVCount_t batch_m = db->option.read_batch_m;
-    for (LVCount_t base = 0; base < disk_record_count; base += batch_m) {
-        const LVCount_t remaining = disk_record_count - base;
-        const LVCount_t n = remaining < batch_m ? remaining : batch_m;
-
-        LVStatus s = db->option.io_ops->read(db->ter_file, db->ternary_window, n * ternary_bytes,
-                                             (LVOffset_t)base * ternary_bytes);
-
-        if (s != LV_OK) {
-            return s;
-        }
-
-        LVCount_t cache_lo = 0;
-        LVCount_t cache_hi = 0;
-
-        for (LVCount_t j = 0; j < n; ++j) {
-            const LVTernaryChunk *ternary_candidate = lv_n_window_ternary(db, j);
-            const int64_t dot_result = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
-            if (!lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
-                continue;
-            }
-
-            if (j >= cache_hi) {
-                const LVCount_t fetch_count = (heap_size * 10 <= TOP_K * 3) ? n - j : 1;
-                s = db->option.io_ops->read(db->row_file, db->row_window, fetch_count * LV_ROW_BYTES,
-                                            (LVOffset_t)(base + j) * LV_ROW_BYTES);
-                if (s != LV_OK) {
-                    return s;
-                }
-                cache_lo = j;
-                cache_hi = j + fetch_count;
-            }
-
-            // Offset inside the cached rows, not inside the whole window.
-            h_ctx.row = (uint8_t *)lv_n_window_row(db, j - cache_lo);
-            h_ctx.dot_result = dot_result;
-            lv_query_heap_update(heap, &heap_size, &h_ctx);
-        }
-    }
-
-    const LVSize32_t heap_result_size = (int)heap_size;
-    if (heap_result_size > 0) {
-        LVQueryIndex heap_result[heap_result_size];
-        for (int i = (int)heap_result_size - 1; i >= 0; i--) {
-            lv_query_heap_pop(heap, &heap_size, &heap_result[i]);
-        }
-
-        for (LVSize32_t i = 0; i < heap_result_size; i++) {
-            result[i].date = heap_result[i].q_result.date;
-            result[i].seq = heap_result[i].q_result.seq;
-            result[i].value_len = heap_result[i].q_result.value_len;
-        }
-    }
-
-    *result_size = heap_result_size;
-
-    return LV_OK;
-}
-
-void lv_close(Livero *db) {
-    if (!db) {
-        LIVERO_ERROR("You missed a db.");
-        return;
-    }
-
-    if (db->pending_count > 0) {
-        LVStatus s = lv_flush(db);
-        if (s != LV_OK) {
-            LIVERO_ERROR("Failed to flush data.");
-        }
-    }
-
-    LVStatus s = db->option.io_ops->close(db->row_file);
-    if (s != LV_OK) {
-        LIVERO_ERROR("Failed to close row.lv.");
-    }
-
-    if ((s = db->option.io_ops->close(db->ter_file)) != LV_OK) {
-        LIVERO_ERROR("Failed to close ter.lv.");
-    }
-
-    if ((s = db->option.io_ops->close(db->val_file)) != LV_OK) {
-        LIVERO_ERROR("Failed to close val.lv.");
-    }
-
-    if ((s = db->option.io_ops->close(db->commit_file)) != LV_OK) {
-        LIVERO_ERROR("Failed to close commit.lv.");
-    }
-
-    free(db);
-}
-
-void lv_stat(const Livero *db, LVDBStat *stat) {
-    if (db && stat) {
-        stat->config = db->config;
-        stat->option = db->option;
-        stat->row_file_bytes = db->row_file_bytes;
-        stat->ternary_file_bytes = db->ternary_file_bytes;
-        stat->val_file_bytes = db->value_file_bytes;
-        stat->row_pending_bytes = lv_pending_row_bytes(db);
-        stat->ternary_pending_bytes = lv_pending_ternary_bytes(db);
-        stat->val_pending_bytes = lv_pending_val_bytes(db);
-    }
-}
-
-/*
-  Below functions are all internal apis.
-*/
 
 LVStatus lv_allocate_memory(const LVSize32_t size, void **ptr_out) {
     assert(ptr_out);
@@ -765,6 +440,112 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
     return LV_OK;
 }
 
+/************************************************************************************************/
+
+/*************** lv_put and relevant internal functions (pending append, flush) section. ******************/
+
+LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_len, const LVDate *date,
+                LVSeq_t *seq_out) {
+    if (!db) {
+        LIVERO_ERROR("You miss a db.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (!vector) {
+        LIVERO_ERROR("You must pass vector.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (!value || value_len == 0) {
+        LIVERO_ERROR("You must pass value.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (value_len > db->config.max_value_len) {
+        LIVERO_ERROR("value_len exceeds max_value_len(%d)", db->config.max_value_len);
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (date && !lv_date_is_valid(date)) {
+        LIVERO_ERROR("You passed an invalid date object.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (lv_is_disk_full(db, value_len)) {
+        LIVERO_ERROR("Disk is full");
+        return LV_ERR_DISK_FULL;
+    }
+
+    const LVSeq_t current_seq = db->next_seq;
+    const uint64_t epoch_date = lv_convert_date_to_epoch(date);
+    const LVOffset_t value_disk_offset = db->value_file_bytes;
+    const LVOffset_t value_pending_offset = db->value_pending_bytes;
+    const LVOffset_t value_offset =
+        value_disk_offset + value_pending_offset;  // fix offset bug: value_offset should be disk + pending bytes
+
+    ternary_convert(vector, db->config.vector_type, db->config.vector_dimension, db->ternary_scratch);
+    LVRowCalcChecksumCtx row_checksum_ctx = {.seq = current_seq,
+                                             .epoch_date = epoch_date,
+                                             .value_offset = value_offset,
+                                             .value_len = value_len,
+                                             .vector_dimension = db->config.vector_dimension,
+                                             .value = value,
+                                             .ternary_chunks = db->ternary_scratch};
+    const uint32_t row_checksum = row_calc_checksum(&row_checksum_ctx);
+    LVRow row = {.seq = current_seq,
+                 .epoch_date = epoch_date,
+                 .value_offset = value_offset,
+                 .value_len = value_len,
+                 .tombstone_flag = 0,
+                 .checksum = row_checksum};
+
+    const int pending_result = lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
+
+    if (pending_result < 0 || db->option.sync_mode == LV_SYNC_EVERY_PUT) {
+        LVStatus s = lv_flush(db);
+        if (s != LV_OK) {
+            LIVERO_ERROR("Failed to flush data.");
+            return s;
+        }
+    }
+
+    if (pending_result < 0) {
+        int r = lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
+        assert(r == 0);
+    }
+
+    if (seq_out) {
+        *seq_out = current_seq;
+    }
+
+    db->next_seq = current_seq + 1;
+
+    return LV_OK;
+}
+
+int lv_pending_append(Livero *db, const LVRow *row, const LVTernaryChunk *ternary, const void *value,
+                      const LVSize16_t value_len) {
+    assert(db && row && ternary && value);
+
+    if (db->pending_count >= db->option.write_batch_m) {
+        return -1;
+    }
+
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
+    const LVOffset_t row_batch_offset = db->pending_count * LV_ROW_BYTES;
+    const LVOffset_t ternary_batch_offset = db->pending_count * ternary_bytes;
+    const LVOffset_t value_batch_offset = db->pending_count * db->config.max_value_len;
+
+    row_write_on_memory(db->row_pending + row_batch_offset, row);
+    memcpy((uint8_t *)db->ternary_pending + ternary_batch_offset, ternary, ternary_bytes);
+    memcpy(db->value_pending + value_batch_offset, value, value_len);
+
+    db->pending_count += 1;
+    db->value_pending_bytes += value_len;
+
+    return 0;
+}
+
 LVStatus lv_flush(Livero *db) {
     assert(db);
 
@@ -851,27 +632,94 @@ LVStatus lv_flush(Livero *db) {
     return LV_OK;
 }
 
-int lv_pending_append(Livero *db, const LVRow *row, const LVTernaryChunk *ternary, const void *value,
-                      const LVSize16_t value_len) {
-    assert(db && row && ternary && value);
+/************************************************************************************************/
 
-    if (db->pending_count >= db->option.write_batch_m) {
-        return -1;
+/*************** lv_get, lv_delete and relevant internal functions (pending search, disk search, window search) section.
+ * ******************/
+
+LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
+    if (!db) {
+        LIVERO_ERROR("You miss a db.");
+        return LV_ERR_INVALID_PARAM;
     }
 
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
-    const LVOffset_t row_batch_offset = db->pending_count * LV_ROW_BYTES;
-    const LVOffset_t ternary_batch_offset = db->pending_count * ternary_bytes;
-    const LVOffset_t value_batch_offset = db->pending_count * db->config.max_value_len;
+    if (!result) {
+        LIVERO_ERROR("You must pass a LVGetResult buffer.");
+        return LV_ERR_INVALID_PARAM;
+    }
 
-    row_write_on_memory(db->row_pending + row_batch_offset, row);
-    memcpy((uint8_t *)db->ternary_pending + ternary_batch_offset, ternary, ternary_bytes);
-    memcpy(db->value_pending + value_batch_offset, value, value_len);
+    if (target_seq >= db->next_seq) {
+        return LV_ERR_NOT_FOUND;
+    }
 
-    db->pending_count += 1;
-    db->value_pending_bytes += value_len;
+    LVStatus s = lv_pending_search(db, target_seq, result, NULL);
 
-    return 0;
+    if (s == LV_OK || s == LV_ERR_DELETED) {
+        return s;
+    }
+
+    LVDiskSearchCtx c = lv_disk_search_ctx(db);
+    s = lv_interpolation_search_from_disk(&c, target_seq, result, NULL);
+
+    if (s == LV_ERR_NOT_FOUND) {
+        return lv_binary_search_from_disk(&c, target_seq, result, NULL);
+    } else {
+        return s;
+    }
+}
+
+LVStatus lv_delete(Livero *db, const LVSeq_t target_seq) {
+    if (!db) {
+        LIVERO_ERROR("You miss a db.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (target_seq >= db->next_seq) {
+        return LV_ERR_NOT_FOUND;
+    }
+
+    const uint8_t tombstone = LV_TOMBSTONE_FLAG;
+    LVOffset_t row_offset = 0;
+
+    LVStatus s = lv_pending_search(db, target_seq, NULL, &row_offset);
+
+    if (s == LV_OK) {
+        *(db->row_pending + row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET) = tombstone;
+        return LV_OK;
+    }
+
+    else if (s == LV_ERR_NOT_FOUND) {
+        LVDiskSearchCtx c = lv_disk_search_ctx(db);
+        s = lv_binary_search_from_disk(&c, target_seq, NULL, &row_offset);
+        if (s == LV_OK) {
+            return db->option.io_ops->write(db->row_file, &tombstone, 1, row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET);
+        }
+        return s;
+    } else {
+        return s;
+    }
+}
+
+LVStatus lv_fill_get_result(LVFillGetResultCtx *ctx, LVGetResult *result) {
+    assert(ctx && result);
+    const LVSize16_t value_len = row_get_value_len(ctx->row);
+    const LVOffset_t value_offset = row_get_value_offset(ctx->row);
+    if (result->value) {
+        assert(ctx->value_memory_src || ctx->value_file);
+        if (ctx->value_memory_src) {
+            memcpy(result->value, ctx->value_memory_src, value_len);
+
+        } else {
+            assert(ctx->read);
+            LVStatus s = ctx->read(ctx->value_file, result->value, value_len, value_offset);
+            if (s != LV_OK) {
+                return s;
+            }
+        }
+    }
+    lv_convert_epoch_to_date(row_get_epoch_date(ctx->row), &result->date);
+    result->value_len = value_len;
+    return LV_OK;
 }
 
 LVStatus lv_pending_search(const Livero *db, const LVSeq_t target_seq, LVGetResult *result,
@@ -1147,25 +995,128 @@ LVStatus lv_window_search(LVWindowSearchCtx *ctx, LVGetResult *result, LVOffset_
     }
 }
 
-LVStatus lv_fill_get_result(LVFillGetResultCtx *ctx, LVGetResult *result) {
-    assert(ctx && result);
-    const LVSize16_t value_len = row_get_value_len(ctx->row);
-    const LVOffset_t value_offset = row_get_value_offset(ctx->row);
-    if (result->value) {
-        assert(ctx->value_memory_src || ctx->value_file);
-        if (ctx->value_memory_src) {
-            memcpy(result->value, ctx->value_memory_src, value_len);
+/************************************************************************************************/
 
-        } else {
-            assert(ctx->read);
-            LVStatus s = ctx->read(ctx->value_file, result->value, value_len, value_offset);
-            if (s != LV_OK) {
-                return s;
-            }
+/*************** lv_query and relevant internal functions (heap helpers) section. *******************/
+
+LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const LVDate *date1, const LVDate *date2,
+                  LVQueryResult *result, LVSize32_t *result_size) {
+    if (!db) {
+        LIVERO_ERROR("You missed a db.");
+        return LV_ERR_INVALID_PARAM;
+    }
+    if (!query_vector) {
+        LIVERO_ERROR("You must pass a vector to query.");
+        return LV_ERR_INVALID_PARAM;
+    }
+    if (k == 0) {
+        LIVERO_ERROR("The k must be greater than 0.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    if (!result || !result_size) {
+        LIVERO_ERROR("You must pass both result pointer and result_size pointer.");
+        return LV_ERR_INVALID_PARAM;
+    }
+
+    const LVCount_t total_record_count = lv_total_record_count(db);
+    const LVTopK_t TOP_K = k <= total_record_count ? k : (LVTopK_t)total_record_count;
+
+    /*
+        Filter rule: min_epoch_date <= target <= max_epoch_date. Both bounds are optional;
+        a missing bound defaults to the full range so the scan has no branch for it.
+    */
+    uint64_t epoch_date1 = 0;
+    uint64_t epoch_date2 = UINT64_MAX;
+    if (date1) {
+        epoch_date1 = lv_convert_date_to_epoch(date1);
+    }
+    if (date2) {
+        epoch_date2 = lv_convert_date_to_epoch(date2);
+    }
+    const uint64_t min_epoch_date = epoch_date1 < epoch_date2 ? epoch_date1 : epoch_date2;
+    const uint64_t max_epoch_date = epoch_date2 > epoch_date1 ? epoch_date2 : epoch_date1;
+
+    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
+
+    memset(db->ternary_scratch, 0, ternary_bytes);
+    ternary_convert(query_vector, db->config.vector_type, db->config.vector_dimension, db->ternary_scratch);
+
+    const LVTernaryChunk *query_ternary = db->ternary_scratch;
+
+    LVQueryIndex heap[TOP_K];  // min-heap: [0] is the current k-th best (the "threshold")
+    LVSize32_t heap_size = 0;
+    LVQueryHeapCtx h_ctx = {.min_epoch_date = min_epoch_date, .max_epoch_date = max_epoch_date, .top_k = TOP_K};
+
+    for (LVCount_t i = 0; i < db->pending_count; i++) {
+        const LVTernaryChunk *ternary_candidate = lv_n_pending_ternary(db, i);
+        const int64_t dot_result = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
+        if (lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
+            const uint8_t *row = lv_n_pending_row(db, i);
+            h_ctx.row = (uint8_t *)row;
+            h_ctx.dot_result = dot_result;
+            lv_query_heap_update(heap, &heap_size, &h_ctx);
         }
     }
-    lv_convert_epoch_to_date(row_get_epoch_date(ctx->row), &result->date);
-    result->value_len = value_len;
+
+    const LVCount_t disk_record_count = lv_disk_record_count(db);
+    const LVCount_t batch_m = db->option.read_batch_m;
+    for (LVCount_t base = 0; base < disk_record_count; base += batch_m) {
+        const LVCount_t remaining = disk_record_count - base;
+        const LVCount_t n = remaining < batch_m ? remaining : batch_m;
+
+        LVStatus s = db->option.io_ops->read(db->ter_file, db->ternary_window, n * ternary_bytes,
+                                             (LVOffset_t)base * ternary_bytes);
+
+        if (s != LV_OK) {
+            return s;
+        }
+
+        LVCount_t cache_lo = 0;
+        LVCount_t cache_hi = 0;
+
+        for (LVCount_t j = 0; j < n; ++j) {
+            const LVTernaryChunk *ternary_candidate = lv_n_window_ternary(db, j);
+            const int64_t dot_result = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
+            if (!lv_query_heap_admit(heap, heap_size, TOP_K, dot_result)) {
+                continue;
+            }
+
+            if (j >= cache_hi) {
+                const LVCount_t fetch_count = (heap_size * 10 <= TOP_K * 3) ? n - j : 1;
+                s = db->option.io_ops->read(db->row_file, db->row_window, fetch_count * LV_ROW_BYTES,
+                                            (LVOffset_t)(base + j) * LV_ROW_BYTES);
+                if (s != LV_OK) {
+                    return s;
+                }
+                cache_lo = j;
+                cache_hi = j + fetch_count;
+            }
+
+            // Offset inside the cached rows, not inside the whole window.
+            h_ctx.row = (uint8_t *)lv_n_window_row(db, j - cache_lo);
+            h_ctx.dot_result = dot_result;
+            lv_query_heap_update(heap, &heap_size, &h_ctx);
+        }
+    }
+
+    const LVSize32_t heap_result_size = (int)heap_size;
+    if (heap_result_size > 0) {
+        LVQueryIndex heap_result[heap_result_size];
+        for (int i = (int)heap_result_size - 1; i >= 0; i--) {
+            lv_query_heap_pop(heap, &heap_size, &heap_result[i]);
+        }
+
+        for (LVSize32_t i = 0; i < heap_result_size; i++) {
+            result[i].date = heap_result[i].q_result.date;
+            result[i].seq = heap_result[i].q_result.seq;
+            result[i].value_len = heap_result[i].q_result.value_len;
+        }
+    }
+
+    *result_size = heap_result_size;
+
     return LV_OK;
 }
 
@@ -1243,3 +1194,55 @@ void lv_query_heap_update(LVQueryIndex *heap, LVSize32_t *size, const LVQueryHea
         lv_query_heap_insert(heap, index, size);
     }
 }
+
+/************************************************************************************************/
+
+/*************** lv_close and lv_stat section. *******************/
+
+void lv_close(Livero *db) {
+    if (!db) {
+        LIVERO_ERROR("You missed a db.");
+        return;
+    }
+
+    if (db->pending_count > 0) {
+        LVStatus s = lv_flush(db);
+        if (s != LV_OK) {
+            LIVERO_ERROR("Failed to flush data.");
+        }
+    }
+
+    LVStatus s = db->option.io_ops->close(db->row_file);
+    if (s != LV_OK) {
+        LIVERO_ERROR("Failed to close row.lv.");
+    }
+
+    if ((s = db->option.io_ops->close(db->ter_file)) != LV_OK) {
+        LIVERO_ERROR("Failed to close ter.lv.");
+    }
+
+    if ((s = db->option.io_ops->close(db->val_file)) != LV_OK) {
+        LIVERO_ERROR("Failed to close val.lv.");
+    }
+
+    if ((s = db->option.io_ops->close(db->commit_file)) != LV_OK) {
+        LIVERO_ERROR("Failed to close commit.lv.");
+    }
+
+    free(db);
+}
+
+void lv_stat(const Livero *db, LVDBStat *stat) {
+    if (db && stat) {
+        stat->config = db->config;
+        stat->option = db->option;
+        stat->row_file_bytes = db->row_file_bytes;
+        stat->ternary_file_bytes = db->ternary_file_bytes;
+        stat->val_file_bytes = db->value_file_bytes;
+        stat->row_pending_bytes = lv_pending_row_bytes(db);
+        stat->ternary_pending_bytes = lv_pending_ternary_bytes(db);
+        stat->val_pending_bytes = lv_pending_val_bytes(db);
+    }
+}
+
+/************************************************************************************************/
