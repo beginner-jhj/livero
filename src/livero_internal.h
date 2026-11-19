@@ -48,8 +48,36 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 
 #ifndef NDEBUG
 #define LIVERO_ERROR(...) lv_log_error(__FILE__, __LINE__, __func__, __VA_ARGS__)
+#define LIVERO_CHECK_MISSING(arg, name)                    \
+    do {                                                   \
+        if ((arg) == NULL) {                               \
+            LIVERO_ERROR("%s is missing.", (name));        \
+            return LV_ERR_INVALID_PARAM;                   \
+        }                                                  \
+    } while (0)
+
+#define LIVERO_CHECK_GT(arg, name, fmt, lower)                               \
+    do {                                                                     \
+        if ((arg) <= (lower)) {                                              \
+            LIVERO_ERROR("%s is too small. %s must be greater than " fmt ".", \
+                         (name), (name), (lower));                           \
+            return LV_ERR_INVALID_PARAM;                                     \
+        }                                                                    \
+    } while (0)
+
+#define LIVERO_CHECK_LT(arg, name, fmt, upper)                             \
+    do {                                                                   \
+        if ((arg) >= (upper)) {                                            \
+            LIVERO_ERROR("%s is too big. %s must be less than " fmt ".",   \
+                         (name), (name), (upper));                         \
+            return LV_ERR_INVALID_PARAM;                                   \
+        }                                                                  \
+    } while (0)
 #else
 #define LIVERO_ERROR(...) ((void)0)
+#define LIVERO_CHECK_MISSING(arg, name) ((void)0)
+#define LIVERO_CHECK_GT(arg, name, fmt, min) ((void)0)
+#define LIVERO_CHECK_LT(arg, name, fmt, max) ((void)0)
 #endif
 
 #define LV_MEMORY_ALIGNMENT 16
