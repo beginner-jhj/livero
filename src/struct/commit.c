@@ -10,14 +10,13 @@
 #include "livero_types.h"
 #include "struct/row.h"
 
-static const char LV_ZERO_SECTOR[LV_COMMIT_SECTOR_BYTES] = {0};
-static char LV_WRITABLE_SECTOR[LV_COMMIT_SECTOR_BYTES] = {0};
-
-LVStatus commit_init(LVFILEDef* commit_file, lv_file_write write, lv_file_sync sync){
+LVStatus commit_init(LVFILEDef* commit_file, uint8_t* commit_sector, lv_file_write write, lv_file_sync sync){
+    assert(commit_file && commit_sector && write && sync);
     LVStatus s = LV_OK;
 
+    memset(commit_sector, 0, LV_COMMIT_SECTOR_BYTES);
     for (int i = 0; i < LV_COMMIT_SLOT_M; i++) {
-        if ((s = write(commit_file, LV_ZERO_SECTOR, LV_COMMIT_SECTOR_BYTES, i*LV_COMMIT_SECTOR_BYTES)) != LV_OK) {
+        if ((s = write(commit_file, commit_sector, LV_COMMIT_SECTOR_BYTES, i*LV_COMMIT_SECTOR_BYTES)) != LV_OK) {
             return s;
         }
     }
@@ -112,12 +111,12 @@ int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const L
     return 1;
 }
 
-LVStatus commit_write(LVFILEDef* commit_file, lv_file_write write, const LVCommit* commit) {
-    assert(commit);
+LVStatus commit_write(LVFILEDef* commit_file, uint8_t* commit_sector, lv_file_write write, const LVCommit* commit) {
+    assert(commit_file && commit_sector && write && commit);
     assert(commit->commit_seq != LV_COMMIT_SEQ_ZERO);
-    memset(LV_WRITABLE_SECTOR, 0, LV_COMMIT_SECTOR_BYTES);
+    memset(commit_sector, 0, LV_COMMIT_SECTOR_BYTES);
     LVCommitDisk cmt_disk = commit_m2d(commit);
-    memcpy(LV_WRITABLE_SECTOR, &cmt_disk, sizeof(cmt_disk));
+    memcpy(commit_sector, &cmt_disk, sizeof(cmt_disk));
     const LVOffset_t offset = (commit_slot_index(commit->commit_seq))*LV_COMMIT_SECTOR_BYTES;
-    return write(commit_file, LV_WRITABLE_SECTOR, LV_COMMIT_SECTOR_BYTES, offset);
+    return write(commit_file, commit_sector, LV_COMMIT_SECTOR_BYTES, offset);
 }
