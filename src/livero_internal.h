@@ -60,7 +60,7 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 #define LV_VAL_FILE_NAME "val.lv"
 #define LV_COMMIT_FILE_NAME "commit.lv"
 #define LV_CONFIG_FILE_NAME "config.lv"
-#define LV_RUNNING_FILE_COUNT 4 //config.lv is closed as soon as it is opened.
+#define LV_RUNNING_FILE_COUNT 4  // config.lv is closed as soon as it is opened.
 
 #define LV_SEQ_START 0
 
@@ -150,6 +150,21 @@ static inline int lv_is_disk_full(const Livero* db, const LVSize16_t new_record_
 
     const uint64_t needed = LV_BASELINE_DISK_USAGE + current_disk_bytes + current_pending_bytes + new_record_bytes;
     return needed > (uint64_t)db->config.max_disk_bytes;
+}
+
+static inline LVSize32_t lv_total_memory_bytes(const LVCount_t read_batch_m, const LVCount_t write_batch_m,
+                                               const LVSize32_t max_value_len, const LVDim_t vector_dimension,
+                                               const LVSize16_t file_def_size) {
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(vector_dimension);
+    LVSize32_t total = sizeof(Livero);
+    total += LV_RUNNING_FILE_COUNT * file_def_size;
+    total += ternary_bytes;
+    total += ternary_bytes * read_batch_m;
+    total += ternary_bytes * write_batch_m;
+    total += LV_ROW_BYTES * read_batch_m;
+    total += LV_ROW_BYTES * write_batch_m;
+    total += max_value_len * write_batch_m;
+    return total;
 }
 
 LVStatus lv_allocate_memory(const LVSize32_t size, void** ptr_out);
@@ -249,7 +264,7 @@ LVStatus lv_window_search(LVWindowSearchCtx* ctx, LVGetResult* result, LVOffset_
 typedef struct {
     const uint8_t* row;
     const void* value_memory_src;
-    LVFILEDef* value_file; //fallback if value_memory_src is NULL.
+    LVFILEDef* value_file;  // fallback if value_memory_src is NULL.
     lv_file_read read;
 } LVFillGetResultCtx;
 LVStatus lv_fill_get_result(LVFillGetResultCtx* ctx, LVGetResult* result);
