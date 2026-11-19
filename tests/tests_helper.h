@@ -61,7 +61,10 @@ static LVOption TEST_OPTION = {.write_batch_m = TEST_WRITE_BATCH_M,
                                .read_batch_m = TEST_READ_BATCH_M,
                                .sync_mode = TEST_SYNC_MODE,
                                .file_def_size = POSIX_FILE_DEF_SIZE,
-                               .io_ops = &TEST_IO_OPS};
+                               .io_ops = &TEST_IO_OPS,
+                               .max_top_k = 64,
+                               .rerank_factor = 2
+                            };
 
 static int8_t TEST_INT8_VEC_BUFFER[TEST_VECTOR_DIMENSION] = {0};
 static char TEST_VALUE_BUFFER[TEST_MAX_VALUE_LEN] = {0};
@@ -563,6 +566,7 @@ typedef struct {
     LVFILEDef* ter_file;
     LVFILEDef* val_file;
     LVFILEDef* commit_file;
+    uint8_t* commit_sector;
     LVSeq_t commit_seq;
     LVTestAnswer* data;
     LVCount_t data_count;
@@ -623,7 +627,7 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
         .reserved_seq = ctx->data[ctx->data_count - 1].row.seq,
     };
 
-    LVStatus s = commit_write(ctx->commit_file, TEST_IO_OPS.write, &cmt);
+    LVStatus s = commit_write(ctx->commit_file, ctx->commit_sector, TEST_IO_OPS.write, &cmt);
 
     if (s != LV_OK) {
         fprintf(stderr, "Failed to write test commit. \n");
