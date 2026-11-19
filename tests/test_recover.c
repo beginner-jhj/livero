@@ -41,6 +41,7 @@ static int write_data_and_commit(Livero* db, LVTestWDACCtx* ctx) {
         .ter_file = db->ter_file,
         .val_file = db->val_file,
         .commit_file = db->commit_file,
+        .commit_sector = db->commit_sector,
     };
     LVCommit answer_commit = {0};
     for (LVCount_t i = 0; i < ctx->data_count; ++i) {
