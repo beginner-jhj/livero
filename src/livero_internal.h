@@ -12,6 +12,7 @@
 #include "struct/config.h"
 #include "struct/row.h"
 #include "vector/ternary.h"
+#include "struct/query_heap.h"
 
 struct Livero {
     LVConfig config;
@@ -21,13 +22,15 @@ struct Livero {
     LVTernaryChunk* ternary_scratch;
     LVTernaryChunk* ternary_window;
     LVTernaryChunk* ternary_pending;
-    uint8_t* row_window;
-    uint8_t* row_pending;
-    uint8_t* value_pending;
+    LVQueryHeapEntry* heap_entries;
     LVFILEDef* row_file;
     LVFILEDef* ter_file;
     LVFILEDef* val_file;
     LVFILEDef* commit_file;
+    uint8_t* row_window;
+    uint8_t* row_pending;
+    uint8_t* value_pending;
+    uint8_t* commit_sector;
     LVSize32_t row_file_bytes;
     LVSize32_t ternary_file_bytes;
     LVSize32_t value_file_bytes;
@@ -48,30 +51,28 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 
 #ifndef NDEBUG
 #define LIVERO_ERROR(...) lv_log_error(__FILE__, __LINE__, __func__, __VA_ARGS__)
-#define LIVERO_CHECK_MISSING(arg, name)                    \
-    do {                                                   \
-        if ((arg) == NULL) {                               \
-            LIVERO_ERROR("%s is missing.", (name));        \
-            return LV_ERR_INVALID_PARAM;                   \
-        }                                                  \
+#define LIVERO_CHECK_MISSING(arg, name)             \
+    do {                                            \
+        if ((arg) == NULL) {                        \
+            LIVERO_ERROR("%s is missing.", (name)); \
+            return LV_ERR_INVALID_PARAM;            \
+        }                                           \
     } while (0)
 
-#define LIVERO_CHECK_GT(arg, name, fmt, lower)                               \
-    do {                                                                     \
-        if ((arg) <= (lower)) {                                              \
-            LIVERO_ERROR("%s is too small. %s must be greater than " fmt ".", \
-                         (name), (name), (lower));                           \
-            return LV_ERR_INVALID_PARAM;                                     \
-        }                                                                    \
+#define LIVERO_CHECK_GT(arg, name, fmt, lower)                                                          \
+    do {                                                                                                \
+        if ((arg) <= (lower)) {                                                                         \
+            LIVERO_ERROR("%s is too small. %s must be greater than " fmt ".", (name), (name), (lower)); \
+            return LV_ERR_INVALID_PARAM;                                                                \
+        }                                                                                               \
     } while (0)
 
-#define LIVERO_CHECK_LT(arg, name, fmt, upper)                             \
-    do {                                                                   \
-        if ((arg) >= (upper)) {                                            \
-            LIVERO_ERROR("%s is too big. %s must be less than " fmt ".",   \
-                         (name), (name), (upper));                         \
-            return LV_ERR_INVALID_PARAM;                                   \
-        }                                                                  \
+#define LIVERO_CHECK_LT(arg, name, fmt, upper)                                                     \
+    do {                                                                                           \
+        if ((arg) >= (upper)) {                                                                    \
+            LIVERO_ERROR("%s is too big. %s must be less than " fmt ".", (name), (name), (upper)); \
+            return LV_ERR_INVALID_PARAM;                                                           \
+        }                                                                                          \
     } while (0)
 #else
 #define LIVERO_ERROR(...) ((void)0)
@@ -180,18 +181,18 @@ static inline int lv_is_disk_full(const Livero* db, const LVSize16_t new_record_
     return needed > (uint64_t)db->config.max_disk_bytes;
 }
 
-static inline LVSize32_t lv_total_memory_bytes(const LVCount_t read_batch_m, const LVCount_t write_batch_m,
-                                               const LVSize32_t max_value_len, const LVDim_t vector_dimension,
-                                               const LVSize16_t file_def_size) {
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(vector_dimension);
+static inline LVSize32_t lv_total_memory_bytes(const LVConfig* config, const LVOption* option) {
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(config->vector_dimension);
     LVSize32_t total = sizeof(Livero);
-    total += LV_RUNNING_FILE_COUNT * file_def_size;
     total += ternary_bytes;
-    total += ternary_bytes * read_batch_m;
-    total += ternary_bytes * write_batch_m;
-    total += LV_ROW_BYTES * read_batch_m;
-    total += LV_ROW_BYTES * write_batch_m;
-    total += max_value_len * write_batch_m;
+    total += ternary_bytes * option->read_batch_m;
+    total += ternary_bytes * option->write_batch_m;
+    total += sizeof(LVQueryHeapEntry)* option->max_top_k * option->rerank_factor;
+    total += LV_RUNNING_FILE_COUNT * option->file_def_size;
+    total += LV_ROW_BYTES * option->read_batch_m;
+    total += LV_ROW_BYTES * option->write_batch_m;
+    total += config->max_value_len * option->write_batch_m;
+    total += LV_COMMIT_SECTOR_BYTES;
     return total;
 }
 
@@ -297,25 +298,7 @@ typedef struct {
 } LVFillGetResultCtx;
 LVStatus lv_fill_get_result(LVFillGetResultCtx* ctx, LVGetResult* result);
 
-typedef struct {
-    int64_t dot_result;
-    LVQueryResult q_result;
-} LVQueryIndex;
-
-typedef struct {
-    uint8_t* row;
-    uint64_t min_epoch_date;
-    uint64_t max_epoch_date;
-    int64_t dot_result;
-    LVTopK_t top_k;
-} LVQueryHeapCtx;
-
-void lv_query_heap_insert(LVQueryIndex* heap, const LVQueryIndex index, LVSize32_t* heap_size);
-void lv_query_heap_pop(LVQueryIndex* heap, LVSize32_t* heap_size, LVQueryIndex* pop_out);
-
-int lv_query_heap_admit(const LVQueryIndex* heap, const LVSize32_t size, const LVTopK_t threshold,
-                        const int64_t dot_result);
-
-void lv_query_heap_update(LVQueryIndex* heap, LVSize32_t* size, const LVQueryHeapCtx* ctx);
+void lv_update_query_heap_from_pending(Livero* db, LVQueryHeap* heap, const LVTernaryChunk* query_ternary);
+LVStatus lv_update_query_heap_from_disk(Livero* db , LVQueryHeap* heap, const LVTernaryChunk* query_ternary);
 
 #endif
