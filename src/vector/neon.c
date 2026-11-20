@@ -4,7 +4,7 @@
 #include "livero_types.h"
 #include "simd.h"
 
-int64_t ternary_dot_simd(const LVTernaryChunk *ternary_a, const LVTernaryChunk *ternary_b,
+float ternary_dot_simd(const LVTernaryChunk *ternary_a, const LVTernaryChunk *ternary_b,
                          const LVCount_t ternary_chunk_count) {
     /*
         ternary_a: [mask_a0][sign_a0][mask_a1][sign_a1]...
@@ -42,5 +42,5 @@ int64_t ternary_dot_simd(const LVTernaryChunk *ternary_a, const LVTernaryChunk *
         sum += ternary_dot_scalar(&ternary_a[tail], &ternary_b[tail], 1);
     }
 
-    return sum;
+    return (float)sum;
 }

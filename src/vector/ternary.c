@@ -80,7 +80,7 @@ void ternary_convert(const void* vector, const LVVectorType vector_type, const L
     }
 }
 
-int64_t ternary_dot_scalar(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
+float ternary_dot_scalar(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
                            const LVCount_t ternary_chunk_count) {
     /*
         Ternary Dot Product's result is (a number of +1s) - (a number of -1s).
@@ -91,8 +91,8 @@ int64_t ternary_dot_scalar(const LVTernaryChunk* ternary_a, const LVTernaryChunk
 
         So the formula is (M - S) - S = M - 2S.
     */
-    int64_t both_nonzero = 0;
-    int64_t sign_differs = 0;
+    int32_t both_nonzero = 0;
+    int32_t sign_differs = 0;
 
     for (LVCount_t chunk_index = 0; chunk_index < ternary_chunk_count; ++chunk_index) {
         /*
@@ -109,16 +109,16 @@ int64_t ternary_dot_scalar(const LVTernaryChunk* ternary_a, const LVTernaryChunk
         sign_differs += __builtin_popcountll(s);
     }
 
-    return both_nonzero - 2 * sign_differs;
+    return (float)(both_nonzero - 2 * sign_differs);
 }
 
 float ternary_dot(const LVTernaryChunk* ternary_a, const LVTernaryChunk* ternary_b,
                   const LVCount_t ternary_chunk_count) {
     assert(ternary_a && ternary_b);
 #if defined(LV_USE_SIMD) && defined(__aarch64__)
-    return (double)ternary_dot_simd(ternary_a, ternary_b, ternary_chunk_count);
+    return (float)ternary_dot_simd(ternary_a, ternary_b, ternary_chunk_count);
 #else
-    return (double)ternary_dot_scalar(ternary_a, ternary_b, ternary_chunk_count);
+    return (float)ternary_dot_scalar(ternary_a, ternary_b, ternary_chunk_count);
 #endif
 }
 
