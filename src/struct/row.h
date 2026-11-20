@@ -86,4 +86,6 @@ typedef struct LVRowCCFDCtx {
 
 LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx);
 
+LVQueryResult row_make_query_result(const uint8_t* row);
+
 #endif

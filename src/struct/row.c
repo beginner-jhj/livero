@@ -6,6 +6,7 @@
 
 #include "file/file.h"
 #include "helper/crc32c.h"
+#include "helper/helper.h"
 #include "livero_internal.h"
 #include "livero_types.h"
 #include "vector/ternary.h"
@@ -66,8 +67,8 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
 
     uint8_t checksum_buffer[LV_MAX_VLA_LEN] = {0};
 
-    if ((s = lv_crc32c_update_from_file(ctx->ter_file, ctx->read, ctx->ternary_offset, ctx->ternary_bytes, checksum_buffer,
-                                        sizeof(checksum_buffer), &checksum)) != LV_OK) {
+    if ((s = lv_crc32c_update_from_file(ctx->ter_file, ctx->read, ctx->ternary_offset, ctx->ternary_bytes,
+                                        checksum_buffer, sizeof(checksum_buffer), &checksum)) != LV_OK) {
         return s;
     }
 
@@ -83,4 +84,11 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
     }
 
     return LV_OK;
+}
+
+LVQueryResult row_make_query_result(const uint8_t* row) {
+    assert(row);
+    LVDate date;
+    lv_convert_epoch_to_date(row_get_epoch_date(row), &date);
+    return (LVQueryResult){.date = date, .seq = row_get_seq(row), .value_len = row_get_value_len(row)};
 }
