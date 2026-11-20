@@ -310,7 +310,10 @@ static int check_query(Livero* db, const LVTopK_t k, const LVDate* date1, const 
     LVQueryResult results[UINT8_MAX];
     LVSize32_t size = (LVSize32_t)-1;
 
-    const LVStatus s = lv_query(db, k, QUERY_VEC, date1, date2, results, &size);
+    const LVQueryOption query_option = {
+        .date1 = date1, .date2 = date2, .use_postfilter = TEST_DEFAULT_POST_FILTERING_USE};
+
+    const LVStatus s = lv_query(db, k, QUERY_VEC, &query_option, results, &size);
     if (s != LV_OK) {
         fprintf(stderr, "[%s] lv_query failed.\n", phase);
         PRINT_ERR_UNEXPECTED_STATUS("lv_query", LV_OK, s);

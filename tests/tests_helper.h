@@ -46,6 +46,7 @@ static const uint32_t TEST_CHAR_POOL_SIZE = sizeof(TEST_CHAR_POOL) - 1;
 #define TEST_WRITE_BATCH_M 100
 #define TEST_READ_BATCH_M 100
 #define TEST_SYNC_MODE LV_SYNC_BATCH
+#define TEST_DEFAULT_POST_FILTERING_USE 0
 
 static LVConfig TEST_CONFIG = {
     .max_disk_bytes = TEST_MAX_DISK_BYTES,

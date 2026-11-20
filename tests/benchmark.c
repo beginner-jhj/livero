@@ -36,15 +36,15 @@ static const LVConfig BENCH_CONFIG = {
     .vector_type = LV_VEC_TYPE_INT8,
 };
 
-static const LVOption BENCH_OPTION = {
-    .write_batch_m = BENCH_WRITE_BATCH_M,
-    .read_batch_m = BENCH_READ_BATCH_M,
-    .sync_mode = LV_SYNC_BATCH,
-    .file_def_size = sizeof(LVFILEDef),
-    .io_ops = &TEST_IO_OPS,
-    .max_top_k = 64,
-    .rerank_factor = 2
-};
+static const LVOption BENCH_OPTION = {.write_batch_m = BENCH_WRITE_BATCH_M,
+                                      .read_batch_m = BENCH_READ_BATCH_M,
+                                      .sync_mode = LV_SYNC_BATCH,
+                                      .file_def_size = sizeof(LVFILEDef),
+                                      .io_ops = &TEST_IO_OPS,
+                                      .max_top_k = 64,
+                                      .rerank_factor = 2};
+
+static LVQueryOption BENCH_QUERY_OPTION = {.date1 = NULL, .date2 = NULL, .use_postfilter = 1};
 
 static inline uint64_t now_ns(void) {
     struct timespec ts;
@@ -180,20 +180,20 @@ static int bench_one(const int count, uint64_t* times) {
     LVSize32_t size = 0;
     fill_random_int8(vector);
     const uint64_t cold_query_t0 = now_ns();
-    s = lv_query(db, BENCH_TOP_K, vector, NULL, NULL, query_results, &size);
+    s = lv_query(db, BENCH_TOP_K, vector, &BENCH_QUERY_OPTION, query_results, &size);
     const uint64_t cold_query_ns = now_ns() - cold_query_t0;
 
     /*Warm up before measuring main query*/
     for (int w = 1; w < BENCH_WARMUP_COUNT; ++w) {
         fill_random_int8(vector);
-        lv_query(db, BENCH_TOP_K, vector, NULL, NULL, query_results, &size);
+        lv_query(db, BENCH_TOP_K, vector, &BENCH_QUERY_OPTION, query_results, &size);
     }
 
     for (int k = 0; k < BENCH_GET_QUERY_COUNT; ++k) {
         fill_random_int8(vector);
 
         const uint64_t t0 = now_ns();
-        s = lv_query(db, BENCH_TOP_K, vector, NULL, NULL, query_results, &size);
+        s = lv_query(db, BENCH_TOP_K, vector, &BENCH_QUERY_OPTION, query_results, &size);
         times[k] = now_ns() - t0;
 
         if (s != LV_OK) {
