@@ -10,9 +10,9 @@
 #include "livero_types.h"
 #include "struct/commit.h"
 #include "struct/config.h"
+#include "struct/query_heap.h"
 #include "struct/row.h"
 #include "vector/ternary.h"
-#include "struct/query_heap.h"
 
 struct Livero {
     LVConfig config;
@@ -22,6 +22,7 @@ struct Livero {
     LVTernaryChunk* ternary_scratch;
     LVTernaryChunk* ternary_window;
     LVTernaryChunk* ternary_pending;
+    LVTernaryChunk* heap_entries_ternaries;
     LVQueryHeapEntry* heap_entries;
     LVFILEDef* row_file;
     LVFILEDef* ter_file;
@@ -187,7 +188,8 @@ static inline LVSize32_t lv_total_memory_bytes(const LVConfig* config, const LVO
     total += ternary_bytes;
     total += ternary_bytes * option->read_batch_m;
     total += ternary_bytes * option->write_batch_m;
-    total += sizeof(LVQueryHeapEntry)* option->max_top_k * option->rerank_factor;
+    total += ternary_bytes * option->max_top_k * option->rerank_factor;
+    total += sizeof(LVQueryHeapEntry) * option->max_top_k * option->rerank_factor;
     total += LV_RUNNING_FILE_COUNT * option->file_def_size;
     total += LV_ROW_BYTES * option->read_batch_m;
     total += LV_ROW_BYTES * option->write_batch_m;
@@ -299,6 +301,6 @@ typedef struct {
 LVStatus lv_fill_get_result(LVFillGetResultCtx* ctx, LVGetResult* result);
 
 void lv_update_query_heap_from_pending(Livero* db, LVQueryHeap* heap, const LVTernaryChunk* query_ternary);
-LVStatus lv_update_query_heap_from_disk(Livero* db , LVQueryHeap* heap, const LVTernaryChunk* query_ternary);
+LVStatus lv_update_query_heap_from_disk(Livero* db, LVQueryHeap* heap, const LVTernaryChunk* query_ternary);
 
 #endif
