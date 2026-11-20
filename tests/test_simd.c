@@ -1,3 +1,4 @@
+#include <float.h>
 #include <stdint.h>
 
 #include "livero_types.h"
@@ -34,12 +35,12 @@ int test_ternary_dot(void) {
             return -1;
         }
         fill_test_ternary_pair(chunk_count);
-        const int64_t scalar = ternary_dot_scalar(TEST_TERNARY_A, TEST_TERNARY_B, chunk_count);
-        const int64_t simd = ternary_dot_simd(TEST_TERNARY_A, TEST_TERNARY_B, chunk_count);
+        const float scalar = ternary_dot_scalar(TEST_TERNARY_A, TEST_TERNARY_B, chunk_count);
+        const float simd = ternary_dot_simd(TEST_TERNARY_A, TEST_TERNARY_B, chunk_count);
 
-        if (scalar != simd) {
+        if (fabsf(scalar - simd) > FLT_EPSILON) {
             fprintf(stderr, "Simd ternary dot is incorrect at chunk count %u. \n", chunk_count);
-            PRINT_ERR_INVALID("Ternary dot", "%" PRId64, scalar, simd);
+            PRINT_ERR_INVALID("Ternary dot", "%f", scalar, simd);
             return -1;
         }
     }
