@@ -86,6 +86,12 @@ typedef struct {
 } LVGetResult;
 
 typedef struct {
+    const LVDate* date1;
+    const LVDate* date2;
+    int use_postfilter;
+} LVQueryOption;
+
+typedef struct {
     LVDate date;
     LVSeq_t seq;
     LVSize16_t value_len;
