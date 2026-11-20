@@ -2,16 +2,19 @@
 #define LV_QUERY_HEAP
 
 #include <stdint.h>
+#include <assert.h>
 
 #include "livero_types.h"
+#include "struct/row.h"
 #include "vector/ternary.h"
 
 typedef struct {
     LVQueryResult q_result;
     float score;
     int is_on_pending;
-    LVCount_t ternary_idx;
+    LVCount_t idx;
     LVCount_t ternary_heap_idx;
+    int filter_passed; // When posfilter is off, this is always 1 because only valid entries are accepted when prefiltering.
 } LVQueryHeapEntry;
 
 typedef struct {
@@ -31,6 +34,11 @@ void lv_query_heap_sort(LVQueryHeap* heap);
 
 int lv_query_heap_admit(const LVQueryHeap *heap, const float new_score);
 
-void lv_query_heap_update(LVQueryHeap* heap, const LVTernaryChunk* ternary, const uint8_t* row,const float score, const int is_on_pending, const LVCount_t ternary_idx);
+void lv_query_heap_update(LVQueryHeap* heap,const int use_postfilter, const LVTernaryChunk* ternary, const uint8_t* row, const float score, const int is_on_pending, const LVCount_t idx);
+
+static inline int query_heap_row_filter(const LVQueryHeap* heap, const uint8_t* row){
+    assert(heap && row);
+    return (row_is_alive(row)) && (heap->min_epoch_date <= row_get_epoch_date(row) && row_get_epoch_date(row) <= heap->max_epoch_date);
+}
 
 #endif
