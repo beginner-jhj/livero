@@ -213,6 +213,9 @@ void lv_init_memory(uint8_t *m_arena, Livero **db_out, const LVConfig *config, c
     LVTernaryChunk *ternary_pending = (LVTernaryChunk *)(m_arena + offset);
     offset += ternary_bytes * option->write_batch_m;
 
+    LVTernaryChunk *heap_entries_ternaries = (LVTernaryChunk *)(m_arena + offset);
+    offset += ternary_bytes * option->max_top_k * option->rerank_factor;
+
     LVQueryHeapEntry *heap_entries = (LVQueryHeapEntry *)(m_arena + offset);
     offset += sizeof(LVQueryHeapEntry) * option->max_top_k * option->rerank_factor;
 
@@ -244,6 +247,7 @@ void lv_init_memory(uint8_t *m_arena, Livero **db_out, const LVConfig *config, c
     db->ternary_scratch = ternary_scratch;
     db->ternary_window = ternary_window;
     db->ternary_pending = ternary_pending;
+    db->heap_entries_ternaries = heap_entries_ternaries;
     db->heap_entries = heap_entries;
     db->row_file = row_file;
     db->ter_file = ter_file;
@@ -983,7 +987,7 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     const uint64_t max_epoch_date = epoch_date2 > epoch_date1 ? epoch_date2 : epoch_date1;
 
     const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
-
+    const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
     memset(db->ternary_scratch, 0, ternary_bytes);
     ternary_convert(query_vector, db->config.vector_type, db->config.vector_dimension, db->ternary_scratch);
 
@@ -993,7 +997,10 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     LVQueryHeap heap = {.min_epoch_date = min_epoch_date,
                         .max_epoch_date = max_epoch_date,
                         .capacity = k * db->option.rerank_factor,
+                        .ternary_chunk_count = ternary_chunk_count,
+                        .ternary_bytes = ternary_bytes,
                         .entries = db->heap_entries,
+                        .entries_ternaries = db->heap_entries_ternaries,
                         .size = 0};
 
     lv_update_query_heap_from_pending(db, &heap, query_ternary);
@@ -1009,21 +1016,9 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     if (db->option.rerank_factor > 1) {
         for (uint32_t i = 0; i < oversample_size; ++i) {
             LVQueryHeapEntry *entry = &heap.entries[i];
-            const LVTernaryChunk *cand_ternary = NULL;
-
-            if (entry->is_on_pending) {
-                cand_ternary = lv_n_pending_ternary(db, entry->ternary_idx);
-            } else {
-                s = db->option.io_ops->read(db->ter_file, db->ternary_window, ternary_bytes,
-                                            ternary_bytes * entry->ternary_idx);
-                if (s != LV_OK) {
-                    return s;
-                }
-                cand_ternary = db->ternary_window;
-            }
-
-            entry->score = ternary_asymmetric_score(query_original, cand_ternary, db->config.vector_type,
-                                                    ternary_chunks_count(db->config.vector_dimension));
+            const LVTernaryChunk *cand_ternary = &heap.entries_ternaries[entry->ternary_heap_idx * ternary_chunk_count];
+            entry->score =
+                ternary_asymmetric_score(query_original, cand_ternary, db->config.vector_type, ternary_chunk_count);
         }
 
         lv_query_heap_build(&heap);
@@ -1053,7 +1048,7 @@ void lv_update_query_heap_from_pending(Livero *db, LVQueryHeap *heap, const LVTe
         const float score = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
         if (lv_query_heap_admit(heap, score)) {
             const uint8_t *row = lv_n_pending_row(db, i);
-            lv_query_heap_update(heap, row, score, 1, i);
+            lv_query_heap_update(heap, ternary_candidate, row, score, 1, i);
         }
     }
 }
@@ -1096,7 +1091,7 @@ LVStatus lv_update_query_heap_from_disk(Livero *db, LVQueryHeap *heap, const LVT
                 cache_hi = j + fetch_count;
             }
             const uint8_t *row = lv_n_window_row(db, j - cache_lo);
-            lv_query_heap_update(heap, row, score, 0, base + j);
+            lv_query_heap_update(heap, ternary_candidate, row, score, 0, base + j);
         }
     }
 
