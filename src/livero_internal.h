@@ -300,7 +300,7 @@ typedef struct {
 } LVFillGetResultCtx;
 LVStatus lv_fill_get_result(LVFillGetResultCtx* ctx, LVGetResult* result);
 
-void lv_update_query_heap_from_pending(Livero* db, LVQueryHeap* heap, const LVTernaryChunk* query_ternary);
-LVStatus lv_update_query_heap_from_disk(Livero* db, LVQueryHeap* heap, const LVTernaryChunk* query_ternary);
+void lv_update_query_heap_from_pending(Livero* db, LVQueryHeap* heap, const LVTernaryChunk* query_ternary, const int use_postfilter);
+LVStatus lv_update_query_heap_from_disk(Livero* db, LVQueryHeap* heap, const LVTernaryChunk* query_ternary, const int use_postfilter);
 
 #endif
