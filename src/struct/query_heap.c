@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "helper/helper.h"
 #include "livero_types.h"
 #include "struct/row.h"
 #include "vector/ternary.h"
@@ -88,36 +87,56 @@ int lv_query_heap_admit(const LVQueryHeap* heap, const float new_score) {
     return heap->size < heap->capacity || new_score > heap->entries[0].score;
 }
 
-void lv_query_heap_update(LVQueryHeap* heap, const LVTernaryChunk* ternary, const uint8_t* row, const float score,
-                          const int is_on_pending, const LVCount_t ternary_idx) {
-    assert(heap && row);
+void lv_query_heap_update(LVQueryHeap* heap, const int use_postfilter, const LVTernaryChunk* ternary,
+                          const uint8_t* row, const float score, const int is_on_pending, const LVCount_t idx) {
+    assert(heap);
 
-    // Self-contained admission check: never evict a better candidate, even if
-    // a caller forgets to call lv_query_heap_admit first.
+    if (!use_postfilter) {
+        assert(row);
+    }
+
     const int full = heap->size >= heap->capacity;
-    if (full && !(score > heap->entries[0].score)) {
+    if (!lv_query_heap_admit(heap, score)) {
         return;
     }
 
-    const uint64_t epoch_date = row_get_epoch_date(row);
-    const int filter_passed =
-        (row_is_alive(row)) && (heap->min_epoch_date <= epoch_date && epoch_date <= heap->max_epoch_date);
+    if (!use_postfilter) {
+        const int filter_passed = query_heap_row_filter(heap, row);
 
-    if (filter_passed) {
-        LVDate date;
-        lv_convert_epoch_to_date(epoch_date, &date);
+        if (filter_passed) {
+            LVQueryHeapEntry entry = {.q_result = row_make_query_result(row),
+                                      .is_on_pending = is_on_pending,
+                                      .idx = idx,
+                                      .score = score,
+                                      .ternary_heap_idx = heap->size,
+                                      .filter_passed = 1};
 
-        LVQueryResult q_result = {.seq = row_get_seq(row), .value_len = row_get_value_len(row), .date = date};
+            if (full) {
+                // Replace the weakest kept candidate (the root) and restore the heap:
+                // one sift-down instead of a pop (sift-down) followed by an insert (sift-up).
+                entry.ternary_heap_idx = heap->entries[0].ternary_heap_idx;
+                heap->entries[0] = entry;
+                lv_query_heap_sift_down(heap, 0);
+            } else {
+                lv_query_heap_insert(heap, entry);
+            }
 
+            lv_query_heap_ternary_insert(heap, ternary, entry.ternary_heap_idx);
+        }
+    } else {
+        /*
+        0 is a default value for filter_passed when the use_postfilter is
+        on. This will change to real value after
+        */
+        LVQueryResult q_result = (LVQueryResult){0};
         LVQueryHeapEntry entry = {.q_result = q_result,
                                   .is_on_pending = is_on_pending,
-                                  .ternary_idx = ternary_idx,
+                                  .idx = idx,
                                   .score = score,
-                                  .ternary_heap_idx = heap->size};
+                                  .ternary_heap_idx = heap->size,
+                                  .filter_passed = 0};
 
         if (full) {
-            // Replace the weakest kept candidate (the root) and restore the heap:
-            // one sift-down instead of a pop (sift-down) followed by an insert (sift-up).
             entry.ternary_heap_idx = heap->entries[0].ternary_heap_idx;
             heap->entries[0] = entry;
             lv_query_heap_sift_down(heap, 0);
@@ -125,7 +144,6 @@ void lv_query_heap_update(LVQueryHeap* heap, const LVTernaryChunk* ternary, cons
             lv_query_heap_insert(heap, entry);
         }
 
-        fprintf(stderr, "Heap Size: %u, Seq: %llu,  Ternary heap idx: %u \n", heap->size, entry.q_result.seq, entry.ternary_heap_idx);
         lv_query_heap_ternary_insert(heap, ternary, entry.ternary_heap_idx);
     }
 }
