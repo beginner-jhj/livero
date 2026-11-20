@@ -957,7 +957,7 @@ LVStatus lv_window_search(LVWindowSearchCtx *ctx, LVGetResult *result, LVOffset_
 
 /*************** lv_query and relevant internal functions (heap helpers) section. *******************/
 
-LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const LVDate *date1, const LVDate *date2,
+LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const LVQueryOption *option,
                   LVQueryResult *result, LVSize32_t *result_size) {
     LIVERO_CHECK_MISSING(db, "Db");
 
@@ -977,14 +977,15 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
     */
     uint64_t epoch_date1 = 0;
     uint64_t epoch_date2 = UINT64_MAX;
-    if (date1) {
-        epoch_date1 = lv_convert_date_to_epoch(date1);
+    if (option && option->date1) {
+        epoch_date1 = lv_convert_date_to_epoch(option->date1);
     }
-    if (date2) {
-        epoch_date2 = lv_convert_date_to_epoch(date2);
+    if (option && option->date2) {
+        epoch_date2 = lv_convert_date_to_epoch(option->date2);
     }
     const uint64_t min_epoch_date = epoch_date1 < epoch_date2 ? epoch_date1 : epoch_date2;
     const uint64_t max_epoch_date = epoch_date2 > epoch_date1 ? epoch_date2 : epoch_date1;
+    const int use_postfilter = option ? option->use_postfilter : 0;
 
     const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
     const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
@@ -1003,57 +1004,76 @@ LVStatus lv_query(Livero *db, const LVTopK_t k, const void *query_vector, const 
                         .entries_ternaries = db->heap_entries_ternaries,
                         .size = 0};
 
-    lv_update_query_heap_from_pending(db, &heap, query_ternary);
+    lv_update_query_heap_from_pending(db, &heap, query_ternary, use_postfilter);
 
-    LVStatus s = lv_update_query_heap_from_disk(db, &heap, query_ternary);
+    LVStatus s = lv_update_query_heap_from_disk(db, &heap, query_ternary, use_postfilter);
 
     if (s != LV_OK) {
         return s;
     }
 
-    const LVSize32_t oversample_size = heap.size;
+    const LVSize32_t n = heap.size;  // k * f candidates
+
+    if (use_postfilter) {
+        for (uint32_t i = 0; i < n; ++i) {
+            LVQueryHeapEntry *e = &heap.entries[i];
+            const uint8_t *row;
+            uint8_t row_buf[LV_ROW_BYTES];
+            if (e->is_on_pending) {
+                row = lv_n_pending_row(db, e->idx);
+            } else {
+                s = db->option.io_ops->read(db->row_file, row_buf, LV_ROW_BYTES, (LVOffset_t)e->idx * LV_ROW_BYTES);
+                if (s != LV_OK) {
+                    return s;
+                }
+                row = row_buf;
+            }
+            e->filter_passed = query_heap_row_filter(&heap, row);
+            if (e->filter_passed) {
+                e->q_result = row_make_query_result(row);
+            }
+        }
+    }
 
     if (db->option.rerank_factor > 1) {
-        for (uint32_t i = 0; i < oversample_size; ++i) {
-            LVQueryHeapEntry *entry = &heap.entries[i];
-            const LVTernaryChunk *cand_ternary = &heap.entries_ternaries[entry->ternary_heap_idx * ternary_chunk_count];
-            entry->score =
-                ternary_asymmetric_score(query_original, cand_ternary, db->config.vector_type, ternary_chunk_count);
+        for (uint32_t i = 0; i < n; ++i) {
+            LVQueryHeapEntry *e = &heap.entries[i];
+            const LVTernaryChunk *t = &heap.entries_ternaries[e->ternary_heap_idx * ternary_chunk_count];
+            e->score = ternary_asymmetric_score(query_original, t, db->config.vector_type, ternary_chunk_count);
         }
-
         lv_query_heap_build(&heap);
     }
 
-    const LVSize32_t heap_result_size = oversample_size > k ? k : oversample_size;
-
-    if (heap_result_size > 0) {
-        lv_query_heap_sort(&heap);
-
-        for (uint32_t i = 0; i < heap_result_size; ++i) {
-            result[i] = heap.entries[i].q_result;
+    lv_query_heap_sort(&heap);
+    LVSize32_t out = 0;
+    for (uint32_t i = 0; i < n && out < k; ++i) {
+        if (heap.entries[i].filter_passed) {  // always 1 in pre-filter mode
+            result[out++] = heap.entries[i].q_result;
         }
     }
-
-    *result_size = heap_result_size;
+    *result_size = out;
 
     return LV_OK;
 }
 
-void lv_update_query_heap_from_pending(Livero *db, LVQueryHeap *heap, const LVTernaryChunk *query_ternary) {
+void lv_update_query_heap_from_pending(Livero *db, LVQueryHeap *heap, const LVTernaryChunk *query_ternary,
+                                       const int use_postfilter) {
     assert(db && heap);
     const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
 
     for (LVCount_t i = 0; i < db->pending_count; i++) {
         const LVTernaryChunk *ternary_candidate = lv_n_pending_ternary(db, i);
         const float score = ternary_dot(query_ternary, ternary_candidate, ternary_chunk_count);
-        if (lv_query_heap_admit(heap, score)) {
-            const uint8_t *row = lv_n_pending_row(db, i);
-            lv_query_heap_update(heap, ternary_candidate, row, score, 1, i);
+        if (!lv_query_heap_admit(heap, score)) {
+            continue;
         }
+        const uint8_t *row = use_postfilter ? NULL : lv_n_pending_row(db, i);
+        lv_query_heap_update(heap, use_postfilter, ternary_candidate, row, score, 1, i);
     }
 }
 
-LVStatus lv_update_query_heap_from_disk(Livero *db, LVQueryHeap *heap, const LVTernaryChunk *query_ternary) {
+LVStatus lv_update_query_heap_from_disk(Livero *db, LVQueryHeap *heap, const LVTernaryChunk *query_ternary,
+                                        const int use_postfilter) {
     assert(db && heap && query_ternary);
     const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
     const LVCount_t ternary_chunk_count = ternary_chunks_count(db->config.vector_dimension);
@@ -1080,18 +1100,21 @@ LVStatus lv_update_query_heap_from_disk(Livero *db, LVQueryHeap *heap, const LVT
                 continue;
             }
 
-            if (j >= cache_hi) {
-                const LVCount_t fetch_count = (heap->size * 10 <= heap->capacity * 3) ? n - j : 1;
-                s = db->option.io_ops->read(db->row_file, db->row_window, fetch_count * LV_ROW_BYTES,
-                                            (LVOffset_t)(base + j) * LV_ROW_BYTES);
-                if (s != LV_OK) {
-                    return s;
+            if (!use_postfilter) {
+                if (j >= cache_hi) {
+                    const LVCount_t fetch_count = (heap->size * 10 <= heap->capacity * 3) ? n - j : 1;
+                    s = db->option.io_ops->read(db->row_file, db->row_window, fetch_count * LV_ROW_BYTES,
+                                                (LVOffset_t)(base + j) * LV_ROW_BYTES);
+                    if (s != LV_OK) {
+                        return s;
+                    }
+                    cache_lo = j;
+                    cache_hi = j + fetch_count;
                 }
-                cache_lo = j;
-                cache_hi = j + fetch_count;
             }
-            const uint8_t *row = lv_n_window_row(db, j - cache_lo);
-            lv_query_heap_update(heap, ternary_candidate, row, score, 0, base + j);
+
+            const uint8_t *row = use_postfilter ? NULL : lv_n_window_row(db, j - cache_lo);
+            lv_query_heap_update(heap, use_postfilter, ternary_candidate, row, score, 0, base + j);
         }
     }
 
