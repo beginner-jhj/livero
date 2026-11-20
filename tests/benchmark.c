@@ -189,27 +189,31 @@ static int bench_one(const int count, uint64_t* times) {
         lv_query(db, BENCH_TOP_K, vector, &BENCH_QUERY_OPTION, query_results, &size);
     }
 
-    for (int k = 0; k < BENCH_GET_QUERY_COUNT; ++k) {
-        fill_random_int8(vector);
+    for (int i = 0; i < 2; ++i) {
+        BENCH_QUERY_OPTION.use_postfilter = 1-i;
+        for (int k = 0; k < BENCH_GET_QUERY_COUNT; ++k) {
+            fill_random_int8(vector);
 
-        const uint64_t t0 = now_ns();
-        s = lv_query(db, BENCH_TOP_K, vector, &BENCH_QUERY_OPTION, query_results, &size);
-        times[k] = now_ns() - t0;
+            const uint64_t t0 = now_ns();
+            s = lv_query(db, BENCH_TOP_K, vector, &BENCH_QUERY_OPTION, query_results, &size);
+            times[k] = now_ns() - t0;
 
-        if (s != LV_OK) {
-            fprintf(stderr, "lv_query failed at iteration %d. ", k);
-            print_status(s);
-            goto cleanup;
+            if (s != LV_OK) {
+                fprintf(stderr, "lv_query failed at iteration %d. ", k);
+                print_status(s);
+                goto cleanup;
+            }
+            // Fewer results than k would mean the query skipped records.
+            if (size != (LVSize32_t)(count < BENCH_TOP_K ? count : BENCH_TOP_K)) {
+                fprintf(stderr, "lv_query returned %" PRIu32 " results for k=%d.\n", size, BENCH_TOP_K);
+                goto cleanup;
+            }
         }
-        // Fewer results than k would mean the query skipped records.
-        if (size != (LVSize32_t)(count < BENCH_TOP_K ? count : BENCH_TOP_K)) {
-            fprintf(stderr, "lv_query returned %" PRIu32 " results for k=%d.\n", size, BENCH_TOP_K);
-            goto cleanup;
-        }
+        char label[32];
+        snprintf(label, sizeof(label), "top%d (use_postfilter: %d)", BENCH_TOP_K, 1-i);
+        report(label, times, BENCH_GET_QUERY_COUNT);
     }
-    char label[16];
-    snprintf(label, sizeof(label), "top%d", BENCH_TOP_K);
-    report(label, times, BENCH_GET_QUERY_COUNT);
+
     fprintf(stdout, "--- top%d cold (first query): %.2f us\n", BENCH_TOP_K, cold_query_ns / 1e3);
 
     result = 0;
