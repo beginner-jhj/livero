@@ -423,8 +423,8 @@ int test_create(void) {
 
     // Creating over an existing database must not overwrite it.
     const LVStatus s = lv_create(TEST_DIR, &TEST_CONFIG, &TEST_OPTION, &second);
-    if (s != LV_ERR_EXSIST) {
-        PRINT_ERR_UNEXPECTED_STATUS("lv_create on an existing db", LV_ERR_EXSIST, s);
+    if (s != LV_ERR_EXIST) {
+        PRINT_ERR_UNEXPECTED_STATUS("lv_create on an existing db", LV_ERR_EXIST, s);
         goto cleanup;
     }
 
@@ -468,8 +468,8 @@ int test_open(void) {
     }
 
     const LVStatus s = lv_open(TEST_DIR, &TEST_OPTION, &db);
-    if (s != LV_ERR_DNEXSIST) {
-        PRINT_ERR_UNEXPECTED_STATUS("lv_open on an empty directory", LV_ERR_DNEXSIST, s);
+    if (s != LV_ERR_NOT_EXIST) {
+        PRINT_ERR_UNEXPECTED_STATUS("lv_open on an empty directory", LV_ERR_NOT_EXIST, s);
         goto cleanup;
     }
 

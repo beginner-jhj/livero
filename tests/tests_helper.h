@@ -345,11 +345,11 @@ static void print_status(const LVStatus status) {
             fprintf(stderr, "LV_ERR_IO \n");
             break;
 
-        case LV_ERR_EXSIST:
+        case LV_ERR_EXIST:
             fprintf(stderr, "LV_ERR_EXSIST \n");
             break;
 
-        case LV_ERR_DNEXSIST:
+        case LV_ERR_NOT_EXIST:
             fprintf(stderr, "LV_ERR_DNEXSIST \n");
             break;
 

@@ -37,9 +37,9 @@ static LVStatus lv_posix_file_open(const char* path, const int is_create, LVFILE
 
     if (fd < 0) {
         if (errno == EEXIST) {
-            return LV_ERR_EXSIST;
+            return LV_ERR_EXIST;
         } else if (errno == ENOENT) {
-            return LV_ERR_DNEXSIST;
+            return LV_ERR_NOT_EXIST;
         }
         return LV_ERR_IO;
     }
