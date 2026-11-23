@@ -516,7 +516,6 @@ int lv_pending_append(Livero *db, const LVRow *row, const LVTernaryChunk *ternar
 LVStatus lv_flush(Livero *db) {
     assert(db);
 
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
     const LVOffset_t row_offset_to_write = db->row_file_bytes;
     const LVOffset_t ternary_offset_to_write = db->ternary_file_bytes;
     const LVOffset_t val_offset_to_write = db->value_file_bytes;
@@ -542,7 +541,7 @@ LVStatus lv_flush(Livero *db) {
         }
     }
 
-    const LVSize32_t ternary_bytes_to_flush = db->pending_count * ternary_bytes;
+    const LVSize32_t ternary_bytes_to_flush = lv_pending_ternary_bytes(db);
     if ((s = db->option.io_ops->write(db->ter_file, db->ternary_pending, ternary_bytes_to_flush,
                                       ternary_offset_to_write)) != LV_OK) {
         return s;
@@ -555,7 +554,7 @@ LVStatus lv_flush(Livero *db) {
         }
     }
 
-    const LVSize32_t row_bytes_to_flush = db->pending_count * LV_ROW_BYTES;
+    const LVSize32_t row_bytes_to_flush = lv_pending_row_bytes(db);
 
     if ((s = db->option.io_ops->write(db->row_file, db->row_pending, row_bytes_to_flush, row_offset_to_write)) !=
         LV_OK) {
