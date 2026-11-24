@@ -47,7 +47,7 @@ LVStatus lv_open(const char* db_path, const LVOption* option, Livero** db_out);
 * --value: Opaque payload stored with a vector data, Livero never interprets its bytes.
         It's copied to the pending buffer, caller can reuse or free the buffer after function returns a status.
         Must not be NULL.
-* --value_len: How many bytes the value are. Must be under max_value_len and greater than 0.
+* --value_len: How many bytes the value is. Must be under max_value_len and greater than 0.
 * --date: Time data stored with a vector and value. If it's NULL, this will be date at that time.
 * --seq_out: This is the only key to handle this record (lv_get, lv_delete).
              Seq is never reused and only increased (later put gets a larger seq).
