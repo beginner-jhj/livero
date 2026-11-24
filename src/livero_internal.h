@@ -39,8 +39,6 @@ struct Livero {
     LVSize16_t value_pending_bytes;
 };
 
-// static_assert(sizeof(Livero) <= 128, "Livero struct size must be under 128 bytes.");
-
 static void lv_log_error(const char* file, int line, const char* func, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -200,12 +198,6 @@ static inline LVSize32_t lv_total_memory_bytes(const LVConfig* config, const LVO
 
 LVStatus lv_allocate_memory(const LVSize32_t size, void** ptr_out);
 
-typedef struct LVInitCtx {
-    LVSize32_t read_batch_m;
-    LVSize32_t write_batch_m;
-    LVSize16_t file_def_size;
-    LVIOOps* io_ops;
-} LVInitCtx;
 void lv_init_memory(uint8_t* m_arena, Livero** db_out, const LVConfig* config, const LVOption* option);
 
 void lv_init_db_seq_and_file_stat(Livero* db, const LVCommit* commit, const int is_first_torn);
@@ -229,8 +221,6 @@ LVStatus lv_flush(Livero* db);
 
 typedef struct {
     uint8_t* row_window;
-    // int row_fd;
-    // int val_fd;
     LVFILEDef* row_file;
     LVFILEDef* val_file;
     lv_file_read read;
@@ -241,9 +231,7 @@ typedef struct {
 static inline LVDiskSearchCtx lv_disk_search_ctx(const Livero* db) {
     assert(db);
     return (LVDiskSearchCtx){
-        .disk_record_count = lv_disk_record_count(db),
-        // .row_fd = db->row_fd,
-        // .val_fd = db->val_fd,
+        .disk_record_count = lv_disk_record_count(db), 
         .row_file = db->row_file,
         .val_file = db->val_file,
         .read = db->option.io_ops->read,
