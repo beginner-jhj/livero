@@ -179,10 +179,10 @@ cleanup:
 LVStatus lv_allocate_memory(const LVSize32_t size, void **ptr_out) {
     assert(ptr_out);
 
-    const LVSize32_t rounded =
-        (size + LV_MEMORY_ALIGNMENT - 1) &
-        ~(LV_MEMORY_ALIGNMENT -
-          1);  // Critical! rounded was 16 bytes so it easily eceeds total size when the max value len is big
+    /*
+        aligned_alloc returns NULL if size is not a multiple of alignment.
+    */
+    const LVSize32_t rounded = (size + LV_MEMORY_ALIGNMENT - 1) & ~(LV_MEMORY_ALIGNMENT - 1);
     void *m = aligned_alloc(LV_MEMORY_ALIGNMENT, rounded);
 
     if (!m) {
@@ -201,6 +201,10 @@ void lv_init_memory(uint8_t *m_arena, Livero **db_out, const LVConfig *config, c
     LVOffset_t offset = 0;
     const LVSize32_t ternary_bytes = ternary_chunks_bytes(config->vector_dimension);
 
+    /*
+        Below offsets are representing livero's memory layout.
+        Do not change anything. They must follow exact orders. (see Memory Layout section in the README.md )
+    */
     Livero *db = (Livero *)m_arena;
     offset += sizeof(Livero);
 
@@ -447,8 +451,11 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
     const uint64_t epoch_date = lv_convert_date_to_epoch(date);
     const LVOffset_t value_disk_offset = db->value_file_bytes;
     const LVOffset_t value_pending_offset = db->value_pending_bytes;
-    const LVOffset_t value_offset =
-        value_disk_offset + value_pending_offset;  // fix offset bug: value_offset should be disk + pending bytes
+    /*
+        value_offset is an absolute disk offset, so 
+        it must aussume that there are prior pending values waiting to be flushed.
+    */
+    const LVOffset_t value_offset = value_disk_offset + value_pending_offset;
 
     ternary_convert(vector, db->config.vector_type, db->config.vector_dimension, db->ternary_scratch);
     LVRowCalcChecksumCtx row_checksum_ctx = {.seq = current_seq,
@@ -521,6 +528,11 @@ LVStatus lv_flush(Livero *db) {
     const LVOffset_t val_offset_to_write = db->value_file_bytes;
     const int sync = db->option.sync_mode != LV_SYNC_NONE;
 
+    /*
+        Pending values are placed in each cell whose width is max_value_len.
+        We can not flush them directly, because there are gaps between cells which makes value_offset of a row incorrect.
+        We must pack them before we flush.
+    */
     LVSize32_t packed = 0;
     for (LVCount_t i = 0; i < db->pending_count; ++i) {
         const LVSize16_t len = row_get_value_len(lv_n_pending_row(db, i));
@@ -612,6 +624,10 @@ LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
         return LV_ERR_NOT_FOUND;
     }
 
+    /*
+        Lookup memory first and disk later.
+    */
+
     LVStatus s = lv_pending_search(db, target_seq, result, NULL);
 
     if (s == LV_OK || s == LV_ERR_DELETED) {
@@ -619,6 +635,11 @@ LVStatus lv_get(Livero *db, const LVSeq_t target_seq, LVGetResult *result) {
     }
 
     LVDiskSearchCtx c = lv_disk_search_ctx(db);
+    /*
+        lv_interpolation_search_from_disk gives only one shot to guess target's position based on its seq.
+        It may results false-negative if there are huge gaps between seqs.
+        Fallback to binary search which clearly finds the target.
+    */
     s = lv_interpolation_search_from_disk(&c, target_seq, result, NULL);
 
     if (s == LV_ERR_NOT_FOUND) {
@@ -648,6 +669,10 @@ LVStatus lv_delete(Livero *db, const LVSeq_t target_seq) {
     else if (s == LV_ERR_NOT_FOUND) {
         LVDiskSearchCtx c = lv_disk_search_ctx(db);
         s = lv_binary_search_from_disk(&c, target_seq, NULL, &row_offset);
+        /*
+            lv_delete does in-place modification to mark tombstone on the row.
+            You may need a file-system like littlefs or flash memory with FTL.
+        */
         if (s == LV_OK) {
             return db->option.io_ops->write(db->row_file, &tombstone, 1, row_offset + LV_ROW_TOMBSTONEFLAG_OFFSET);
         }
@@ -661,6 +686,15 @@ LVStatus lv_fill_get_result(LVFillGetResultCtx *ctx, LVGetResult *result) {
     assert(ctx && result);
     const LVSize16_t value_len = row_get_value_len(ctx->row);
     const LVOffset_t value_offset = row_get_value_offset(ctx->row);
+
+    /*
+        Users can pass a buffer if they want to get value, or not.
+        
+        lv_fill_get_result is called in several search contexts, 
+        values may be sourced from memory or disk.
+
+        Caller must choose value source before call this function.
+    */
     if (result->value) {
         assert(ctx->value_memory_src || ctx->value_file);
         if (ctx->value_memory_src) {
@@ -692,8 +726,6 @@ LVStatus lv_pending_search(const Livero *db, const LVSeq_t target_seq, LVGetResu
         return LV_ERR_NOT_FOUND;
     }
 
-    // const LVOffset_t row_offset = (target_seq - first_pending_seq) * LV_ROW_BYTES;
-    // const LVOffset_t value_offset = (target_seq - first_pending_seq) * db->max_value_len;
     const LVCount_t idx = (target_seq - first_pending_seq);
 
     const uint8_t *row = lv_n_pending_row(db, idx);
@@ -786,21 +818,21 @@ LVStatus lv_interpolation_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t t
         return s;
     }
 
-    const LVOffset_t expected_offset = lv_window_target_offset(p_idx, r.start_idx, LV_ROW_BYTES);
-    LVOffset_t row_offset = expected_offset;
+    const LVOffset_t expected_window_offset = lv_window_target_offset(p_idx, r.start_idx, LV_ROW_BYTES);
+    LVOffset_t row_window_offset = expected_window_offset;
     LVWindowSearchCtx window_search_ctx = {
         .row_window = ctx->row_window,
         .value_file = ctx->val_file,
-        .target_offset = expected_offset,
+        .target_offset = expected_window_offset,
         .target_seq = target_seq,
         .count_on_window = read_count,
         .read = ctx->read,
     };
-    s = lv_window_search(&window_search_ctx, result, &row_offset);
+    s = lv_window_search(&window_search_ctx, result, &row_window_offset);
 
     if (s == LV_OK) {
         if (row_offset_out) {
-            *row_offset_out = read_offset + row_offset;
+            *row_offset_out = read_offset + row_window_offset;
         }
     }
 
@@ -833,22 +865,22 @@ LVStatus lv_binary_search_from_disk(LVDiskSearchCtx *ctx, const LVSeq_t target_s
             return s;
         }
 
-        const LVOffset_t expected_offset = lv_window_target_offset(mid, r.start_idx, LV_ROW_BYTES);
-        const uint8_t *expected_row = ctx->row_window + expected_offset;
+        const LVOffset_t expected_window_offset = lv_window_target_offset(mid, r.start_idx, LV_ROW_BYTES);
+        const uint8_t *expected_row = ctx->row_window + expected_window_offset;
         const LVSeq_t expected_seq = row_get_seq(expected_row);
-        LVOffset_t row_offset = expected_offset;
+        LVOffset_t row_window_offset = expected_window_offset;
 
         LVWindowSearchCtx window_search_ctx = {.row_window = ctx->row_window,
                                                .value_file = ctx->val_file,
-                                               .target_offset = expected_offset,
+                                               .target_offset = expected_window_offset,
                                                .target_seq = target_seq,
                                                .count_on_window = read_count,
                                                .read = ctx->read};
-        s = lv_window_search(&window_search_ctx, result, &row_offset);
+        s = lv_window_search(&window_search_ctx, result, &row_window_offset);
 
         if (s == LV_OK) {
             if (row_offset_out) {
-                *row_offset_out = read_offset + row_offset;
+                *row_offset_out = read_offset + row_window_offset;
             }
 
             return LV_OK;
@@ -901,6 +933,13 @@ LVStatus lv_window_search(LVWindowSearchCtx *ctx, LVGetResult *result, LVOffset_
 
     const uint8_t *expected_row = ctx->row_window + ctx->target_offset;
     const LVSeq_t expected_seq = row_get_seq(expected_row);
+
+    /*
+        Window may fetch more than one record,
+        which means the target is not in the first expected position, but window may include the target as it fetches many rows.
+
+        Lookup expected position first, fallback to searching whole buffer.
+    */
     if (expected_seq == ctx->target_seq) {
         if (!row_is_alive(expected_row)) {
             return LV_ERR_DELETED;
@@ -1100,6 +1139,12 @@ LVStatus lv_update_query_heap_from_disk(Livero *db, LVQueryHeap *heap, const LVT
             }
 
             if (!use_postfilter) {
+                /*
+                    As LVQueryHeap's threshold (which determins if a new candidate should be inserted or not) is getting higher, 
+                    it will rarely read rows later.
+                    
+                    Read the first 30% as a batch from disk and cahche them to window memory, and after that, read one by one.
+                */
                 if (j >= cache_hi) {
                     const LVCount_t fetch_count = (heap->size * 10 <= heap->capacity * 3) ? n - j : 1;
                     s = db->option.io_ops->read(db->row_file, db->row_window, fetch_count * LV_ROW_BYTES,
