@@ -17,6 +17,12 @@ typedef struct {
     int filter_passed; // When posfilter is off, this is always 1 because only valid entries are accepted when prefiltering.
 } LVQueryHeapEntry;
 
+
+/*
+    This is a min-heap.
+    The more higher the score is, the better it is.
+    So by using min-heap, we can get the worst candidate in O(1) and replace it fast.
+*/
 typedef struct {
     const uint64_t min_epoch_date;
     const uint64_t max_epoch_date;
