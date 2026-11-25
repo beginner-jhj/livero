@@ -19,6 +19,7 @@ struct Livero {
     LVOption option;
     LVSeq_t next_seq;
     LVSeq_t next_commit_seq;
+    LVSeq_t durable_seq;
     LVTernaryChunk* ternary_scratch;
     LVTernaryChunk* ternary_window;
     LVTernaryChunk* ternary_pending;
@@ -82,6 +83,7 @@ static void lv_log_error(const char* file, int line, const char* func, const cha
 
 #define LV_MEMORY_ALIGNMENT 16
 #define LV_MAX_BATCH_M 512
+#define LV_SEQ_RESERVE_M LV_MAX_BATCH_M*10
 
 #define LV_ROW_FILE_NAME "row.lv"
 #define LV_TERNARY_FILE_NAME "ter.lv"

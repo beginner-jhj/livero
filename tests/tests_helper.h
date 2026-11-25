@@ -545,13 +545,13 @@ static int check_commit(const LVCommit* recovered, const LVCommit* expected) {
         return -1;
     }
 
-    if (recovered->first_seq != expected->first_seq) {
-        PRINT_ERR_INVALID("first_seq", "%" PRIu64, expected->first_seq, recovered->first_seq);
+    if (recovered->next_seq != expected->next_seq) {
+        PRINT_ERR_INVALID("first_seq", "%" PRIu64, expected->next_seq, recovered->next_seq);
         return -1;
     }
 
-    if (recovered->reserved_seq != expected->reserved_seq) {
-        PRINT_ERR_INVALID("reserved_seq", "%" PRIu64, expected->reserved_seq, recovered->reserved_seq);
+    if (recovered->durable_seq != expected->durable_seq) {
+        PRINT_ERR_INVALID("reserved_seq", "%" PRIu64, expected->durable_seq, recovered->durable_seq);
         return -1;
     }
 
@@ -624,8 +624,8 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
         .total_count = ctx->prev_count + ctx->data_count,
         .batch_value_bytes = batched_val_bytes,
         .total_value_bytes = ctx->prev_val_bytes + batched_val_bytes,
-        .first_seq = ctx->data[0].row.seq,
-        .reserved_seq = ctx->data[ctx->data_count - 1].row.seq,
+        .next_seq = ctx->data[0].row.seq,
+        .durable_seq = ctx->data[ctx->data_count - 1].row.seq,
     };
 
     LVStatus s = commit_write(ctx->commit_file, ctx->commit_sector, TEST_IO_OPS.write, &cmt);

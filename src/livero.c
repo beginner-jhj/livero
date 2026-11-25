@@ -248,6 +248,7 @@ void lv_init_memory(uint8_t *m_arena, Livero **db_out, const LVConfig *config, c
 
     db->next_seq = LV_SEQ_START;
     db->next_commit_seq = LV_COMMIT_SEQ_START;
+    db->durable_seq = LV_SEQ_START;
     db->ternary_scratch = ternary_scratch;
     db->ternary_window = ternary_window;
     db->ternary_pending = ternary_pending;
@@ -278,19 +279,25 @@ void lv_init_db_seq_and_file_stat(Livero *db, const LVCommit *commit, const int 
     const int is_empty_db = commit->commit_seq == LV_COMMIT_SEQ_ZERO;
     LVSeq_t next_commit_seq;
     LVSeq_t next_seq;
+    LVSeq_t durable_seq;
 
     if (is_empty_db) {
         if (is_first_torn) {
-            next_commit_seq = LV_COMMIT_SEQ_START;
-            next_seq = LV_SEQ_START + LV_MAX_BATCH_M;
+            next_seq = LV_SEQ_START + LV_SEQ_RESERVE_M;
         } else {
-            next_commit_seq = LV_COMMIT_SEQ_START;
             next_seq = LV_SEQ_START;
         }
+        next_commit_seq = LV_COMMIT_SEQ_START;
+        durable_seq = next_seq;
 
     } else {
+        if (commit->clean_close & LV_COMMIT_CLEAN_CLOSE) {
+            next_seq = commit->next_seq;
+        } else {
+            next_seq = commit->durable_seq;
+        }
         next_commit_seq = commit->commit_seq + 1;
-        next_seq = commit->reserved_seq + 1;
+        durable_seq = commit->durable_seq;
     }
 
     if (is_empty_db) {
@@ -305,6 +312,7 @@ void lv_init_db_seq_and_file_stat(Livero *db, const LVCommit *commit, const int 
 
     db->next_commit_seq = next_commit_seq;
     db->next_seq = next_seq;
+    db->durable_seq = durable_seq;
 }
 
 LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_commit_torn_out) {
@@ -383,15 +391,9 @@ LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_co
     }
 
     /*
-        Only torn-write that happened in the last write is the expected crash.
-        If the corrupted commit is more than 1 or
-        a corrupted commit is not the exact next one of the latest valid one,
-        it means there was an unpredicted crash on the successfully written commit
-        which is not recoverable.
+        Both commits are crashed. This is not recoverable.
     */
     if (corrupted_count > 1) {
-        return LV_ERR_MEDIA_CRASHED;
-    } else if (corrupted_count == 1 && corrupted_idx != (best_idx + 1) % LV_COMMIT_SLOT_M) {
         return LV_ERR_MEDIA_CRASHED;
     }
 
@@ -448,11 +450,12 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
     }
 
     const LVSeq_t current_seq = db->next_seq;
+    const LVSeq_t next_seq = current_seq + 1;
     const uint64_t epoch_date = lv_convert_date_to_epoch(date);
     const LVOffset_t value_disk_offset = db->value_file_bytes;
     const LVOffset_t value_pending_offset = db->value_pending_bytes;
     /*
-        value_offset is an absolute disk offset, so 
+        value_offset is an absolute disk offset, so
         it must aussume that there are prior pending values waiting to be flushed.
     */
     const LVOffset_t value_offset = value_disk_offset + value_pending_offset;
@@ -472,6 +475,10 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
                  .value_len = value_len,
                  .tombstone_flag = 0,
                  .checksum = row_checksum};
+
+    if(next_seq == db->durable_seq){
+
+    }
 
     const int pending_result = lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
 
@@ -530,8 +537,8 @@ LVStatus lv_flush(Livero *db) {
 
     /*
         Pending values are placed in each cell whose width is max_value_len.
-        We can not flush them directly, because there are gaps between cells which makes value_offset of a row incorrect.
-        We must pack them before we flush.
+        We can not flush them directly, because there are gaps between cells which makes value_offset of a row
+       incorrect. We must pack them before we flush.
     */
     LVSize32_t packed = 0;
     for (LVCount_t i = 0; i < db->pending_count; ++i) {
@@ -582,8 +589,8 @@ LVStatus lv_flush(Livero *db) {
 
     const LVCommit cmt = {
         .commit_seq = db->next_commit_seq,
-        .first_seq = row_get_seq(lv_first_pending_row(db)),
-        .reserved_seq = row_get_seq(lv_last_pending_row(db)),
+        .next_seq = row_get_seq(lv_first_pending_row(db)),
+        .durable_seq = row_get_seq(lv_last_pending_row(db)),
         .total_count = lv_total_record_count(db),
         .batch_count = db->pending_count,
         .total_value_bytes = db->value_file_bytes + db->value_pending_bytes,  // fix db->row_bytes to db->val_bytes
@@ -689,8 +696,8 @@ LVStatus lv_fill_get_result(LVFillGetResultCtx *ctx, LVGetResult *result) {
 
     /*
         Users can pass a buffer if they want to get value, or not.
-        
-        lv_fill_get_result is called in several search contexts, 
+
+        lv_fill_get_result is called in several search contexts,
         values may be sourced from memory or disk.
 
         Caller must choose value source before call this function.
@@ -936,7 +943,8 @@ LVStatus lv_window_search(LVWindowSearchCtx *ctx, LVGetResult *result, LVOffset_
 
     /*
         Window may fetch more than one record,
-        which means the target is not in the first expected position, but window may include the target as it fetches many rows.
+        which means the target is not in the first expected position, but window may include the target as it fetches
+       many rows.
 
         Lookup expected position first, fallback to searching whole buffer.
     */
@@ -1140,10 +1148,11 @@ LVStatus lv_update_query_heap_from_disk(Livero *db, LVQueryHeap *heap, const LVT
 
             if (!use_postfilter) {
                 /*
-                    As LVQueryHeap's threshold (which determins if a new candidate should be inserted or not) is getting higher, 
-                    it will rarely read rows later.
-                    
-                    Read the first 30% as a batch from disk and cahche them to window memory, and after that, read one by one.
+                    As LVQueryHeap's threshold (which determins if a new candidate should be inserted or not) is getting
+                   higher, it will rarely read rows later.
+
+                    Read the first 30% as a batch from disk and cahche them to window memory, and after that, read one
+                   by one.
                 */
                 if (j >= cache_hi) {
                     const LVCount_t fetch_count = (heap->size * 10 <= heap->capacity * 3) ? n - j : 1;

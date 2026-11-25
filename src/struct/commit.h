@@ -8,30 +8,32 @@
 
 typedef struct LVCommit {
     LVSeq_t commit_seq;
-    LVSeq_t first_seq;
-    LVSeq_t reserved_seq;
+    LVSeq_t next_seq;
+    LVSeq_t durable_seq;
     LVCount_t total_count;
     LVSize32_t total_value_bytes;
-    uint16_t batch_count;
-    uint16_t batch_value_bytes;
+    LVCount_t batch_count;
+    LVSize32_t batch_value_bytes;
+    uint8_t clean_close;
 } LVCommit;
 
 typedef struct LVCommitDisk {
     uint8_t commit_seq[8];
-    uint8_t first_seq[8];
-    uint8_t reserved_seq[8];
+    uint8_t next_seq[8];
+    uint8_t durable_seq[8];
     uint8_t total_count[4];
     uint8_t total_value_bytes[4];
-    uint8_t batch_count[2];
-    uint8_t batch_value_bytes[2];
+    uint8_t batch_count[4];
+    uint8_t batch_value_bytes[4];
+    uint8_t clean_close;
     uint8_t commit_checksum[4];
 } __attribute__((packed)) LVCommitDisk;
 
-#define LV_COMMIT_DISK_BYTES 40
+#define LV_COMMIT_DISK_BYTES 45
 
 static_assert(sizeof(LVCommitDisk) == LV_COMMIT_DISK_BYTES, "LVCommitDisk size must be 40 bytes.");
 
-#define LV_COMMIT_SLOT_M 4
+#define LV_COMMIT_SLOT_M 2
 #define LV_COMMIT_SEQ_ZERO (LVSeq_t)0
 
 #ifndef LV_COMMIT_SECTOR_BYTES
@@ -39,6 +41,7 @@ static_assert(sizeof(LVCommitDisk) == LV_COMMIT_DISK_BYTES, "LVCommitDisk size m
 #endif
 
 #define LV_COMMIT_SEQ_START 1
+#define LV_COMMIT_CLEAN_CLOSE 0xff
 
 // Commit sequence numbers start at 1, so subtract 1 to map them to slot 0.
 // Zero is reserved for empty slots and must never reach this function.
@@ -79,5 +82,6 @@ int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const L
                   const LVSize32_t max_disk_bytes);
 
 LVStatus commit_write(LVFILEDef* commit_file, uint8_t* commit_sector, lv_file_write write, const LVCommit* commit);
+
 
 #endif
