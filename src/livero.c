@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -88,9 +89,8 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
         goto cleanup;
     }
 
-    LVCommit empty_commit = {0};
-    empty_commit.commit_seq = LV_COMMIT_SEQ_ZERO;
-    lv_init_db_seq_and_file_stat(*db_out, &empty_commit, 0);
+    lv_init_seq(*db_out, NULL, LV_RECOVER_NEW);
+    lv_init_file_stat(*db_out, 0, 0);
 
     return LV_OK;
 
@@ -150,24 +150,10 @@ LVStatus lv_open(const char *db_path, const LVOption *option, Livero **db_out) {
         goto cleanup;
     }
 
-    LVCommit commit;
-    LVRecoverCtx recover_ctx = {
-        .row_file = (*db_out)->row_file,
-        .ter_file = (*db_out)->ter_file,
-        .val_file = (*db_out)->val_file,
-        .commit_file = (*db_out)->commit_file,
-        .read = option->io_ops->read,
-        .file_def_size = option->file_def_size,
-        .max_disk_bytes = config.max_disk_bytes,
-        .vector_dimension = config.vector_dimension,
-    };
-    int first_commit_torn = 0;
-    if ((s = lv_recover(&recover_ctx, &commit, &first_commit_torn)) != LV_OK) {
+    if ((s = lv_recover(*db_out)) != LV_OK) {
         LIVERO_ERROR("Failed to recover the db.");
         goto cleanup;
     }
-
-    lv_init_db_seq_and_file_stat(*db_out, &commit, first_commit_torn);
 
     return LV_OK;
 
@@ -273,154 +259,219 @@ void lv_init_memory(uint8_t *m_arena, Livero **db_out, const LVConfig *config, c
     *db_out = (Livero *)m_arena;
 }
 
-void lv_init_db_seq_and_file_stat(Livero *db, const LVCommit *commit, const int is_first_torn) {
-    assert(db && commit);
+LVStatus lv_recover(Livero *db) {
+    assert(db);
 
-    const int is_empty_db = commit->commit_seq == LV_COMMIT_SEQ_ZERO;
+    const LVSize32_t ternary_bytes = ternary_chunks_bytes(db->config.vector_dimension);
+    const LVSize32_t max_disk_bytes = db->config.max_disk_bytes;
+    LVCommit commit = {0};
+    LVCommit best = {0};
+    int best_idx = -1;
+    LVCount_t non_empty = 0;
+    LVCount_t corrupted = 0;
+    int last_corrupted_idx = -1;
+
+    for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
+        LVCommitStatus commit_status = commit_d2m(db->commit_file, db->option.io_ops->read, i, &commit);
+
+        fprintf(stderr, "%dth Commit Seq and Status: %llu, %d \n", i + 1, commit.commit_seq, commit_status.commit);
+
+        if (commit_status.db == LV_OK) {
+            if (commit_status.commit == LV_COMMIT_OK) {
+                if (!commit_sanity(&commit, i, ternary_bytes, max_disk_bytes)) {
+                    corrupted++;
+                    last_corrupted_idx = i;
+                } else {
+                    if (best_idx < 0) {
+                        best = commit;
+                        best_idx = i;
+                        fprintf(stderr, "Update Best 1: %llu \n", best.commit_seq);
+                    } else if (commit.commit_seq == best.commit_seq) {
+                        /* Two valid slots with the same commit_seq can't
+                        happen under expected ping-pong writes.*/
+                        return LV_ERR_MEDIA_CRASHED;
+                    } else if (commit.commit_seq > best.commit_seq) {
+                        best = commit;
+                        best_idx = i;
+                        fprintf(stderr, "Update Best 2: %llu \n", best.commit_seq);
+                    }
+                }
+            } else if (commit_status.commit == LV_COMMIT_CORRUPT) {
+                corrupted++;
+                last_corrupted_idx = i;
+            } else {
+                // LV_COMMIT_EMPTY
+                continue;
+            }
+            non_empty++;
+        } else {
+            return commit_status.db;
+        }
+    }
+
+    LVRecoverStatus recover_status;
+
+    fprintf(stderr, "Last corrupted idx: %d \n", last_corrupted_idx);
+    fprintf(stderr, "Corrupted: %d \n", corrupted);
+
+    /*
+        Two slots are all corrupted. DB can not be recovered.
+    */
+    if (corrupted > 1) {
+        return LV_ERR_MEDIA_CRASHED;
+    }
+
+    /*
+        Either a first slot or a second slot is corrupted.
+    */
+    else if (corrupted == 1) {
+        if (best_idx >= 0) {
+            if (best.flag & LV_COMMIT_CLEAN_CLOSE) {
+                recover_status = LV_RECOVER_CLEAN;
+            } else {
+                recover_status = LV_RECOVER_DURABLE;
+            }
+        } else {
+            /*
+                If a number of corrupted commit is 1,
+                but there is no best commit.
+                It means that the other commit is empty and there are two possible situations.
+
+                1. If the first slot is corrupted, it's ok.
+                    It means there was a crash while writing the first commit.
+                2. If the second slot is corrupted, it's not ok.
+                    It can not be happend in a proper situation because the very first commit must have been written on
+               the first slot. It means there was a crash, or somehow the first slot is set to empty. Return
+               LV_ERR_MEDIA_CRASHED
+            */
+
+            if (last_corrupted_idx == 0) {
+                recover_status = LV_RECOVER_NEW;
+            } else {
+                return LV_ERR_MEDIA_CRASHED;
+            }
+        }
+    } else {
+        if (non_empty == 0) {
+            recover_status = LV_RECOVER_NEW;
+        } else {
+            /*
+                Finally,
+                there must be the valid commit at least ONE.
+            */
+            assert(best_idx >= 0);
+            if (best.flag & LV_COMMIT_CLEAN_CLOSE) {
+                recover_status = LV_RECOVER_CLEAN;
+            } else {
+                recover_status = LV_RECOVER_DURABLE;
+            }
+        }
+    }
+
+    if (recover_status == LV_RECOVER_NEW) {
+        best = (LVCommit){0};
+    } else {
+        /*
+            Finally check batched data that the best commit saved.
+            possible errors are LV_ERR_DATA_CORRUPT or LV_ERR_IO.
+         */
+
+        LVRowCCFDCtx rccfd = {.row_file = db->row_file,
+                              .ter_file = db->ter_file,
+                              .val_file = db->val_file,
+                              .read = db->option.io_ops->read,
+                              .row_offset = 0,
+                              .ternary_offset = 0,
+                              .ternary_bytes = ternary_bytes};
+
+        for (uint64_t k = (uint64_t)best.total_count - best.batch_count; k < (uint64_t)best.total_count; ++k) {
+            rccfd.row_offset = k * LV_ROW_BYTES;
+            rccfd.ternary_offset = k * ternary_bytes;
+
+            LVStatus s = row_checksum_check_from_disk(&rccfd);
+            if (s != LV_OK) {
+                return s;
+            }
+        }
+    }
+
+    fprintf(stderr, "Recover Status: %d \n", recover_status);
+
+    fprintf(stderr, "Best Commit Seq: %llu \n", best.commit_seq);
+    fprintf(stderr, "Best Committed Next Seq: %llu \n", best.committed_next_seq);
+    fprintf(stderr, "Best Durable Seq: %llu \n", best.durable_seq);
+    fprintf(stderr, "Best Batch Count: %u \n", best.batch_count);
+    fprintf(stderr, "Best Batch Value Bytes: %u \n", best.batch_value_bytes);
+    fprintf(stderr, "Best Total Count: %u \n", best.total_count);
+    fprintf(stderr, "Best Total Value Bytes: %u \n", best.total_value_bytes);
+    fprintf(stderr, "Best Flag: %d \n", best.flag);
+
+    lv_init_seq(db, &best, recover_status);
+    lv_init_file_stat(db, best.total_count, best.total_value_bytes);
+
+    return LV_OK;
+}
+
+void lv_init_seq(Livero *db, const LVCommit *commit, const LVRecoverStatus recover_status) {
+    assert(db);
     LVSeq_t next_commit_seq;
     LVSeq_t next_seq;
     LVSeq_t durable_seq;
 
-    if (is_empty_db) {
-        if (is_first_torn) {
-            next_seq = LV_SEQ_START + LV_SEQ_RESERVE_M;
-        } else {
-            next_seq = LV_SEQ_START;
+    switch (recover_status) {
+        case LV_RECOVER_CLEAN: {
+            assert(commit);
+            next_seq = commit->committed_next_seq;
+            next_commit_seq = commit->commit_seq + 1;
+            break;
         }
-        next_commit_seq = LV_COMMIT_SEQ_START;
-        durable_seq = next_seq;
 
-    } else {
-        if (commit->clean_close & LV_COMMIT_CLEAN_CLOSE) {
-            next_seq = commit->next_seq;
-        } else {
+        case LV_RECOVER_DURABLE: {
+            assert(commit);
             next_seq = commit->durable_seq;
+            next_commit_seq = commit->commit_seq + 1;
+            break;
         }
-        next_commit_seq = commit->commit_seq + 1;
-        durable_seq = commit->durable_seq;
+
+        case LV_RECOVER_NEW: {
+            /*
+                lv_create passes NULL commit and set recover_status to LV_RECOVER_NEW.
+
+                It's okay to start seq at LV_SEQ_START for an empty db,
+                because no seq is not returned before it is reserved.
+            */
+            next_seq = LV_SEQ_START;
+            next_commit_seq = LV_COMMIT_SEQ_START;
+            break;
+        }
     }
 
-    if (is_empty_db) {
-        db->row_file_bytes = 0;
-        db->ternary_file_bytes = 0;
-        db->value_file_bytes = 0;
-    } else {
-        db->row_file_bytes = commit->total_count * LV_ROW_BYTES;
-        db->ternary_file_bytes = commit->total_count * ternary_chunks_bytes(db->config.vector_dimension);
-        db->value_file_bytes = commit->total_value_bytes;
-    }
+    /*
+        The Durable seq must be greater than every seq which has been returned.
 
-    db->next_commit_seq = next_commit_seq;
+        So the update condition is if(next_seq == durable_seq) -> durable_seq = next_seq + R.
+
+        As durable_seq is set to next_seq in the clean close,
+        and other scenarios set the next_seq to the durable_seq OR initial values.
+
+        The durable seq must be updated
+        at the very first put of a single cycle (open/create -> close) OR
+        when the above update condition is satisfied.
+
+        Set the durable_seq to next_seq to trigger the update.
+    */
+    durable_seq = next_seq;
+
     db->next_seq = next_seq;
+    db->next_commit_seq = next_commit_seq;
     db->durable_seq = durable_seq;
 }
 
-LVStatus lv_recover(const LVRecoverCtx *ctx, LVCommit *commit_out, int *first_commit_torn_out) {
-    assert(ctx && commit_out);
-
-    const LVSize32_t ternary_bytes = ternary_chunks_bytes(ctx->vector_dimension);
-
-    LVCommit cmt = {0};
-    LVCount_t nonempty_count = 0;
-    LVCommit best = {0};
-    int best_idx = -1;
-    LVCount_t corrupted_count = 0;
-    int corrupted_idx = -1;
-
-    for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
-        LVCommitStatus cmt_status = commit_d2m(ctx->commit_file, ctx->read, i * LV_COMMIT_SECTOR_BYTES, &cmt);
-
-        if (cmt_status.db == LV_OK) {
-            if (cmt_status.commit == LV_COMMIT_EMPTY) {
-                /*
-                    This is a zero initialized commit. Neither an error and a corruption
-                */
-                continue;
-            } else if (cmt_status.commit == LV_COMMIT_CORRUPT) {
-                /*
-                    This is a corrupted commit.
-                */
-
-                corrupted_count++;
-                corrupted_idx = i;
-            } else if (cmt_status.commit == LV_COMMIT_OK) {
-                if (!commit_sanity(&cmt, i, ternary_bytes, ctx->max_disk_bytes)) {
-                    /*
-                        This commit's checksum is correct. But it saved invalid values.
-                    */
-                    corrupted_count++;
-                    corrupted_idx = i;
-                } else {
-                    /*
-                        The latest valid commit wins
-                    */
-                    if (cmt.commit_seq > best.commit_seq) {
-                        best = cmt;
-                        best_idx = i;
-                    }
-                }
-            }
-            nonempty_count++;
-        } else {
-            return cmt_status.db;
-        }
-    }
-
-    if (nonempty_count == 0) {
-        /*
-            This is a new db.
-        */
-        *commit_out = (LVCommit){0};
-        return LV_OK;
-    }
-
-    /* No slot passed validation. The only crash-consistent way to reach this
-     * state is a torn first commit: commit_seq 1 always lands in slot 0, so a
-     * power loss during the very first flush leaves slot 0 corrupt and every
-     * other slot empty. Treat that as a fresh database. Any other layout means
-     * committed history was damaged, so refuse to open. */
-    if (best_idx < 0) {
-        if (corrupted_count == 1 && corrupted_idx == 0) {
-            // The first batch was never acknowledged, so start from an empty commit.
-            // Its seqs may already have been returned by put, so the caller must skip them.
-            memset(commit_out, 0, sizeof(*commit_out));
-            *first_commit_torn_out = 1;
-            return LV_OK;
-        }
-        return LV_ERR_MEDIA_CRASHED;
-    }
-
-    /*
-        Both commits are crashed. This is not recoverable.
-    */
-    if (corrupted_count > 1) {
-        return LV_ERR_MEDIA_CRASHED;
-    }
-
-    /*
-        Finally check batched data that the best commit saved.
-        possible errors are LV_ERR_DATA_CORRUPT or LV_ERR_IO.
-    */
-    LVRowCCFDCtx rccfd = {.row_file = ctx->row_file,
-                          .ter_file = ctx->ter_file,
-                          .val_file = ctx->val_file,
-                          .read = ctx->read,
-                          .row_offset = 0,
-                          .ternary_offset = 0,
-                          .ternary_bytes = ternary_bytes};
-
-    for (uint64_t k = (uint64_t)best.total_count - best.batch_count; k < (uint64_t)best.total_count; ++k) {
-        rccfd.row_offset = k * LV_ROW_BYTES;
-        rccfd.ternary_offset = k * ternary_bytes;
-
-        LVStatus s = row_checksum_check_from_disk(&rccfd);
-        if (s != LV_OK) {
-            return s;
-        }
-    }
-
-    *commit_out = best;
-    return LV_OK;
+void lv_init_file_stat(Livero *db, const LVCount_t total_count, const LVSize32_t total_value_bytes) {
+    assert(db);
+    db->row_file_bytes = total_count * LV_ROW_BYTES;
+    db->ternary_file_bytes = total_count * ternary_chunks_bytes(db->config.vector_dimension);
+    db->value_file_bytes = total_value_bytes;
 }
 
 /************************************************************************************************/
@@ -449,8 +500,15 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
         return LV_ERR_DISK_FULL;
     }
 
+    if (db->next_seq == db->durable_seq) {
+        LVStatus reserved = commit_write(db, LV_COMMIT_RESERVE);
+        if (reserved != LV_OK) {
+            LIVERO_ERROR("Failed to reserve seqs.");
+            return reserved;
+        }
+    }
+
     const LVSeq_t current_seq = db->next_seq;
-    const LVSeq_t next_seq = current_seq + 1;
     const uint64_t epoch_date = lv_convert_date_to_epoch(date);
     const LVOffset_t value_disk_offset = db->value_file_bytes;
     const LVOffset_t value_pending_offset = db->value_pending_bytes;
@@ -476,14 +534,10 @@ LVStatus lv_put(Livero *db, void *vector, void *value, const LVSize16_t value_le
                  .tombstone_flag = 0,
                  .checksum = row_checksum};
 
-    if(next_seq == db->durable_seq){
-
-    }
-
     const int pending_result = lv_pending_append(db, &row, db->ternary_scratch, value, value_len);
 
     if (pending_result < 0 || db->option.sync_mode == LV_SYNC_EVERY_PUT) {
-        LVStatus s = lv_flush(db);
+        LVStatus s = lv_flush(db, LV_COMMIT_FLUSH);
         if (s != LV_OK) {
             LIVERO_ERROR("Failed to flush data.");
             return s;
@@ -527,7 +581,7 @@ int lv_pending_append(Livero *db, const LVRow *row, const LVTernaryChunk *ternar
     return 0;
 }
 
-LVStatus lv_flush(Livero *db) {
+LVStatus lv_flush(Livero *db, const int flag) {
     assert(db);
 
     const LVOffset_t row_offset_to_write = db->row_file_bytes;
@@ -587,24 +641,8 @@ LVStatus lv_flush(Livero *db) {
         }
     }
 
-    const LVCommit cmt = {
-        .commit_seq = db->next_commit_seq,
-        .next_seq = row_get_seq(lv_first_pending_row(db)),
-        .durable_seq = row_get_seq(lv_last_pending_row(db)),
-        .total_count = lv_total_record_count(db),
-        .batch_count = db->pending_count,
-        .total_value_bytes = db->value_file_bytes + db->value_pending_bytes,  // fix db->row_bytes to db->val_bytes
-        .batch_value_bytes = db->value_pending_bytes};
-
-    if ((s = commit_write(db->commit_file, db->commit_sector, db->option.io_ops->write, &cmt)) != LV_OK) {
+    if ((s = commit_write(db, flag)) != LV_OK) {
         return s;
-    }
-
-    if (sync) {
-        if ((s = db->option.io_ops->sync(db->commit_file)) != LV_OK) {
-            LIVERO_ERROR("Failed to sync commit.lv.");
-            return s;
-        }
     }
 
     db->row_file_bytes += row_bytes_to_flush;
@@ -1184,14 +1222,15 @@ void lv_close(Livero *db) {
         return;
     }
 
-    if (db->pending_count > 0) {
-        LVStatus s = lv_flush(db);
+    fprintf(stderr, "Pending Count at lv_close: %u \n", db->pending_count);
+    // if (db->pending_count > 0) {
+        LVStatus s = lv_flush(db, LV_COMMIT_CLEAN_CLOSE);
         if (s != LV_OK) {
             LIVERO_ERROR("Failed to flush data.");
         }
-    }
+    // }
 
-    LVStatus s = db->option.io_ops->close(db->row_file);
+    s = db->option.io_ops->close(db->row_file);
     if (s != LV_OK) {
         LIVERO_ERROR("Failed to close row.lv.");
     }
