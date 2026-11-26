@@ -202,24 +202,18 @@ LVStatus lv_allocate_memory(const LVSize32_t size, void** ptr_out);
 
 void lv_init_memory(uint8_t* m_arena, Livero** db_out, const LVConfig* config, const LVOption* option);
 
-void lv_init_db_seq_and_file_stat(Livero* db, const LVCommit* commit, const int is_first_torn);
+typedef enum {
+    LV_RECOVER_CLEAN = -1, //The latest commit is non-corrupted and clean closed.
+    LV_RECOVER_DURABLE = 0, //The latest commit is non-currupted, but not clean closed.
+    LV_RECOVER_NEW = 1,
+} LVRecoverStatus;
 
-typedef struct LVRecoverCtx {
-    LVFILEDef* row_file;
-    LVFILEDef* ter_file;
-    LVFILEDef* val_file;
-    LVFILEDef* commit_file;
-    lv_file_read read;
-    LVSize32_t max_disk_bytes;
-    LVDim_t vector_dimension;
-    LVSize16_t file_def_size;
-} LVRecoverCtx;
-/*
-    Full scan commit.lv and find the last valid commit
-*/
-LVStatus lv_recover(const LVRecoverCtx* ctx, LVCommit* commit_out, int* first_commit_torn_out);
+LVStatus lv_recover(Livero* db);
 
-LVStatus lv_flush(Livero* db);
+void lv_init_seq(Livero* db,const LVCommit* commit, const LVRecoverStatus recover_status);
+void lv_init_file_stat(Livero* db, const LVCount_t total_count, const LVSize32_t total_value_bytes);
+
+LVStatus lv_flush(Livero* db, const int flag);
 
 typedef struct {
     uint8_t* row_window;
