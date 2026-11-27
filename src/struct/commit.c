@@ -166,15 +166,6 @@ LVStatus commit_write(Livero* db, const int flag) {
         assert(0 && "You must set the flag.");
     }
 
-    fprintf(stderr, "Commit Seq: %llu \n", commit_seq);
-    fprintf(stderr, "Committed Next Seq: %llu \n", committed_next_seq);
-    fprintf(stderr, "Durable Seq: %llu \n", durable_seq);
-    fprintf(stderr, "Batch Count: %u \n", batch_count);
-    fprintf(stderr, "Batch Value Bytes: %u \n", batch_value_bytes);
-    fprintf(stderr, "Total Count: %u \n", total_count);
-    fprintf(stderr, "Total Value Bytes: %u \n", total_value_bytes);
-    fprintf(stderr, "Flag: %d \n", flag);
-
     LVCommit commit = {
         .commit_seq = commit_seq,
         .committed_next_seq = committed_next_seq,

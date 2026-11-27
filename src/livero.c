@@ -274,8 +274,6 @@ LVStatus lv_recover(Livero *db) {
     for (int i = 0; i < LV_COMMIT_SLOT_M; ++i) {
         LVCommitStatus commit_status = commit_d2m(db->commit_file, db->option.io_ops->read, i, &commit);
 
-        fprintf(stderr, "%dth Commit Seq and Status: %llu, %d \n", i + 1, commit.commit_seq, commit_status.commit);
-
         if (commit_status.db == LV_OK) {
             if (commit_status.commit == LV_COMMIT_OK) {
                 if (!commit_sanity(&commit, i, ternary_bytes, max_disk_bytes)) {
@@ -285,7 +283,6 @@ LVStatus lv_recover(Livero *db) {
                     if (best_idx < 0) {
                         best = commit;
                         best_idx = i;
-                        fprintf(stderr, "Update Best 1: %llu \n", best.commit_seq);
                     } else if (commit.commit_seq == best.commit_seq) {
                         /* Two valid slots with the same commit_seq can't
                         happen under expected ping-pong writes.*/
@@ -293,7 +290,6 @@ LVStatus lv_recover(Livero *db) {
                     } else if (commit.commit_seq > best.commit_seq) {
                         best = commit;
                         best_idx = i;
-                        fprintf(stderr, "Update Best 2: %llu \n", best.commit_seq);
                     }
                 }
             } else if (commit_status.commit == LV_COMMIT_CORRUPT) {
@@ -310,9 +306,6 @@ LVStatus lv_recover(Livero *db) {
     }
 
     LVRecoverStatus recover_status;
-
-    fprintf(stderr, "Last corrupted idx: %d \n", last_corrupted_idx);
-    fprintf(stderr, "Corrupted: %d \n", corrupted);
 
     /*
         Two slots are all corrupted. DB can not be recovered.
@@ -394,17 +387,6 @@ LVStatus lv_recover(Livero *db) {
             }
         }
     }
-
-    fprintf(stderr, "Recover Status: %d \n", recover_status);
-
-    fprintf(stderr, "Best Commit Seq: %llu \n", best.commit_seq);
-    fprintf(stderr, "Best Committed Next Seq: %llu \n", best.committed_next_seq);
-    fprintf(stderr, "Best Durable Seq: %llu \n", best.durable_seq);
-    fprintf(stderr, "Best Batch Count: %u \n", best.batch_count);
-    fprintf(stderr, "Best Batch Value Bytes: %u \n", best.batch_value_bytes);
-    fprintf(stderr, "Best Total Count: %u \n", best.total_count);
-    fprintf(stderr, "Best Total Value Bytes: %u \n", best.total_value_bytes);
-    fprintf(stderr, "Best Flag: %d \n", best.flag);
 
     lv_init_seq(db, &best, recover_status);
     lv_init_file_stat(db, best.total_count, best.total_value_bytes);
@@ -1222,13 +1204,10 @@ void lv_close(Livero *db) {
         return;
     }
 
-    fprintf(stderr, "Pending Count at lv_close: %u \n", db->pending_count);
-    // if (db->pending_count > 0) {
-        LVStatus s = lv_flush(db, LV_COMMIT_CLEAN_CLOSE);
-        if (s != LV_OK) {
-            LIVERO_ERROR("Failed to flush data.");
-        }
-    // }
+    LVStatus s = lv_flush(db, LV_COMMIT_CLEAN_CLOSE);
+    if (s != LV_OK) {
+        LIVERO_ERROR("Failed to flush data.");
+    }
 
     s = db->option.io_ops->close(db->row_file);
     if (s != LV_OK) {
