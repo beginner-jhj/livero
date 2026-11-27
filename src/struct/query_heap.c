@@ -104,7 +104,7 @@ void lv_query_heap_update(LVQueryHeap* heap, const int use_postfilter, const LVT
         const int filter_passed = query_heap_row_filter(heap, row);
 
         if (filter_passed) {
-            LVQueryHeapEntry entry = {.q_result = row_make_query_result(row),
+            LVQueryHeapEntry entry = {.q_result = lv_row_make_query_result(row),
                                       .is_on_pending = is_on_pending,
                                       .idx = idx,
                                       .score = score,

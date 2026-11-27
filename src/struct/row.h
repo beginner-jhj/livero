@@ -29,38 +29,38 @@ typedef struct LVRow {
 #define LV_ROW_TOMBSTONEFLAG_OFFSET 22
 #define LV_ROW_CEHCKSUM_OFFSET 23
 
-static inline LVSeq_t row_get_seq(const uint8_t* row) {
+static inline LVSeq_t lv_row_get_seq(const uint8_t* row) {
     assert(row);
     return lv_get_fixed_64(row);
 }
-static inline uint64_t row_get_epoch_date(const uint8_t* row) {
+static inline uint64_t lv_row_get_epoch_date(const uint8_t* row) {
     assert(row);
     return lv_get_fixed_64(row + LV_ROW_EPOCH_DATE_OFFSET);
 }
-static inline LVOffset_t row_get_value_offset(const uint8_t* row) {
+static inline LVOffset_t lv_row_get_value_offset(const uint8_t* row) {
     assert(row);
     return lv_get_fixed_32(row + LV_ROW_VALOFFSET_OFFSET);
 }
-static inline LVSize16_t row_get_value_len(const uint8_t* row) {
+static inline LVSize16_t lv_row_get_value_len(const uint8_t* row) {
     assert(row);
     return lv_get_fixed_16(row + LV_ROW_VALLEN_OFFSET);
 }
-static inline uint8_t row_get_tombstone_flag(const uint8_t* row) {
+static inline uint8_t lv_row_get_tombstone_flag(const uint8_t* row) {
     assert(row);
     return *(row + LV_ROW_TOMBSTONEFLAG_OFFSET);
 }
 
-static inline int row_is_alive(const uint8_t* row) {
+static inline int lv_row_is_alive(const uint8_t* row) {
     assert(row);
-    return row_get_tombstone_flag(row) == 0;
+    return lv_row_get_tombstone_flag(row) == 0;
 }
 
-static inline uint32_t row_get_checksum(const uint8_t* row) {
+static inline uint32_t lv_row_get_checksum(const uint8_t* row) {
     assert(row);
     return lv_get_fixed_32(row + LV_ROW_CEHCKSUM_OFFSET);
 }
 
-void row_write_on_memory(uint8_t* buf, const LVRow* data);
+void lv_row_write_on_memory(uint8_t* buf, const LVRow* data);
 
 typedef struct LVRowCalcChecksumCtx {
     LVSeq_t seq;
@@ -72,7 +72,7 @@ typedef struct LVRowCalcChecksumCtx {
     LVDim_t vector_dimension;
 } LVRowCalcChecksumCtx;
 
-uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx);
+uint32_t lv_row_calc_checksum(const LVRowCalcChecksumCtx* ctx);
 
 typedef struct LVRowCCFDCtx {
     LVFILEDef* row_file;
@@ -84,8 +84,8 @@ typedef struct LVRowCCFDCtx {
     LVSize32_t ternary_bytes;
 } LVRowCCFDCtx;
 
-LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx);
+LVStatus lv_row_checksum_check_from_disk(LVRowCCFDCtx* ctx);
 
-LVQueryResult row_make_query_result(const uint8_t* row);
+LVQueryResult lv_row_make_query_result(const uint8_t* row);
 
 #endif

@@ -467,7 +467,7 @@ static int damage_commit_slot(const int slot, const LVSlotDamage how) {
     }
 
     uint8_t buf[LV_COMMIT_DISK_BYTES];
-    const LVOffset_t offset = commit_slot_offset(slot);
+    const LVOffset_t offset = lv_commit_slot_offset(slot);
     int result = -1;
 
     if (how == SLOT_MAKE_EMPTY) {

@@ -44,7 +44,7 @@ void lv_query_heap_update(LVQueryHeap* heap,const int use_postfilter, const LVTe
 
 static inline int query_heap_row_filter(const LVQueryHeap* heap, const uint8_t* row){
     assert(heap && row);
-    return (row_is_alive(row)) && (heap->min_epoch_date <= row_get_epoch_date(row) && row_get_epoch_date(row) <= heap->max_epoch_date);
+    return (lv_row_is_alive(row)) && (heap->min_epoch_date <= lv_row_get_epoch_date(row) && lv_row_get_epoch_date(row) <= heap->max_epoch_date);
 }
 
 #endif

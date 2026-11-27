@@ -233,7 +233,7 @@ static void make_test_answer(const LVMakeTestAnswerCtx* ctx, LVTestAnswer* answe
     answer_out->row.value_len = v_len;
     answer_out->row.value_offset = v_offset;
     answer_out->row.tombstone_flag = ctx->alive ? 0 : LV_TOMBSTONE_FLAG;
-    answer_out->row.checksum = row_calc_checksum(&checksum_ctx);
+    answer_out->row.checksum = lv_row_calc_checksum(&checksum_ctx);
     memcpy(answer_out->value, value, v_len);
     memcpy(answer_out->ternary_chunks, ternary_chunks, ternary_chunks_bytes(TEST_VECTOR_DIMENSION));
 }
@@ -250,34 +250,34 @@ static int compare_answer(const LVTestAnswer* answer, const uint8_t* row, const 
         return -1;
     }
 
-    if (answer->row.seq != row_get_seq(row)) {
-        PRINT_ERR_INVALID("seq is incorrect", "%" PRIu64, answer->row.seq, row_get_seq(row));
+    if (answer->row.seq != lv_row_get_seq(row)) {
+        PRINT_ERR_INVALID("seq is incorrect", "%" PRIu64, answer->row.seq, lv_row_get_seq(row));
         return -1;
     }
 
-    if (answer->row.epoch_date != row_get_epoch_date(row)) {
-        PRINT_ERR_INVALID("epoch_date is incorrect", "%" PRIu64, answer->row.epoch_date, row_get_epoch_date(row));
+    if (answer->row.epoch_date != lv_row_get_epoch_date(row)) {
+        PRINT_ERR_INVALID("epoch_date is incorrect", "%" PRIu64, answer->row.epoch_date, lv_row_get_epoch_date(row));
         return -1;
     }
 
-    if (answer->row.value_offset != row_get_value_offset(row)) {
-        PRINT_ERR_INVALID("value_offset is incorrect", "%" PRIu32, answer->row.value_offset, row_get_value_offset(row));
+    if (answer->row.value_offset != lv_row_get_value_offset(row)) {
+        PRINT_ERR_INVALID("value_offset is incorrect", "%" PRIu32, answer->row.value_offset, lv_row_get_value_offset(row));
         return -1;
     }
 
-    if (answer->row.value_len != row_get_value_len(row)) {
-        PRINT_ERR_INVALID("value_len is incorrect", "%" PRIu16, answer->row.value_len, row_get_value_len(row));
+    if (answer->row.value_len != lv_row_get_value_len(row)) {
+        PRINT_ERR_INVALID("value_len is incorrect", "%" PRIu16, answer->row.value_len, lv_row_get_value_len(row));
         return -1;
     }
 
-    if (answer->row.tombstone_flag != row_get_tombstone_flag(row)) {
+    if (answer->row.tombstone_flag != lvrow_get_tombstone_flag(row)) {
         PRINT_ERR_INVALID("tombstone_flag is incorrect", "%" PRIu8, answer->row.tombstone_flag,
-                          row_get_tombstone_flag(row));
+                          lvrow_get_tombstone_flag(row));
         return -1;
     }
 
-    if (answer->row.checksum != row_get_checksum(row)) {
-        PRINT_ERR_INVALID("checksum is incorrect", "%" PRIu32, answer->row.checksum, row_get_checksum(row));
+    if (answer->row.checksum != lv_row_get_checksum(row)) {
+        PRINT_ERR_INVALID("checksum is incorrect", "%" PRIu32, answer->row.checksum, lv_row_get_checksum(row));
         return -1;
     }
 
@@ -558,7 +558,7 @@ static int write_test_data(const LVWriteTestDataCtx* ctx) {
             return -1;
         }
 
-        row_write_on_memory(row_buf, &ans->row);
+        lv_row_write_on_memory(row_buf, &ans->row);
         LVStatus s = TEST_IO_OPS.write(ctx->val_file, ans->value, ans->row.value_len, ans->row.value_offset);
         if (s != LV_OK) {
             fprintf(stderr, "Failed to write test value data. (seq: %" PRIu64 ")\n", ans->row.seq);

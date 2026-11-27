@@ -11,13 +11,13 @@
 #include "livero_types.h"
 #include "struct/row.h"
 
-LVStatus commit_init(LVFILEDef* commit_file, uint8_t* commit_sector, lv_file_write write, lv_file_sync sync) {
+LVStatus lv_commit_init(LVFILEDef* commit_file, uint8_t* commit_sector, lv_file_write write, lv_file_sync sync) {
     assert(commit_file && commit_sector && write && sync);
     LVStatus s = LV_OK;
 
     memset(commit_sector, LV_COMMIT_SEQ_ZERO, LV_COMMIT_SECTOR_BYTES);
     for (int i = 0; i < LV_COMMIT_SLOT_M; i++) {
-        if ((s = write(commit_file, commit_sector, LV_COMMIT_SECTOR_BYTES, commit_slot_offset(i))) != LV_OK) {
+        if ((s = write(commit_file, commit_sector, LV_COMMIT_SECTOR_BYTES, lv_commit_slot_offset(i))) != LV_OK) {
             return s;
         }
     }
@@ -25,7 +25,7 @@ LVStatus commit_init(LVFILEDef* commit_file, uint8_t* commit_sector, lv_file_wri
     return sync(commit_file);
 }
 
-LVCommitDisk commit_m2d(const LVCommit* commit) {
+LVCommitDisk lv_commit_m2d(const LVCommit* commit) {
     assert(commit);
     LVCommitDisk cmt_disk;
     uint32_t commit_checksum = lv_crc32c_begin();
@@ -62,12 +62,12 @@ LVCommitDisk commit_m2d(const LVCommit* commit) {
     return cmt_disk;
 }
 
-LVCommitStatus commit_d2m(LVFILEDef* commit_file, lv_file_read read, const uint32_t slot_idx, LVCommit* commit_out) {
+LVCommitStatus lv_commit_d2m(LVFILEDef* commit_file, lv_file_read read, const uint32_t slot_idx, LVCommit* commit_out) {
     assert(commit_file && read && commit_out);
 
     LVCommitDisk cmt_disk;
     LVCommitStatus commit_status = {.db = LV_OK, .commit = LV_COMMIT_OK};
-    LVStatus s = read(commit_file, &cmt_disk, LV_COMMIT_DISK_BYTES, commit_slot_offset(slot_idx));
+    LVStatus s = read(commit_file, &cmt_disk, LV_COMMIT_DISK_BYTES, lv_commit_slot_offset(slot_idx));
 
     if (s == LV_OK) {
         static const uint8_t LV_COMMIT_EMPTY_IMAGE[LV_COMMIT_DISK_BYTES] = {0};
@@ -99,11 +99,11 @@ LVCommitStatus commit_d2m(LVFILEDef* commit_file, lv_file_read read, const uint3
     return commit_status;
 }
 
-int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t ternary_bytes,
+int lv_commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const LVSize32_t ternary_bytes,
                   const LVSize32_t max_disk_bytes) {
     assert(cmt);
 
-    if (commit_slot_index(cmt->commit_seq) != expected_slot_idx) {
+    if (lv_commit_slot_index(cmt->commit_seq) != expected_slot_idx) {
         return 0;
     }
 
@@ -121,7 +121,7 @@ int commit_sanity(const LVCommit* cmt, const uint32_t expected_slot_idx, const L
     return 1;
 }
 
-LVStatus commit_write(Livero* db, const int flag) {
+LVStatus lv_commit_write(Livero* db, const int flag) {
     assert(db);
 
     const LVSeq_t commit_seq = db->next_commit_seq;
@@ -177,11 +177,11 @@ LVStatus commit_write(Livero* db, const int flag) {
         .flag = flag
     };
 
-    LVCommitDisk commit_disk = commit_m2d(&commit);
+    LVCommitDisk commit_disk = lv_commit_m2d(&commit);
 
     memcpy(db->commit_sector, &commit_disk, LV_COMMIT_DISK_BYTES);
 
-    LVStatus s = db->option.io_ops->write(db->commit_file, db->commit_sector, LV_COMMIT_SECTOR_BYTES, commit_slot_offset(commit_slot_index(commit_seq)));
+    LVStatus s = db->option.io_ops->write(db->commit_file, db->commit_sector, LV_COMMIT_SECTOR_BYTES, lv_commit_slot_offset(lv_commit_slot_index(commit_seq)));
 
     if(s != LV_OK){
         return s;

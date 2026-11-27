@@ -11,7 +11,7 @@
 #include "livero_types.h"
 #include "vector/ternary.h"
 
-void row_write_on_memory(uint8_t* buf, const LVRow* data) {
+void lv_row_write_on_memory(uint8_t* buf, const LVRow* data) {
     assert(buf && data);
     lv_put_fixed_64(buf, data->seq);
     lv_put_fixed_64(buf + LV_ROW_EPOCH_DATE_OFFSET, data->epoch_date);
@@ -21,7 +21,7 @@ void row_write_on_memory(uint8_t* buf, const LVRow* data) {
     lv_put_fixed_32(buf + LV_ROW_CEHCKSUM_OFFSET, data->checksum);
 }
 
-uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
+uint32_t lv_row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
     assert(ctx);
     assert(ctx->ternary_chunks && ctx->value);
 
@@ -49,7 +49,7 @@ uint32_t row_calc_checksum(const LVRowCalcChecksumCtx* ctx) {
     return lv_crc32c_end(checksum);
 }
 
-LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
+LVStatus lv_row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
     assert(ctx);
     uint8_t row[LV_ROW_BYTES] = {0};
 
@@ -62,8 +62,8 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
     uint32_t checksum = lv_crc32c_begin();
     checksum = lv_crc32c_update(checksum, row, LV_ROW_TOMBSTONEFLAG_OFFSET);
 
-    const LVOffset_t value_offset = row_get_value_offset(row);
-    const LVSize16_t value_len = row_get_value_len(row);
+    const LVOffset_t value_offset = lv_row_get_value_offset(row);
+    const LVSize16_t value_len = lv_row_get_value_len(row);
 
     uint8_t checksum_buffer[LV_MAX_VLA_LEN] = {0};
 
@@ -79,16 +79,16 @@ LVStatus row_checksum_check_from_disk(LVRowCCFDCtx* ctx) {
 
     checksum = lv_crc32c_end(checksum);
 
-    if (checksum != row_get_checksum(row)) {
+    if (checksum != lv_row_get_checksum(row)) {
         return LV_ERR_DATA_CORRUPT;
     }
 
     return LV_OK;
 }
 
-LVQueryResult row_make_query_result(const uint8_t* row) {
+LVQueryResult lv_row_make_query_result(const uint8_t* row) {
     assert(row);
     LVDate date;
-    lv_convert_epoch_to_date(row_get_epoch_date(row), &date);
-    return (LVQueryResult){.date = date, .seq = row_get_seq(row), .value_len = row_get_value_len(row)};
+    lv_convert_epoch_to_date(lv_row_get_epoch_date(row), &date);
+    return (LVQueryResult){.date = date, .seq = lv_row_get_seq(row), .value_len = lv_row_get_value_len(row)};
 }
