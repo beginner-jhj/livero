@@ -84,7 +84,7 @@ LVStatus lv_create(const char *db_path, const LVConfig *config, const LVOption *
     }
 
     if ((s = lv_commit_init((*db_out)->commit_file, (*db_out)->commit_sector, option->io_ops->write,
-                         option->io_ops->sync)) != LV_OK) {
+                            option->io_ops->sync)) != LV_OK) {
         LIVERO_ERROR("Failed to initialize commit.lv.");
         goto cleanup;
     }
@@ -1204,12 +1204,19 @@ void lv_close(Livero *db) {
         return;
     }
 
-    LVStatus s = lv_flush(db, LV_COMMIT_CLEAN_CLOSE);
-    if (s != LV_OK) {
-        LIVERO_ERROR("Failed to flush data.");
+    if (db->pending_count > 0) {
+        LVStatus s = lv_flush(db, LV_COMMIT_CLEAN_CLOSE);
+        if (s != LV_OK) {
+            LIVERO_ERROR("Failed to flush data.");
+        }
+    } else {
+        LVStatus s = lv_commit_write(db, LV_COMMIT_CLEAN_CLOSE);
+        if (s != LV_OK) {
+            LIVERO_ERROR("Failed to write a clean closed commit.");
+        }
     }
 
-    s = db->option.io_ops->close(db->row_file);
+    LVStatus s = db->option.io_ops->close(db->row_file);
     if (s != LV_OK) {
         LIVERO_ERROR("Failed to close row.lv.");
     }
