@@ -1,0 +1,20 @@
+# Start with a base style guide
+BasedOnStyle: Google
+
+# Use 4 spaces for indentation instead of the Google default (2)
+IndentWidth: 4
+
+ColumnLimit: 120
+
+# Put curly braces on the same line for blocks (Attach)
+BreakBeforeBraces: Attach
+
+# Clean up spaces around pointers
+PointerAlignment: Left
+
+# Ensure sorting of #include directives alphabetically
+SortIncludes: true
+
+AllowShortIfStatementsOnASingleLine: Never
+
+InsertBraces: true
