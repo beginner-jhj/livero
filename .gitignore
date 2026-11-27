@@ -1,6 +1,5 @@
 build/
 compile_commands.json
-.clang-format
 .vscode
 .cache/
 .DS_Store
@@ -10,4 +9,5 @@ tests/python/__pycache__
 tests/python/demo_data
 tests/python/emb_cache
 build-release
-tests/python/
+tests/python/*.csv
+tests/python/*_test.py
