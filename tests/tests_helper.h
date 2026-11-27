@@ -23,7 +23,6 @@
 #include "livero.h"
 #include "livero_internal.h"
 #include "livero_types.h"
-#include "struct/commit.h"
 #include "struct/row.h"
 #include "vector/ternary.h"
 #include "livero_io_builtin.h"
@@ -270,9 +269,9 @@ static int compare_answer(const LVTestAnswer* answer, const uint8_t* row, const 
         return -1;
     }
 
-    if (answer->row.tombstone_flag != lvrow_get_tombstone_flag(row)) {
+    if (answer->row.tombstone_flag != lv_row_get_tombstone_flag(row)) {
         PRINT_ERR_INVALID("tombstone_flag is incorrect", "%" PRIu8, answer->row.tombstone_flag,
-                          lvrow_get_tombstone_flag(row));
+                          lv_row_get_tombstone_flag(row));
         return -1;
     }
 
