@@ -3,7 +3,6 @@
 
 #include "livero_internal.h"
 #include "livero_types.h"
-#include "struct/commit.h"
 #include "struct/row.h"
 #include "tests_helper.h"
 
@@ -232,16 +231,11 @@ int test_interpolation_search(void) {
         .row_file = db->row_file,
         .ter_file = db->ter_file,
         .val_file = db->val_file,
-        .commit_file = db->commit_file,
-        .commit_sector = db->commit_sector,
-        .commit_seq = LV_COMMIT_SEQ_START,
         .row_start_offset = 0,
         .ternary_start_offset = 0,
-        .prev_count = 0,
-        .prev_val_bytes = 0,
     };
 
-    if ((result = write_test_data(&wtdc, NULL)) < 0) {
+    if ((result = write_test_data(&wtdc)) < 0) {
         goto cleanup;
     }
 
@@ -281,16 +275,11 @@ int test_binary_search(void) {
         .row_file = db->row_file,
         .ter_file = db->ter_file,
         .val_file = db->val_file,
-        .commit_file = db->commit_file,
-        .commit_sector = db->commit_sector,
-        .commit_seq = LV_COMMIT_SEQ_START,
         .row_start_offset = 0,
         .ternary_start_offset = 0,
-        .prev_count = 0,
-        .prev_val_bytes = 0,
     };
 
-    if ((result = write_test_data(&wtdc, NULL)) < 0) {
+    if ((result = write_test_data(&wtdc)) < 0) {
         goto cleanup;
     }
 
