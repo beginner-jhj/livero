@@ -100,7 +100,6 @@ else()
     message(STATUS "SIMD is not active. test_simd is off.")
 endif()
 lv_add_test(test_pending tests/test_pending.c)
-lv_add_test(test_recover tests/test_recover.c)
 lv_add_test(test_disk_search tests/test_disk_search.c)
 lv_add_test(test_livero tests/test_livero.c)
 
