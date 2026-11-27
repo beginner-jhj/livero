@@ -514,77 +514,32 @@ static int check_stat_match(const LVDBStat* stored, const LVDBStat* expected) {
     return 0;
 }
 
-// Returns 0 if the recovered commit matches the expected one, -1 otherwise.
-// Stops at the first mismatch, so only that field is reported.
-static int check_commit(const LVCommit* recovered, const LVCommit* expected) {
-    if (recovered->commit_seq != expected->commit_seq) {
-        PRINT_ERR_INVALID("commit_seq", "%" PRIu64, expected->commit_seq, recovered->commit_seq);
-        return -1;
-    }
-
-    // Cast narrower count and size fields so each value matches the PRIu32 format.
-    if (recovered->batch_count != expected->batch_count) {
-        PRINT_ERR_INVALID("batch_count", "%" PRIu32, (uint32_t)expected->batch_count, (uint32_t)recovered->batch_count);
-        return -1;
-    }
-
-    if (recovered->total_count != expected->total_count) {
-        PRINT_ERR_INVALID("total_count", "%" PRIu32, (uint32_t)expected->total_count, (uint32_t)recovered->total_count);
-        return -1;
-    }
-
-    if (recovered->batch_value_bytes != expected->batch_value_bytes) {
-        PRINT_ERR_INVALID("batch_value_bytes", "%" PRIu32, (uint32_t)expected->batch_value_bytes,
-                          (uint32_t)recovered->batch_value_bytes);
-        return -1;
-    }
-
-    if (recovered->total_value_bytes != expected->total_value_bytes) {
-        PRINT_ERR_INVALID("total_value_bytes", "%" PRIu32, (uint32_t)expected->total_value_bytes,
-                          (uint32_t)recovered->total_value_bytes);
-        return -1;
-    }
-
-    if (recovered->next_seq != expected->next_seq) {
-        PRINT_ERR_INVALID("first_seq", "%" PRIu64, expected->next_seq, recovered->next_seq);
-        return -1;
-    }
-
-    if (recovered->durable_seq != expected->durable_seq) {
-        PRINT_ERR_INVALID("reserved_seq", "%" PRIu64, expected->durable_seq, recovered->durable_seq);
-        return -1;
-    }
-
-    return 0;
-}
-
 /*
-    Write row.lv, vec.lv, val.lv and commit.lv based on given test answers
-*/
+    Write row.lv, ter.lv and val.lv from the given test answers. No commit is written.
 
+    For tests that read the data files directly with internal functions and a chosen
+    seq layout (e.g. test_disk_search). It writes no commit on purpose:
+      - commits and recovery are tested only through the public API (test_livero.c),
+        so no test helper builds or writes a commit;
+      - without a commit, lv_open would recover these files as an empty db.
+        So never lv_open a directory filled by this helper.
+
+    Rows must be given in ascending seq order (the row file is sorted by seq).
+    Each answer's row.value_offset decides where its value goes in val.lv.
+*/
 typedef struct {
     LVFILEDef* row_file;
     LVFILEDef* ter_file;
     LVFILEDef* val_file;
-    LVFILEDef* commit_file;
-    uint8_t* commit_sector;
-    LVSeq_t commit_seq;
     LVTestAnswer* data;
     LVCount_t data_count;
     LVOffset_t row_start_offset;
     LVOffset_t ternary_start_offset;
-    LVCount_t prev_count;
-    LVSize32_t prev_val_bytes;
 } LVWriteTestDataCtx;
 
-static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_commit_out) {
+static int write_test_data(const LVWriteTestDataCtx* ctx) {
     if (!ctx) {
         fprintf(stderr, "ctx is not given.\n");
-        return -1;
-    }
-
-    if (ctx->commit_seq == LV_COMMIT_SEQ_ZERO) {
-        fprintf(stderr, "commit_seq is invalid. \n");
         return -1;
     }
 
@@ -594,49 +549,35 @@ static int write_test_data(const LVWriteTestDataCtx* ctx, LVCommit* written_comm
     }
 
     uint8_t row_buf[LV_ROW_BYTES] = {0};
-    LVSize32_t batched_val_bytes = 0;
     for (LVCount_t i = 0; i < ctx->data_count; ++i) {
         const LVTestAnswer* ans = &ctx->data[i];
+
+        // The engine searches rows by seq, so a layout out of order is a broken test input.
+        if (i > 0 && ans->row.seq <= ctx->data[i - 1].row.seq) {
+            fprintf(stderr, "test data seqs must be strictly ascending (index %" PRIu32 ").\n", (uint32_t)i);
+            return -1;
+        }
+
         row_write_on_memory(row_buf, &ans->row);
         LVStatus s = TEST_IO_OPS.write(ctx->val_file, ans->value, ans->row.value_len, ans->row.value_offset);
         if (s != LV_OK) {
             fprintf(stderr, "Failed to write test value data. (seq: %" PRIu64 ")\n", ans->row.seq);
             return -1;
         }
-        batched_val_bytes += ans->row.value_len;
 
         const LVOffset_t ternary_offset = ctx->ternary_start_offset + i * TEST_TERNARY_BYTES;
         if ((s = TEST_IO_OPS.write(ctx->ter_file, ans->ternary_chunks, TEST_TERNARY_BYTES, ternary_offset)) != LV_OK) {
-            fprintf(stderr, "Failed to write test teranry data. (seq: %" PRIu64 ")\n", ans->row.seq);
+            fprintf(stderr, "Failed to write test ternary data. (seq: %" PRIu64 ")\n", ans->row.seq);
             return -1;
         }
 
         const LVOffset_t row_offset = ctx->row_start_offset + i * LV_ROW_BYTES;
         if ((s = TEST_IO_OPS.write(ctx->row_file, row_buf, LV_ROW_BYTES, row_offset)) != LV_OK) {
-            fprintf(stderr, "Faield to write test row data. (seq: %" PRIu64 ")\n", ans->row.seq);
+            fprintf(stderr, "Failed to write test row data. (seq: %" PRIu64 ")\n", ans->row.seq);
             return -1;
         }
     }
 
-    const LVCommit cmt = {
-        .commit_seq = ctx->commit_seq,
-        .batch_count = ctx->data_count,
-        .total_count = ctx->prev_count + ctx->data_count,
-        .batch_value_bytes = batched_val_bytes,
-        .total_value_bytes = ctx->prev_val_bytes + batched_val_bytes,
-        .next_seq = ctx->data[0].row.seq,
-        .durable_seq = ctx->data[ctx->data_count - 1].row.seq,
-    };
-
-    LVStatus s = commit_write(ctx->commit_file, ctx->commit_sector, TEST_IO_OPS.write, &cmt);
-
-    if (s != LV_OK) {
-        fprintf(stderr, "Failed to write test commit. \n");
-        return -1;
-    }
-    if (written_commit_out) {
-        *written_commit_out = cmt;
-    }
     return 0;
 }
 
