@@ -164,6 +164,7 @@ LVStatus lv_commit_write(Livero* db, const int flag) {
     }
     else{
         assert(0 && "You must set the flag.");
+        return LV_ERR_INVALID_PARAM;
     }
 
     LVCommit commit = {
@@ -193,7 +194,7 @@ LVStatus lv_commit_write(Livero* db, const int flag) {
     }
 
     db->next_commit_seq += 1;
-    db->durable_seq = db->next_commit_seq + LV_SEQ_RESERVE_M;
+    db->durable_seq = durable_seq;
 
     return LV_OK;
 }
