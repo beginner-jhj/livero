@@ -3,7 +3,7 @@
 
 #include "livero_types.h"
 
-#if defined(__unix__) || defined(__APPLE__)
+#if defined(__unix__) || defined(__APPLE__) || defined (ESP_PLATFORM)
 
 #if defined(__APPLE__)
 #ifndef _DARWIN_C_SOURCE
