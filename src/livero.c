@@ -426,6 +426,9 @@ void lv_init_seq(Livero *db, const LVCommit *commit, const LVRecoverStatus recov
             next_commit_seq = LV_COMMIT_SEQ_START;
             break;
         }
+
+        default:
+            assert(0 && "invalid recover status");
     }
 
     /*
